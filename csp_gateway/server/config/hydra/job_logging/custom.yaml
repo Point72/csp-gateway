@@ -1,0 +1,34 @@
+# See https://hydra.cc/docs/configure_hydra/logging/
+version: 1
+disable_existing_loggers: False
+formatters:
+  simple:
+    format: '[%(asctime)s][%(threadName)s][%(name)s][%(levelname)s]: %(message)s'
+  colorlog:
+    '()': 'colorlog.ColoredFormatter'
+    format: '[%(cyan)s%(asctime)s%(reset)s][%(threadName)s][%(blue)s%(name)s%(reset)s][%(log_color)s%(levelname)s%(reset)s]: %(message)s'
+    log_colors:
+      DEBUG: purple
+      INFO: green
+      WARNING: yellow
+      ERROR: red
+      CRITICAL: red
+  whenAndWhere:
+    format: '[%(asctime)s][%(threadName)s][%(name)s][%(filename)s:%(lineno)s][%(levelname)s]: %(message)s'
+handlers:
+  console:
+    level: INFO
+    class: logging.StreamHandler
+    formatter: colorlog
+    stream: ext://sys.stdout
+  file:
+    level: DEBUG
+    class: logging.FileHandler
+    formatter: whenAndWhere
+    filename: ${hydra.runtime.output_dir}/csp-gateway.log
+root:
+  handlers: [console, file]
+  level: DEBUG
+loggers:
+  uvicorn.error:
+    level: CRITICAL

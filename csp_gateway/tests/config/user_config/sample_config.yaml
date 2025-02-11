@@ -1,0 +1,10 @@
+# @package _global_
+defaults:
+  - _self_
+
+gateway:
+  _target_: csp_gateway.Gateway
+  modules:
+    - /modules/example_module
+    - /modules/mount_rest_routes
+    - /modules/mount_controls

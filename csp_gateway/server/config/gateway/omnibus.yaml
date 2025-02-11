@@ -1,0 +1,58 @@
+# @package _global_
+defaults:
+  - _self_
+
+authenticate: ???
+port: ???
+
+modules:
+  example_module:
+    _target_: csp_gateway.server.demo.ExampleModule
+  example_module_feedback:
+    _target_: csp_gateway.server.demo.ExampleModuleFeedback
+  example_custom_table:
+    _target_: csp_gateway.server.demo.ExampleModuleCustomTable
+  mount_channels_graph:
+    _target_: csp_gateway.MountChannelsGraph
+  mount_controls:
+    _target_: csp_gateway.MountControls
+  mount_outputs:
+    _target_: csp_gateway.MountOutputsFolder
+  mount_perspective_tables:
+    _target_: csp_gateway.MountPerspectiveTables
+    perspective_field: "perspective"
+    layouts:
+      Server Defined Layout: '{"sizes":[1],"detail":{"main":{"type":"split-area","orientation":"vertical","children":[{"type":"split-area","orientation":"horizontal","children":[{"type":"tab-area","widgets":["EXAMPLE_LIST_GENERATED_4"],"currentIndex":0},{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_1"],"currentIndex":0}],"sizes":[0.3,0.7]},{"type":"split-area","orientation":"horizontal","children":[{"type":"tab-area","widgets":["EXAMPLE_GENERATED_3"],"currentIndex":0},{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_0"],"currentIndex":0}],"sizes":[0.3,0.7]}],"sizes":[0.5,0.5]}},"viewers":{"EXAMPLE_LIST_GENERATED_4":{"version":"3.3.4","plugin":"Datagrid","plugin_config":{"columns":{},"edit_mode":"READ_ONLY","scroll_lock":false},"columns_config":{},"title":"example_list","group_by":[],"split_by":[],"columns":["timestamp","x","y","data","mapping","dt","d","internal_csp_struct.z"],"filter":[],"sort":[["timestamp","desc"]],"expressions":{},"aggregates":{},"table":"example_list","settings":false},"PERSPECTIVE_GENERATED_ID_1":{"version":"3.3.4","plugin":"X Bar","plugin_config":{},"columns_config":{},"title":"example_list (*)","group_by":["x"],"split_by":[],"columns":["y"],"filter":[],"sort":[["x","asc"]],"expressions":{},"aggregates":{"y":"median"},"table":"example_list","settings":false},"EXAMPLE_GENERATED_3":{"version":"3.3.4","plugin":"Datagrid","plugin_config":{"columns":{},"edit_mode":"READ_ONLY","scroll_lock":false},"columns_config":{},"title":"example","group_by":[],"split_by":[],"columns":["timestamp","x","y","data","mapping","dt","d","internal_csp_struct.z"],"filter":[],"sort":[["timestamp","desc"]],"expressions":{},"aggregates":{},"table":"example","settings":false},"PERSPECTIVE_GENERATED_ID_0":{"version":"3.3.4","plugin":"Treemap","plugin_config":{},"columns_config":{},"title":"example (*)","group_by":["x"],"split_by":[],"columns":["y","x",null],"filter":[],"sort":[["timestamp","desc"]],"expressions":{},"aggregates":{},"table":"example","settings":false}}}'
+  mount_rest_routes:
+    _target_: csp_gateway.MountRestRoutes
+    force_mount_all: True
+  mount_websocket_routes:
+    _target_: csp_gateway.MountWebSocketRoutes
+  mount_api_key_middleware:
+    _target_: csp_gateway.MountAPIKeyMiddleware
+
+gateway:
+  _target_: csp_gateway.Gateway
+  settings:
+    PORT: ${port}
+    AUTHENTICATE: ${authenticate}
+    UI: True
+    API_KEY: "12345"
+  modules:
+    - /modules/example_module
+    - /modules/example_module_feedback
+    - /modules/example_custom_table
+    - /modules/mount_channels_graph
+    - /modules/mount_controls
+    - /modules/mount_outputs
+    - /modules/mount_perspective_tables
+    - /modules/mount_rest_routes
+    - /modules/mount_websocket_routes
+    - /modules/mount_api_key_middleware
+  channels:
+    _target_: csp_gateway.server.demo.ExampleGatewayChannels
+
+hydra:
+#   searchpath:
+  run:
+    dir: outputs/${oc.env:HOSTNAME,localhost}_${hydra.job.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}

@@ -1,0 +1,9 @@
+# @package _global_
+defaults:
+  - /gateway: omnibus
+  - _self_
+
+# csp-gateway-start --config-dir=csp_gateway/server/omnibus +config=omnibus
+
+authenticate: False
+port: 8000

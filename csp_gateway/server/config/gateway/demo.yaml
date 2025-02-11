@@ -1,0 +1,31 @@
+# @package _global_
+defaults:
+  - _self_
+
+port: ???
+
+modules:
+  example_module:
+    _target_: csp_gateway.server.demo.simple.ExampleModule
+  mount_perspective_tables:
+    _target_: csp_gateway.MountPerspectiveTables
+    update_interval: 00:00:01
+  mount_rest_routes:
+    _target_: csp_gateway.MountRestRoutes
+    force_mount_all: True
+
+gateway:
+  _target_: csp_gateway.Gateway
+  settings:
+    PORT: ${port}
+    UI: True
+  modules:
+    - /modules/example_module
+    - /modules/mount_perspective_tables
+    - /modules/mount_rest_routes
+  channels:
+    _target_: csp_gateway.server.demo.simple.ExampleGatewayChannels
+
+hydra:
+  run:
+    dir: outputs/${oc.env:HOSTNAME,localhost}_${hydra.job.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}

@@ -1,0 +1,20 @@
+defaults:
+    - modules@modules
+    - override hydra/job_logging: custom
+    - _self_
+
+start:
+    # Options passed to gateway.start function
+    realtime: True
+    block: False
+    show: False
+    rest: True
+    ui: True
+
+
+# Hydra config
+# See https://hydra.cc/docs/tutorials/basic/running_your_app/working_directory
+# https://hydra.cc/docs/configure_hydra/job/
+hydra:
+  run:
+    dir: outputs/${oc.env:HOSTNAME,localhost}_${hydra.job.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}

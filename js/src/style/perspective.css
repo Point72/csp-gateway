@@ -1,0 +1,230 @@
+/* Allow selection of cells */
+regular-table table td,
+regular-table table th {
+  user-select: text !important;
+}
+
+/* Dark */
+[data-theme="dark"] perspective-workspace[theme="Pro Dark"],
+[data-theme="dark"] perspective-indicator[theme="Pro Dark"] {
+  --theme-name: "Pro Dark";
+}
+
+[data-theme="dark"] .p-Menu {
+  background-color: #242526;
+  color: white;
+  --icon--color: white;
+  --active--color: #2770a9;
+  --error--color: #ff9485;
+  --inactive--color: #4c505b;
+  --inactive--border-color: var(--inactive--color);
+  --plugin--background: #242526;
+  --modal-target--background: rgba(255, 255, 255, 0.05);
+  --active--background: rgba(39, 113, 170, 0.5);
+  --expression--operator-color: #c5c9d0;
+  --expression--function-color: #22a0ce;
+  --expression--error-color: rgb(255, 136, 136);
+  --calendar--filter: invert(1);
+  --warning--color: #242526;
+  --warning--background: var(--icon--color);
+  --float--column-type--color: #7dc3f0;
+  --string--column-type--color: #ff9485;
+  --date--column-type--color: #70c77f;
+  --boolean--column-type--color: #fec55e;
+  --code-editor-symbol--color: white;
+  --code-editor-literal--color: #7dc3f0;
+  --code-editor-operator--color: rgb(23, 166, 123);
+  --code-editor-comment--color: rgb(204, 120, 48);
+}
+
+[data-theme="dark"] perspective-workspace perspective-viewer {
+  --status-bar--height: 38px;
+}
+
+[data-theme="dark"] perspective-workspace perspective-viewer[settings] {
+  --modal-panel--margin: -4px 0 -4px 0;
+  --status-bar--border-radius: 6px 0 0 0;
+  --main-column--margin: 3px 0 3px 3px;
+  --main-column--border: 1px solid var(--inactive--color);
+  --main-column--border-width: 1px 0px 1px 1px;
+  --main-column--border-radius: 6px 0 0 6px;
+  --settings-button--margin: 10px 0 0 0;
+}
+
+[data-theme="dark"] perspective-workspace {
+  font-family: "Roboto Mono";
+  --open-settings-button--content: "expand_more";
+  --close-settings-button--content: "expand_less";
+  --close-button--content: "\2715";
+  --settings--font-family: "Material Icons";
+  --master-divider--background-color: #243136;
+  --menu-maximize--content: "fullscreen";
+  --menu-minimize--content: "fullscreen_exit";
+  --menu-duplicate--content: "call_split";
+  --menu-master--content: "cast";
+  --menu-detail--content: "notes";
+  --menu-export--content: "file_download";
+  --menu-copy--content: "file_copy";
+  --menu-reset--content: "autorenew";
+  --menu-link--content: "link";
+  --menu-unlink--content: "link_off";
+  --menu-newmenu--content: "add";
+  --menu-close--content: "close";
+  --menu-new--content: "description";
+  --menu-newview--content: "file_copy";
+  --workspace-tabbar--border: 1px solid var(--inactive--color);
+  --workspace-tabbar--border-width: 0px 1px 1px 1px;
+  --workspace-tabbar--border-radius: 0px 0px 6px 6px;
+  --workspace-tabbar--border-color: var(--inactive--color);
+  --workspace-tabbar-tab--border-width: 1px 1px 0px 1px;
+  background-color: #242526;
+  color: white;
+  --icon--color: white;
+  --active--color: #2770a9;
+  --error--color: #ff9485;
+  --inactive--color: #4c505b;
+  --inactive--border-color: var(--inactive--color);
+  --plugin--background: #242526;
+  --modal-target--background: rgba(255, 255, 255, 0.05);
+  --active--background: rgba(39, 113, 170, 0.5);
+  --expression--operator-color: #c5c9d0;
+  --expression--function-color: #22a0ce;
+  --expression--error-color: rgb(255, 136, 136);
+  --calendar--filter: invert(1);
+  --warning--color: #242526;
+  --warning--background: var(--icon--color);
+  --float--column-type--color: #7dc3f0;
+  --string--column-type--color: #ff9485;
+  --date--column-type--color: #70c77f;
+  --boolean--column-type--color: #fec55e;
+  --code-editor-symbol--color: white;
+  --code-editor-literal--color: #7dc3f0;
+  --code-editor-operator--color: rgb(23, 166, 123);
+  --code-editor-comment--color: rgb(204, 120, 48);
+  --column-drag-handle--mask-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNSIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDUgMTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSIxMS4wMDAxIiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjExLjAwMDEiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSI3LjY2NjgzIiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjcuNjY2ODMiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSI0LjMzMzMzIiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjQuMzMzMzMiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSIxLjAwMDA4IiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjEuMDAwMDgiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+Cjwvc3ZnPgo=");
+  --bookmarks--mask-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMTEiIHZpZXdCb3g9IjAgMCAyNCAxMSIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGQ9Ik0zLjY2MjE0IDYuOTY0NzZMMC41IDkuODYzMzhWMC41SDcuNVY5Ljg2MzM4TDQuMzM3ODYgNi45NjQ3Nkw0IDYuNjU1MDVMMy42NjIxNCA2Ljk2NDc2WiIgc3Ryb2tlPSIjMDQyMTIxIi8+CiAgICA8cGF0aCBkPSJNMTkgNEwyMSA2TDIzIDQiIHN0cm9rZT0iIzA0MjEyMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=");
+  background-color: #000202;
+  color: white;
+  --workspace-tabbar--background-color: #242526;
+  --workspace-secondary--color: #c5c9d0;
+  --workspace-tabbar--border: 1px solid var(--inactive--color);
+  --workspace-tabbar--border-width: 0px 1px 1px 1px;
+  --workspace-tabbar--border-radius: 0px 0px 6px 6px;
+  --workspace-tabbar--border-color: var(--inactive--color);
+  --workspace-tabbar-tab--border-width: 1px 1px 0 1px;
+}
+
+[data-theme="dark"]
+  perspective-viewer.workspace-master-widget[theme="Pro Dark"] {
+  --plugin--background: #242526;
+}
+
+[data-theme="dark"] .p-Menu {
+  background: #2a2c2f !important;
+  color: white !important;
+  border: 1px solid#3b3f46 !important;
+  font-family: "Roboto Mono";
+  font-weight: 300;
+}
+
+/* Light */
+perspective-workspace,
+perspective-workspace[theme="Pro Light"],
+perspective-indicator[theme="Pro Light"] {
+  --theme-name: "Pro Light";
+  flex-grow: 1;
+}
+
+perspective-workspace {
+  font-family: "Roboto Mono";
+  --open-settings-button--content: "expand_more";
+  --close-settings-button--content: "expand_less";
+  --close-button--content: "\2715";
+  --settings--font-family: "Material Icons";
+  --master-divider--background-color: #243136;
+  --menu-maximize--content: "fullscreen";
+  --menu-minimize--content: "fullscreen_exit";
+  --menu-duplicate--content: "call_split";
+  --menu-master--content: "cast";
+  --menu-detail--content: "notes";
+  --menu-export--content: "file_download";
+  --menu-copy--content: "file_copy";
+  --menu-reset--content: "autorenew";
+  --menu-link--content: "link";
+  --menu-unlink--content: "link_off";
+  --menu-newmenu--content: "add";
+  --menu-close--content: "close";
+  --menu-new--content: "description";
+  --menu-newview--content: "file_copy";
+  --workspace-tabbar--border: 1px solid var(--inactive--color);
+  --workspace-tabbar--border-width: 0px 1px 1px 1px;
+  --workspace-tabbar--border-radius: 0px 0px 6px 6px;
+  --workspace-tabbar--border-color: var(--inactive--color);
+  --workspace-tabbar-tab--border-width: 1px 1px 0px 1px;
+  color: #161616;
+  background-color: transparent;
+  --icon--color: #161616;
+  --inactive--color: #ababab;
+  --inactive--border-color: #dadada;
+  --root--background: #ffffff;
+  --active--color: #2670a9;
+  --error--color: #ff471e;
+  --plugin--background: #ffffff;
+  --overflow-hint-icon--color: rgba(0, 0, 0, 0.2);
+  --select--background-color: none;
+  --column-drop-container--background: none;
+  --warning--background: #042121;
+  --warning--color: #fdfffd;
+  --overflow-hint-icon--color: #fdfffd;
+  background-color: #dadada;
+  --column-drag-handle--mask-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNSIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDUgMTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSIxMS4wMDAxIiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjExLjAwMDEiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSI3LjY2NjgzIiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjcuNjY2ODMiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSI0LjMzMzMzIiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjQuMzMzMzMiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+CjxjaXJjbGUgY3g9IjMuNDk5OTYiIGN5PSIxLjAwMDA4IiByPSIwLjgzMzMzMyIgZmlsbD0iIzZFNkU2RSIvPgo8Y2lyY2xlIGN4PSIwLjgzMzMzMyIgY3k9IjEuMDAwMDgiIHI9IjAuODMzMzMzIiBmaWxsPSIjNkU2RTZFIi8+Cjwvc3ZnPgo=");
+  --bookmarks--mask-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMTEiIHZpZXdCb3g9IjAgMCAyNCAxMSIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICAgIDxwYXRoIGQ9Ik0zLjY2MjE0IDYuOTY0NzZMMC41IDkuODYzMzhWMC41SDcuNVY5Ljg2MzM4TDQuMzM3ODYgNi45NjQ3Nkw0IDYuNjU1MDVMMy42NjIxNCA2Ljk2NDc2WiIgc3Ryb2tlPSIjMDQyMTIxIi8+CiAgICA8cGF0aCBkPSJNMTkgNEwyMSA2TDIzIDQiIHN0cm9rZT0iIzA0MjEyMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+Cjwvc3ZnPgo=");
+}
+
+.p-Menu {
+  color: #161616;
+  background-color: transparent;
+  --icon--color: #161616;
+  --inactive--color: #ababab;
+  --inactive--border-color: #dadada;
+  --root--background: #ffffff;
+  --active--color: #2670a9;
+  --error--color: #ff471e;
+  --plugin--background: #ffffff;
+  --overflow-hint-icon--color: rgba(0, 0, 0, 0.2);
+  --select--background-color: none;
+  --column-drop-container--background: none;
+  --warning--background: #042121;
+  --warning--color: #fdfffd;
+  --overflow-hint-icon--color: #fdfffd;
+}
+
+perspective-workspace perspective-viewer[settings] {
+  --modal-panel--margin: -4px 0 -4px 0;
+  --status-bar--border-radius: 6px 0 0 0;
+  --main-column--margin: 3px 0 3px 3px;
+  --main-column--border: 1px solid var(--inactive--color);
+  --main-column--border-width: 1px 0px 1px 1px;
+  --main-column--border-radius: 6px 0 0 6px;
+  --settings-button--margin: 10px 0 0 0;
+}
+
+perspective-workspace perspective-viewer {
+  --status-bar--height: 38px;
+}
+
+perspective-viewer.workspace-master-widget[theme="Pro Light"] {
+  background-color: #f2f4f6;
+  --plugin--background: #f2f4f6;
+}
+
+perspective-viewer.workspace-master-widget[theme="Pro Light"] regular-table td,
+perspective-viewer.workspace-master-widget[theme="Pro Light"] regular-table th {
+  border-color: #e0e4e9;
+}
+
+.p-Menu {
+  font-family: "Roboto Mono";
+  font-weight: 300;
+  color: #161616;
+}

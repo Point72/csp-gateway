@@ -1,0 +1,8 @@
+# @package _global_
+defaults:
+  - /gateway: demo
+  - _self_
+
+# csp-gateway-start --config-dir=csp_gateway/server/demo +config=demo
+
+port: 8000

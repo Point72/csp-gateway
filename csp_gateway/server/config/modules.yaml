@@ -1,0 +1,37 @@
+# Examples
+example_module:
+  _target_: csp_gateway.server.demo.ExampleModule
+
+example_custom_table:
+  _target_: csp_gateway.server.demo.ExampleModuleCustomTable
+
+
+# Controls
+mount_controls:
+  _target_: csp_gateway.MountControls
+
+
+# Web Extras
+mount_outputs:
+  _target_: csp_gateway.MountOutputsFolder
+
+mount_outputs_folder:
+  _target_: csp_gateway.MountOutputsFolder
+
+mount_channels_graph:
+  _target_: csp_gateway.MountChannelsGraph
+
+mount_perspective_tables:
+  _target_: csp_gateway.MountPerspectiveTables
+
+
+# REST/WS/Auth
+mount_rest_routes:
+  _target_: csp_gateway.MountRestRoutes
+
+mount_websocket_routes:
+  _target_: csp_gateway.MountWebSocketRoutes
+
+
+mount_api_key_middleware:
+  _target_: csp_gateway.MountAPIKeyMiddleware
