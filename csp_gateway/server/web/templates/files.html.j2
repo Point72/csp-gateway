@@ -1,0 +1,19 @@
+<html>
+  <head>
+    <title>Logs</title>
+    <style>
+        {% include 'css/common.css' %}
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <h1>Logs</h1>
+      <h2>pid[{{pid}}]</h2>
+    </div>
+    <ul>
+      {% for file in files %}
+      <li><a href="{{file}}">{{file}}</a></li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>

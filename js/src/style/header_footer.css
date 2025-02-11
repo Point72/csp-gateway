@@ -1,0 +1,72 @@
+.header,
+.footer {
+  background: var(--background) !important;
+  color: var(--color);
+  display: flex;
+  flex-direction: row;
+  align-content: space-between;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  font-family: var(--font-family);
+  padding: 10px;
+}
+
+.header {
+  border-bottom: 1px solid var(--border);
+}
+
+.header-title {
+  margin-left: 10px;
+}
+
+.header-version {
+  color: var(--contrast1);
+  margin-left: 5px;
+  padding-top: 5px;
+}
+
+.footer {
+  border-top: 1px solid var(--border);
+}
+
+.footer path {
+  stroke: var(--highlight);
+  fill: var(--highlight);
+  transition:
+    stroke 0.5s,
+    fill 0.5s;
+}
+
+.footer-meta {
+  display: flex;
+  font-size: 12px;
+  align-items: center;
+}
+
+.footer-meta a:hover,
+.footer-meta a:hover:visited {
+  color: var(--color);
+}
+
+.footer-meta a,
+.footer-meta a:visited {
+  color: var(--highlight);
+  transition: color 0.5s;
+}
+
+.footer-link {
+  /* margin-left: 10px; */
+  margin-right: 10px;
+}
+
+.footer .footer-link:hover path {
+  stroke: var(--color);
+  fill: var(--color);
+}
+
+.footer-meta p {
+  color: var(--color);
+  margin-left: 10px;
+  margin-right: 10px;
+}

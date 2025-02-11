@@ -1,0 +1,211 @@
+:root {
+  --highlight: var(--nord0);
+  --contrast1: var(--nord10);
+  --contrast2: var(--nord11);
+
+  --background: var(--nord4);
+  --background2: var(--nord5);
+  --background-light: var(--nord6);
+
+  --border: var(--nord7);
+  --line: var(--nord7);
+  --subline: var(--nord8);
+
+  --color: var(--nord0);
+  --font-family: "Roboto";
+}
+
+[data-theme="dark"] {
+  --highlight: var(--nord4);
+  --contrast1: var(--nord8);
+  --contrast2: var(--nord12);
+
+  --background: var(--nord0);
+  --background2: var(--nord1);
+  --background-light: var(--nord2);
+
+  --border: var(--nord2);
+  --line: var(--nord2);
+  --subline: var(--nord3);
+
+  --color: var(--nord4);
+}
+
+#main {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 775px;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+}
+
+.around {
+  justify-content: space-around;
+}
+
+.between {
+  justify-content: space-between;
+}
+
+.full-width {
+  width: 100%;
+  margin: auto;
+}
+
+.full-height {
+  height: 100%;
+  margin: auto;
+}
+
+.divider {
+  margin-top: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.icon-button {
+  background: var(--background2);
+  border: 1px solid var(--border);
+  color: var(--highlight);
+  font-family: "Roboto" !important;
+  font-size: 11px;
+  padding: 5px;
+  cursor: pointer;
+  margin-left: 5px;
+}
+
+.icon-button:hover,
+.text-button:hover {
+  background-color: var(--highlight);
+  color: var(--background);
+}
+
+.text-input,
+.text-button,
+select.layout-config {
+  background: var(--background2);
+  border: 1px solid var(--border);
+  color: var(--highlight);
+  min-width: 150px;
+  /* min-height: 150px; */
+  font-family: "Roboto" !important;
+  font-size: 11px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+option.layout-config {
+  background: var(--background);
+  color: var(--highlight);
+}
+
+.text-button {
+  margin-left: 5px;
+  min-width: 100px;
+}
+
+.text-input::placeholder {
+  color: var(--highlight);
+  font-family: "Roboto" !important;
+  font-size: 11px;
+}
+
+select.layout-config:hover {
+  /* background: #eaeaea; */
+  border-color: var(--highlight);
+  color: var(--highlight);
+}
+
+a.data-permalink {
+  color: var(--highlight2);
+}
+
+a.data-permalink:visited {
+  color: var(--highlight2);
+}
+
+#progress {
+  background: var(--background);
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 100000;
+}
+
+.slider {
+  position: absolute;
+  width: 250px;
+  height: 10px;
+  overflow-x: hidden;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-left: -125px;
+  margin-top: -5px;
+  z-index: 1000000;
+}
+
+.line {
+  position: absolute;
+  opacity: 0.4;
+  background: var(--line);
+  width: 150%;
+  height: 5px;
+}
+
+.subline {
+  position: absolute;
+  background: var(--subline);
+  height: 5px;
+}
+
+.inc {
+  animation: increase 2s infinite;
+}
+
+.dec {
+  animation: decrease 2s 0.5s infinite;
+}
+
+@keyframes increase {
+  from {
+    left: -5%;
+    width: 5%;
+  }
+
+  to {
+    left: 130%;
+    width: 100%;
+  }
+}
+
+@keyframes decrease {
+  from {
+    left: -80%;
+    width: 80%;
+  }
+
+  to {
+    left: 110%;
+    width: 10%;
+  }
+}

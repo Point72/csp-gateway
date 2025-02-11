@@ -1,0 +1,140 @@
+<html>
+<head>
+    <title>Channels Graph</title>
+    <script type="importmap">
+        {
+            "imports": {
+                "d3": "https://cdn.jsdelivr.net/npm/d3@7/+esm",
+                "lodash-es": "https://cdn.jsdelivr.net/npm/lodash-es/+esm",
+                "dagre-d3-es": "https://cdn.jsdelivr.net/npm/dagre-d3-es/+esm"
+            }
+        }
+    </script>    
+    <script type="module" src="https://cdn.jsdelivr.net/npm/d3@7/+esm"></script>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/lodash-es/+esm"></script>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/dagre-d3-es/+esm"></script>
+</head>
+<body>
+    <a href="/">Home</a>
+    <div class="dagred3"></div>
+</body>
+<style>
+    a {
+        z-index: 1000;
+        position: absolute;
+        top: 0;
+        height: 10px;
+        width: 20px;
+    }
+
+    div.dagred3 {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: 0;
+        display: flex;
+    }
+    
+    div.dagred3 svg {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: 0;
+        display: flex;
+    }
+    
+    .dagred3 .node rect,
+    .dagred3 .node circle,
+    .dagred3 .node ellipse,
+    .dagred3 .node polygon {
+        stroke: #555;
+        fill: #fff;
+    }
+    
+    .dagred3 .edgePath path {
+        stroke: #555;
+        fill: transparent;
+        stroke-width: 1.5px;
+    }
+    
+    .dagred3 .edgeLabel foreignObject {
+        overflow: visible;
+    }
+    
+    .dagred3 .edgeLabel foreignObject u {
+        text-decoration: none;
+    }
+    
+    .dagred3 .node text {
+        pointer-events: none;
+    }
+</style>
+<script type="module">
+    import {graphlib, render} from 'dagre-d3-es'
+    import * as d3 from "d3";
+    
+    const data = JSON.parse('{{ channels_graph|safe }}');
+    const div = document.querySelector("div.dagred3");
+    const el = d3.select(div);
+    
+    const svg = el.append("svg");
+    svg.attr("height", "100%");
+    svg.attr("width", "100%");
+    
+    const inner = svg.append("g");
+    inner.attr("height", "100%");
+    inner.attr("width", "100%");
+    
+    const graph = new graphlib.Graph({ directed: true }).setGraph({height: "100%", width: "100%"});
+    const renderer = new render();
+    
+    // render
+    Object.keys(data).forEach((field) => {
+        if(field.startsWith("s_")) {
+            return;
+        }
+        graph.setNode(field, {label: field, shape: "diamond"})
+        data[field].getters.forEach((getter) => {
+            graph.setNode(getter, {label: getter});
+            graph.setEdge(field, getter, {
+                label: "",
+                style: "stroke: #666; stroke-width: 2px; stroke-dasharray: 5, 5;",
+                arrowhead: "vee",
+                arrowheadStyle: "fill: #666;",
+                // style: "stroke: #66f; stroke-width: 3px; stroke-dasharray: 5, 5;",
+                // arrowheadStyle: "fill: #66f",
+                curve: d3.curveBasis 
+            });
+        });
+        data[field].setters.forEach((setter) => {
+            graph.setNode(setter, {label: setter});
+            graph.setEdge(setter, field, {
+                label: "",
+                style: "stroke: #f66; stroke-width: 2px;",
+                arrowhead: "vee",
+                arrowheadStyle: "fill: #f66",
+                curve: d3.curveBasis 
+            });
+        })
+    });
+
+    // Set up zoom support
+    const zoom = d3.zoom().on("zoom", (event) => {
+        inner.attr("transform", event.transform);
+    });
+    svg.call(zoom);
+        
+    // Center the graph
+    const initialScale = 0.5;
+    const svgWidth = svg.offsetWidth || window.innerWidth;
+    const windowWidth = div.offsetWidth || window.innerWidth;
+    svg.call(zoom.transform, d3.zoomIdentity.translate(10, window.innerHeight / 4).scale(initialScale));
+        
+    // svg.attr("height", (div.innerHeight || 0) * initialScale + 40);
+        
+    renderer(inner, graph);
+        
+    </script>
+    </html>

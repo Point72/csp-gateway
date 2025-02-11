@@ -1,0 +1,197 @@
+[build-system]
+requires = ["hatchling>=1.3.1", "hatch-jupyter-builder"]
+build-backend = "hatchling.build"
+
+[project]
+name = "csp-gateway"
+description = "CSP Gateway framework"
+version = "1.4.0"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "the csp gateway authors", email = "CSPOpenSource@point72.com"}]
+keywords = ["csp", "csp-gateway"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "aiohttp",
+    "aiostream",
+    "atomic-counter>=0.1.3",
+    "ccflow>=0.3.0,<0.5.0",
+    "colorlog",
+    "csp>=0.0.7,<0.0.10",
+    "deprecation",
+    "duckdb>=0.10",
+    "fastapi>=0.110",
+    "fsspec",
+    "httpx",
+    "hydra-core",
+    "janus",
+    "jsonref",
+    "nest-asyncio",
+    "omegaconf",
+    "orjson",
+    "packaging",
+    "perspective-python>=3.3,<4",
+    "psutil",
+    "pyarrow",
+    "pydantic>=2",
+    "uvicorn>=0.28.1,<0.31",
+    "uvloop",
+    "websockets",
+]
+
+[project.license]
+file = "LICENSE"
+
+[project.optional-dependencies]
+develop = [
+    "asv",
+    "bump-my-version",
+    "check-manifest",
+    "hatchling",
+    "hatch-jupyter-builder",
+    "mypy",
+    "pytest",
+    "pytest-aiohttp",
+    "pytest-asyncio",
+    "pytest-cov",
+    "python-magic",
+    "ruff>=0.9,<0.10",
+    "twine",
+    "wheel",
+    # client
+    "polars",
+    "pandas",
+    # modules
+    "arrow-odbc",
+    "datadog",
+    "opsgenie_sdk",
+    "sqlalchemy",
+]
+
+
+[project.urls]
+Repository = "https://github.prod.devops.point72.com/9951-CubistResearchTech/csp-gateway"
+Homepage = "https://docs.ccrt.point72.com/csp-gateway/main/"
+
+[project.scripts]
+cspgateway-start = "csp_gateway.server.cli:main"
+cspgateway_start = "csp_gateway.server.cli:main"
+csp-gateway-start = "csp_gateway.server.cli:main"
+csp_gateway_start = "csp_gateway.server.cli:main"
+
+[tool.bumpversion]
+current_version = "1.4.0"
+commit = true
+tag = true
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "csp_gateway/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "conda-recipe/meta.yaml"
+search = 'version: {current_version}'
+replace = 'version: {new_version}'
+
+[[tool.bumpversion.files]]
+filename = "README.md"
+search = 'version-{current_version}-blue'
+replace = 'version-{new_version}-blue'
+
+[[tool.bumpversion.files]]
+filename = "js/package.json"
+search = "{current_version}"
+replace = "{new_version}"
+
+[tool.check-manifest]
+ignore = [
+    "Makefile",
+    ".vscode/*",
+    "ci/**/*",
+    "conda-recipe/*",
+    "csp_gateway/server/build/*",
+    "docs/**/*",
+    "examples/*",
+    "js/*",
+    "js/**/*",
+]
+
+[tool.coverage.run]
+omit = ["csp_gateway/server/middleware/hacks/*"]
+
+[tool.hatch.build]
+artifacts = ["csp_gateway/server/build/*"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+
+[tool.hatch.build.targets.sdist]
+include = ["/csp_gateway", "/js", "LICENSE", "pyproject.toml", "README.md"]
+exclude = ["/.github", "/.gitignore", "/conda-recipe", "/docs", "/examples"]
+
+[tool.hatch.build.targets.wheel]
+include = ["/csp_gateway"]
+exclude = [
+    "/.github",
+    "/.gitignore",
+    "/conda-recipe",
+    "/docs",
+    "/js",
+    "/pyproject.toml",
+]
+
+[tool.hatch.build.hooks.jupyter-builder]
+build-function = "hatch_jupyter_builder.npm_builder"
+ensured-targets = [
+    "csp_gateway/server/build/index.css",
+    "csp_gateway/server/build/index.html",
+    "csp_gateway/server/build/main.js",
+]
+skip-if-exists = [
+    "csp_gateway/server/build/index.css",
+    "csp_gateway/server/build/index.html",
+    "csp_gateway/server/build/main.js",
+]
+dependencies = ["hatch-jupyter-builder>=0.5.0"]
+
+[tool.hatch.build.hooks.jupyter-builder.build-kwargs]
+path = "js"
+build_cmd = "build"
+npm = "pnpm"
+
+[tool.ruff]
+line-length = 150
+
+[tool.ruff.lint]
+ignore = ["E203", "D", "B008"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+default-section = "third-party"
+known-first-party = ["csp_gateway"]
+section-order = [
+    "future",
+    "standard-library",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+"conftest.py" = ["F401", "F403"]
+"csp_gateway/tests/*" = ["D"]

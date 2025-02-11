@@ -1,0 +1,51 @@
+nav.settings {
+  background-color: var(--background) !important;
+  color: var(--color) !important;
+}
+
+div.settings-content {
+  padding: 5px;
+}
+
+button.big-red-button {
+  background: red;
+  color: white;
+  margin-bottom: 20px;
+}
+
+button.big-red-button:hover {
+  background: #f88;
+  color: white;
+}
+
+div.confirm-shutdown,
+div.confirm-shutdown-last {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  margin: auto;
+  width: 400px;
+  height: 200px;
+  z-index: 102;
+  display: flex;
+  background-color: var(--background);
+  color: var(--color);
+}
+
+div.confirm-shutdown button,
+div.confirm-shutdown-last button {
+  background-color: var(--background-light);
+  color: var(--color);
+}
+
+div.confirm-shutdown > h1,
+div.confirm-shutdown-last > h1 {
+  text-align: center;
+}
+
+div.confirm-shutdown-last {
+  background-color: red;
+  color: white;
+}

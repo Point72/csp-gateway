@@ -1,0 +1,19 @@
+<html>
+<head>
+    <title>Logout</title>
+    <script>
+        {% include 'js/common.js' %}
+    </script>
+    <style>
+        {% include 'css/common.css' %}
+    </style>
+</head>
+    <body>
+        <div class="centered">
+            <h1>Logout</h1>
+            <form class="centered-form" method="get" action="/api/v1/auth/logout">
+                <input type="submit" value="Logout">
+            </form>
+        </div>
+    </body>
+</html>

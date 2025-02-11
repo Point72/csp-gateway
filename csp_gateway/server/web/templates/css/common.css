@@ -1,0 +1,54 @@
+
+body {
+    font-family: "Roboto";
+    background-color: #eee;
+}
+
+div.centered {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+
+    margin: auto;
+    padding: 50px;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+div.row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+div.centered > h1 {
+    text-align: "center";
+}
+
+form.centered-form {
+    display: flex;
+    flex-direction: column;
+}
+form.centered-form > * {
+    margin: 5px;
+}
+
+div.error {
+    display: flex;
+    flex-direction: column;
+    background-color: red;
+    /* width: 50%; */
+    text-align: center;
+    justify-content: space-around;
+    padding: 10px;
+}
+
+span.error-code {
+    font-weight: bolder;
+}

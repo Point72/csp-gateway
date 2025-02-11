@@ -1,0 +1,223 @@
+{
+    "server.gateway.csp.state.StateFirstQueryAll.time_query": {
+        "code": "class StateFirstQueryAll:\n    def time_query(self, state_typ, _):\n        self.s.query()\n\n    def setup(self, state_typ, threshold):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        self.s = State[CspStruct](keyby=\"a\")\n        modify_buffer_threshold(_BUFFER_THRESHOLD)\n        for i in range(threshold):\n            ts = CspStruct(a=i, b=f\"{i}\", f=MyEnum.A, h=[i, i, i], j={i: i}, g=CspSubStruct(suba=i + 1, subb=f\"{i+1}\"))\n            self.s.insert(ts)",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateFirstQueryAll.time_query",
+        "number": 1,
+        "param_names": [
+            "StateType",
+            "#Inserts"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ],
+            [
+                "10000",
+                "100000",
+                "1000000"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "7a5474d8c4fe7f9cf09ea9063785e2951963a6c1c6cf54f45c2eb33d95c56259",
+        "warmup_time": -1
+    },
+    "server.gateway.csp.state.StateFirstQueryFilter.time_query": {
+        "code": "class StateFirstQueryFilter:\n    def time_query(self, state_typ, _):\n        self.s.query(_QUERY)\n\n    def setup(self, state_typ, threshold):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        self.s = State[CspStruct](keyby=\"a\")\n        modify_buffer_threshold(_BUFFER_THRESHOLD)\n        for i in range(threshold):\n            ts = CspStruct(a=i, b=f\"{i}\", f=MyEnum.A, h=[i, i, i], j={i: i}, g=CspSubStruct(suba=i + 1, subb=f\"{i+1}\"))\n            self.s.insert(ts)",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateFirstQueryFilter.time_query",
+        "number": 1,
+        "param_names": [
+            "StateType",
+            "#Inserts"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ],
+            [
+                "10000",
+                "100000",
+                "1000000"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "da0eb51fbbfde048c776e7581dcb671571b0a6b698dfc3899795e2eb0257847d",
+        "warmup_time": -1
+    },
+    "server.gateway.csp.state.StateInitialize.time_create": {
+        "code": "class StateInitialize:\n    def time_create(self, state_typ):\n        _ = State[CspStruct](keyby=\"a\")\n\n    def setup(self, state_typ):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        return None",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateInitialize.time_create",
+        "number": 0,
+        "param_names": [
+            "StateType"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "b7d9328a05929ad7c01a332593868a21e78f6760f29cd7c7d569241c6fd83599",
+        "warmup_time": -1
+    },
+    "server.gateway.csp.state.StateInsert.time_insert": {
+        "code": "class StateInsert:\n    def time_insert(self, state_typ, threshold):\n        for i in range(threshold):\n            ts = CspStruct(a=i, b=f\"{i}\", f=MyEnum.A, h=[i, i, i], j={i: i}, g=CspSubStruct(suba=i + 1, subb=f\"{i+1}\"))\n            self.s.insert(ts)\n\n    def setup(self, state_typ, _):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        self.s = State[CspStruct]()\n        modify_buffer_threshold(_BUFFER_THRESHOLD)",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateInsert.time_insert",
+        "number": 0,
+        "param_names": [
+            "StateType",
+            "#Inserts"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ],
+            [
+                "10000",
+                "100000",
+                "1000000"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "e4c82441d0afa8d35478a9dbe355b16d3f8d3b6fe0ecef9e2d0851e861086240",
+        "warmup_time": -1
+    },
+    "server.gateway.csp.state.StateInsertKeyBy.time_insert": {
+        "code": "class StateInsertKeyBy:\n    def time_insert(self, state_typ, threshold):\n        for i in range(threshold):\n            # Have the keyby value repeat\n            ts = CspStruct(a=i % 100, b=f\"{i}\", f=MyEnum.A, h=[i, i, i], j={i: i}, g=CspSubStruct(suba=i + 1, subb=f\"{i+1}\"))\n            self.s.insert(ts)\n\n    def setup(self, state_typ, _):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        self.s = State[CspStruct](keyby=\"a\")\n        modify_buffer_threshold(_BUFFER_THRESHOLD)",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateInsertKeyBy.time_insert",
+        "number": 0,
+        "param_names": [
+            "StateType",
+            "#Inserts"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ],
+            [
+                "10000",
+                "100000",
+                "1000000"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "0b3f1c6e18b40d8e6c91c1331d312f17bc54280b0ea5aba52b0f7dab74337a60",
+        "warmup_time": -1
+    },
+    "server.gateway.csp.state.StateMultiQueryAll.time_query": {
+        "code": "class StateMultiQueryAll:\n    def time_query(self, state_typ, _):\n        self.s.query()\n\n    def setup(self, state_typ, threshold):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        self.s = State[CspStruct](keyby=\"a\")\n        modify_buffer_threshold(_BUFFER_THRESHOLD)\n        for i in range(threshold):\n            ts = CspStruct(a=i, b=f\"{i}\", f=MyEnum.A, h=[i, i, i], j={i: i}, g=CspSubStruct(suba=i + 1, subb=f\"{i+1}\"))\n            self.s.insert(ts)",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateMultiQueryAll.time_query",
+        "number": 0,
+        "param_names": [
+            "StateType",
+            "#Inserts"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ],
+            [
+                "10000",
+                "100000",
+                "1000000"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "7d7a04cfec0e40f8a91aafe27e0991510e30755352e169c8a85c09e1b974e3f3",
+        "warmup_time": -1
+    },
+    "server.gateway.csp.state.StateMultiQueryFilter.time_query": {
+        "code": "class StateMultiQueryFilter:\n    def time_query(self, state_typ, _):\n        self.s.query(_QUERY)\n\n    def setup(self, state_typ, threshold):\n        if state_typ == StateType.DEFAULT:\n            disable_duckdb_state()\n        elif state_typ == StateType.DUCKDB:\n            enable_duckdb_state()\n        self.s = State[CspStruct](keyby=\"a\")\n        modify_buffer_threshold(_BUFFER_THRESHOLD)\n        for i in range(threshold):\n            ts = CspStruct(a=i, b=f\"{i}\", f=MyEnum.A, h=[i, i, i], j={i: i}, g=CspSubStruct(suba=i + 1, subb=f\"{i+1}\"))\n            self.s.insert(ts)",
+        "min_run_count": 2,
+        "name": "server.gateway.csp.state.StateMultiQueryFilter.time_query",
+        "number": 0,
+        "param_names": [
+            "StateType",
+            "#Inserts"
+        ],
+        "params": [
+            [
+                "<StateType.DUCKDB: 2>",
+                "<StateType.DEFAULT: 1>"
+            ],
+            [
+                "10000",
+                "100000",
+                "1000000"
+            ]
+        ],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "41889a1686ae522b168e3f3e622ca9e5194bf1eae9b60d3a6852c2c60d7850f0",
+        "warmup_time": -1
+    },
+    "utils.id_generator.Counter.time_counter_next": {
+        "code": "class Counter:\n    def time_counter_next(self):\n        self.counter.next()\n\n    def setup(self):\n        self.counter = get_counter(MyGatewayModule())",
+        "min_run_count": 2,
+        "name": "utils.id_generator.Counter.time_counter_next",
+        "number": 0,
+        "param_names": [],
+        "params": [],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "e9d71b221e9499031b0f6aa2029ff701ad3890e1ae044fce84c6fdbfdb001d19",
+        "warmup_time": -1
+    },
+    "utils.id_generator.IDGenerator.time_get_counter": {
+        "code": "class IDGenerator:\n    def time_get_counter(self):\n        _ = get_counter(MyGatewayModule())",
+        "min_run_count": 2,
+        "name": "utils.id_generator.IDGenerator.time_get_counter",
+        "number": 0,
+        "param_names": [],
+        "params": [],
+        "repeat": 0,
+        "rounds": 2,
+        "sample_time": 0.01,
+        "type": "time",
+        "unit": "seconds",
+        "version": "50bcabf2714d43f54d3c5845f396c0e41883001f5a695378f510388fe816c150",
+        "warmup_time": -1
+    },
+    "version": 2
+}
