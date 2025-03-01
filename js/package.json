@@ -25,7 +25,7 @@
     "react-icons": "^4.10.1",
     "react-markdown": "^8.0.7",
     "react-modern-drawer": "^1.2.2",
-    "remark-gfm": "^3.0.1"
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@finos/perspective-esbuild-plugin": "3.2.1",
