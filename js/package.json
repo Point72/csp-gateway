@@ -22,7 +22,7 @@
     "@finos/perspective-workspace": "3.3.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-icons": "^4.10.1",
+    "react-icons": "^5.5.0",
     "react-markdown": "^8.0.7",
     "react-modern-drawer": "^1.2.2",
     "remark-gfm": "^3.0.1"
