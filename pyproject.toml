@@ -43,7 +43,7 @@ dependencies = [
     "psutil",
     "pyarrow",
     "pydantic>=2",
-    "uvicorn>=0.28.1,<0.31",
+    "uvicorn>=0.28.1,<0.35",
     "uvloop",
     "websockets",
 ]
