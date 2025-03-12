@@ -19,7 +19,7 @@
     "@finos/perspective-viewer": "3.3.4",
     "@finos/perspective-viewer-d3fc": "3.3.4",
     "@finos/perspective-viewer-datagrid": "3.3.4",
-    "@finos/perspective-workspace": "3.3.4",
+    "@finos/perspective-workspace": "3.4.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^4.10.1",
