@@ -18,8 +18,8 @@ importers:
         specifier: 3.3.4
         version: 3.3.4(d3-brush@3.0.0)(d3-dispatch@3.0.1)(d3-fetch@3.0.1)(d3-path@3.1.0)(d3-random@3.0.1)(d3-scale-chromatic@3.1.0)(d3-scale@4.0.2)(d3-shape@3.2.0)(d3-time@3.1.0)(d3-zoom@3.0.0)
       '@finos/perspective-viewer-datagrid':
-        specifier: 3.3.4
-        version: 3.3.4
+        specifier: 3.4.1
+        version: 3.4.1
       '@finos/perspective-workspace':
         specifier: 3.3.4
         version: 3.3.4
@@ -335,17 +335,23 @@ packages:
   '@finos/perspective-viewer-d3fc@3.3.4':
     resolution: {integrity: sha512-s5OYtGvnUhIj9KXK4YXiCIXEm3qnle/Txw5ZJzwbbcpBXaoj8hVD3hAJJrffUQUn4ser0DPhtet+Fu0t3G+eZA==}
 
-  '@finos/perspective-viewer-datagrid@3.3.4':
-    resolution: {integrity: sha512-bpmHpLGF2MsBH6zEuWwJb6M2jS8o1Gm14kuTncoMHxjSF/bIaB/jjWP2xvQx6ubihPdooyAAlX2zTEEf7a3GXA==}
+  '@finos/perspective-viewer-datagrid@3.4.1':
+    resolution: {integrity: sha512-YxfU8qQUfCXS5XFRpkSiJqIHQhKkvHskVl6hFaNrzGgFXcofrN3Ors/tKVaVPzYza9y11iMNWQUelAVS6lHcRg==}
 
   '@finos/perspective-viewer@3.3.4':
     resolution: {integrity: sha512-K6w3on2FqjaSLqnRor3s9pMrYtjCev6/vZFsOJC2t5x6EyfqE0PYHtigJWSj6NgUM7CxM3FiRlqtpNRFmLTmpQ==}
+
+  '@finos/perspective-viewer@3.4.1':
+    resolution: {integrity: sha512-nmnE8Gq7vGdiqrM5bh6ESqa28JKr6gYYmD43QiKLy8uxNmOFGwDtMhwz1IyFHZgeQmm18OrBPMBNzuS/aUZ+Vw==}
 
   '@finos/perspective-workspace@3.3.4':
     resolution: {integrity: sha512-8t0oFkuffzju5/DOrICAuY5eLe1qstrpd3RhebvaOqMA+Cl0URaNmcLU+oWMeif7zwVlEIDR4SqlCzFppIczjA==}
 
   '@finos/perspective@3.3.4':
     resolution: {integrity: sha512-0LjOyxg+noE+q/Omj4uZ+PPnQzjYdZex4Sr0vxs1A6Rr369ynlryEHyrys04PCVTHceA3YVV6XML2UOCdYPTaQ==}
+
+  '@finos/perspective@3.4.1':
+    resolution: {integrity: sha512-xPlQpF8xpe8deJUACmPumG7oHuNwwymJqAjyEFIztBLtq+ehtQDhu0ctS5ZU6XFJuG5U1mEoLD9Xmt18XLh64g==}
 
   '@lumino/algorithm@2.0.2':
     resolution: {integrity: sha512-cI8yJ2+QK1yM5ZRU3Kuaw9fJ/64JEDZEwWWp7+U0cd/mvcZ44BGdJJ29w+tIet1QXxPAvnsUleWyQ5qm4qUouA==}
@@ -1909,6 +1915,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.18.1:
+    resolution: {integrity: sha512-RKW2aJZMXeMxVpnZ6bck+RswznaxmzdULiBr6KY7XkTnW8uvt0iT9H5DkHUChXrc+uurzwa0rVI16n/Xzjdz1w==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
@@ -2155,10 +2173,10 @@ snapshots:
       - d3-zoom
       - utf-8-validate
 
-  '@finos/perspective-viewer-datagrid@3.3.4':
+  '@finos/perspective-viewer-datagrid@3.4.1':
     dependencies:
-      '@finos/perspective': 3.3.4
-      '@finos/perspective-viewer': 3.3.4
+      '@finos/perspective': 3.4.1
+      '@finos/perspective-viewer': 3.4.1
       chroma-js: 1.4.1
       regular-table: 0.6.6
     transitivePeerDependencies:
@@ -2168,6 +2186,13 @@ snapshots:
   '@finos/perspective-viewer@3.3.4':
     dependencies:
       '@finos/perspective': 3.3.4
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@finos/perspective-viewer@3.4.1':
+    dependencies:
+      '@finos/perspective': 3.4.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -2193,6 +2218,14 @@ snapshots:
     dependencies:
       stoppable: 1.1.0
       ws: 8.18.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@finos/perspective@3.4.1':
+    dependencies:
+      stoppable: 1.1.0
+      ws: 8.18.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -4212,6 +4245,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.18.0: {}
+
+  ws@8.18.1: {}
 
   yallist@4.0.0: {}
 
