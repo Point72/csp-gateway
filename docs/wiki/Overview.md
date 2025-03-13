@@ -115,7 +115,7 @@ Additionally, a `GatewayModule` can define methods and attributes:
 
 - `rest(self, app: "GatewayWebApp")` which is invoked with an instance of the gateway's FastAPI webserver for mounting custom REST/Websocket endpoints
 - `shutdown(self)` to deal with any clean shutdown routines
-- `requires: ChannelSelection`, `disable: bool`, `block_set_channels_until: datetime`, `dynamic_keys(self)`, `dynamic_channels(self)`, `dynamic_state_channels(self)`: See [Advanced Usage notes](Develop#Advanced)
+- `requires: ChannelSelection`, `disable: bool`, `block_set_channels_until: datetime`, `dynamic_keys(self)`, `dynamic_channels(self)`, `dynamic_state_channels(self)`: See [Advanced Usage notes](Develop#Advanced-Usage)
 
 > [!TIP]
 >
