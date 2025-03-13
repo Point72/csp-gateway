@@ -39,7 +39,7 @@ dependencies = [
     "omegaconf",
     "orjson",
     "packaging",
-    "perspective-python>=3.3,<3.4",
+    "perspective-python>=3.3,!=3.4.0,<4",
     "psutil",
     "pyarrow",
     "pydantic>=2",
