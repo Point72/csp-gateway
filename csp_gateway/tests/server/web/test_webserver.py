@@ -588,6 +588,73 @@ class TestGatewayWebserver:
 
             # unsubscribe
             websocket.send_json({"action": "unsubscribe", "channel": "example"}, mode="text")
+            # subscribe dict-basket
+            # We subscribe via enum name
+            websocket.send_json({"action": "subscribe", "channel": "basket", "key": "A"}, mode="text")
+
+            data = websocket.receive_json()
+
+            assert data["channel"] == "basket"
+            assert data["key"] == "A"
+            assert "data" in data
+
+            # send data as list
+            websocket.send_json(
+                {
+                    "action": "send",
+                    "channel": "basket",
+                    "key": "A",
+                    "data": [{"x": 9989, "y": "1273"}],
+                }
+            )
+            data = websocket.receive_json()
+
+            assert data["channel"] == "basket"
+            assert data["key"] == "A"
+            msg = data["data"][0]
+
+            assert "id" in msg
+            assert "timestamp" in msg
+            assert msg["x"] == 9989
+            assert msg["y"] == "1273"
+
+            # send data as single item
+            # but we don't receive it back
+            # since we aren't subscribed.
+            websocket.send_json(
+                {
+                    "action": "send",
+                    "channel": "basket",
+                    "key": "B",
+                    "data": {"x": 9989, "y": "1273"},
+                }
+            )
+            data = websocket.receive_json()
+            assert data["channel"] == "basket"
+            # We sent to B
+            assert data["key"] == "A"
+            msg = data["data"][0]
+            assert "id" in msg
+            assert "timestamp" in msg
+
+            websocket.send_json({"action": "subscribe", "channel": "str_basket", "key": "a"}, mode="text")
+
+            # unsubscribe dict-basket
+            # since no key, we unsubscribe from everything
+            websocket.send_json({"action": "unsubscribe", "channel": "basket"}, mode="text")
+
+            data = websocket.receive_json()
+
+            # We unsubscribed from 'basket'
+            assert data["channel"] == "str_basket"
+            assert data["key"] == "a"
+            msg = data["data"][0]
+            assert "id" in msg
+            assert "timestamp" in msg
+
+            # unsubscribe dict-basket
+            # since no key, we unsubscribe from everything
+            websocket.send_json({"action": "unsubscribe", "channel": "str_basket", "key": "a"}, mode="text")
 
             websocket.send_json(
                 {
@@ -630,6 +697,24 @@ class TestGatewayWebserver:
         assert response.status_code == 200
 
         assert response.json() == ["metadata"]
+
+    def test_stream(self, rest_client: TestClient):
+        response_stream = rest_client.get("/api/v1/stream?token=test")
+        expected = [
+            "basket/A",
+            "basket/B",
+            "basket/C",
+            "controls",
+            "example",
+            "example_list",
+            "heartbeat",
+            "never_ticks",
+            "str_basket/a",
+            "str_basket/b",
+            "str_basket/c",
+        ]
+        assert response_stream.status_code == 200
+        assert sorted(response_stream.json()) == expected
 
 
 def test_MountRestRoutes_validator(caplog):

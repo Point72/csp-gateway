@@ -12,7 +12,7 @@ from asyncio import (
 )
 from json import JSONDecodeError
 from threading import Thread
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
 from aiohttp import ClientSession, WSMsgType
 from aiostream.stream import merge
@@ -401,7 +401,7 @@ class BaseGatewayClient(ABC):
 
     def _stream(
         self,
-        channels: Optional[List[str]] = None,
+        channels: Optional[List[Union[str, Tuple[str, str]]]] = None,
         callback: Callable = None,
     ):
         if callback:
@@ -419,89 +419,72 @@ class BaseGatewayClient(ABC):
             except StopAsyncIteration:
                 return
 
-    async def _streamAsync(self, channels: List[str] = None):
+    async def _streamAsync(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None):
         if not self._initialized_streaming.done():
             self._initializeStreaming()
 
         channels = channels or []
 
         for channel in channels:
-            await self._subscribe(channel)
+            if isinstance(channel, (list, tuple)) and len(channel) == 2:
+                true_channel, key = channel
+                await self._subscribe(true_channel, key)
+            else:
+                await self._subscribe(channel)
 
         async for data in self._connectAsync():
             yield data
 
-    async def _subscribe(self, channel: str):
+    async def _subscribe(self, channel: str, key: Optional[str] = None):
         if not self._initialized_streaming:
             await self._initialized_streaming
 
+        subscription = dict(action="subscribe", channel=channel)
+        if key is not None:
+            subscription["key"] = key
+
         if self._event_loop_setup:
-            return await self._request_queue.put(
-                {
-                    "action": "subscribe",
-                    "channel": channel,
-                }
-            )
+            return await self._request_queue.put(subscription)
 
         return wrap_future(
             run_coroutine_threadsafe(
-                self._request_queue.put(
-                    {
-                        "action": "subscribe",
-                        "channel": channel,
-                    }
-                ),
+                self._request_queue.put(subscription),
                 loop=self._event_loop,
             ),
             loop=self._event_loop,
         )
 
-    async def _unsubscribe(self, channel: str):
+    async def _unsubscribe(self, channel: str, key: Optional[str] = None):
         if not self._initialized_streaming:
             await self._initialized_streaming
 
+        subscription_removal = dict(action="unsubscribe", channel=channel)
+        if key is not None:
+            subscription_removal["key"] = key
+
         if self._event_loop_setup:
-            return await self._request_queue.put(
-                {
-                    "action": "unsubscribe",
-                    "channel": channel,
-                }
-            )
+            return await self._request_queue.put(subscription_removal)
 
         return wrap_future(
             run_coroutine_threadsafe(
-                self._request_queue.put(
-                    {
-                        "action": "unsubscribe",
-                        "channel": channel,
-                    }
-                ),
+                self._request_queue.put(subscription_removal),
                 loop=self._event_loop,
             ),
             loop=self._event_loop,
         )
 
-    async def _publish(self, channel: str, data: Union[Dict[str, Any], List[Any]]):
+    async def _publish(self, channel: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
         if not self._initialized_streaming:
             await self._initialized_streaming
+        send_msg = dict(action="send", channel=channel, data=data)
+        if key is not None:
+            send_msg["key"] = key
         if self._event_loop_setup:
-            return await self._request_queue.put(
-                {
-                    "action": "send",
-                    "channel": channel,
-                    "data": data,
-                }
-            )
+            return await self._request_queue.put(send_msg)
 
         return wrap_future(
             run_coroutine_threadsafe(
-                self._request_queue.put(
-                    {
-                        "action": "send",
-                        "channel": channel,
-                        "data": data,
-                    }
-                ),
+                self._request_queue.put(send_msg),
                 loop=self._event_loop,
             ),
             loop=self._event_loop,
@@ -571,19 +554,19 @@ class BaseGatewayClient(ABC):
     def state(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None) -> ResponseType: ...
 
     @abstractmethod
-    def stream(self, channels: List[str] = None): ...
+    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None): ...
 
     # NOTE: sync version
     # def stream(self, channels: List[str] = None, callback: Callable = None):
 
     @abstractmethod
-    def subscribe(self, field: str = ""): ...
+    def subscribe(self, field: str = "", key: Optional[str] = None): ...
 
     @abstractmethod
-    def publish(self, field: str, data: Any): ...
+    def publish(self, field: str, data: Any, key: Optional[str] = None): ...
 
     @abstractmethod
-    def unsubscribe(self, field: str = ""): ...
+    def unsubscribe(self, field: str = "", key: Optional[str] = None): ...
 
 
 class SyncGatewayClientMixin:
@@ -657,17 +640,56 @@ class SyncGatewayClientMixin:
             self._config.return_raw_json = old_return_raw_json
         return res
 
-    def stream(self, channels: List[str] = None, callback: Callable = None):
+    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None):
+        """Stream data from specified channels with optional key filtering for dict baskets.
+
+        Establishes a synchronous streaming connection to receive real-time updates from the specified channels.
+        For dict basket channels, you can subscribe to specific keys by providing tuples of (channel, key).
+
+        Args:
+            channels: A list of channel names to subscribe to. For dict basket channels,
+                    each entry can be either a string (channel name) or a tuple of
+                    (channel_name, key) to subscribe only to a specific key in a dict basket.
+            callback: A function that will be called with each received message.
+        """
         self._stream(channels=channels, callback=callback)
 
-    def publish(self, field: str, data: Union[Dict[str, Any], List[Any]]):
-        self._event_loop.run_until_complete(self._publish(channel=field, data=data))
+    def publish(self, field: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
+        """Publish data to a channel or specific key within a dict basket channel.
 
-    def subscribe(self, field: str = ""):
-        self._event_loop.run_until_complete(self._subscribe(channel=field))
+        This synchronous method sends data to a specific channel. For dict basket channels,
+        a key can be specified to send data to that specific key.
 
-    def unsubscribe(self, field: str = ""):
-        self._event_loop.run_until_complete(self._unsubscribe(channel=field))
+        Args:
+            field: The channel name to publish to.
+            data: The data to publish.
+            key: For dict basket channels, the specific key to publish to. If None, publishes to the entire channel.
+        """
+        self._event_loop.run_until_complete(self._publish(channel=field, data=data, key=key))
+
+    def subscribe(self, field: str = "", key: Optional[str] = None):
+        """Subscribe to a channel or specific key within a dict basket channel.
+
+        This synchronous method subscribes to data updates from a specific channel. For dict basket channels,
+        a key can be specified to subscribe only to updates for that specific key.
+
+        Args:
+            field: The channel name to subscribe to.
+            key: For dict basket channels, the specific key to subscribe to. If None, subscribes to the entire channel.
+        """
+        self._event_loop.run_until_complete(self._subscribe(channel=field, key=key))
+
+    def unsubscribe(self, field: str = "", key: Optional[str] = None):
+        """Unsubscribe from a channel or specific key within a dict basket channel.
+
+        This synchronous method unsubscribes from data updates from a specific channel. For dict basket channels,
+        a key can be specified to unsubscribe only from updates for that specific key.
+
+        Args:
+            field: The channel name to unsubscribe from.
+            key: For dict basket channels, the specific key to unsubscribe from. If None, unsubscribes from the entire channel.
+        """
+        self._event_loop.run_until_complete(self._unsubscribe(channel=field, key=key))
 
 
 class SyncGatewayClient(SyncGatewayClientMixin, BaseGatewayClient):
@@ -724,18 +746,59 @@ class AsyncGatewayClientMixin:
         params = None if query is None else {"query": query.model_dump_json()}
         return await self._getasync("{}/{}".format("state", field), timeout=timeout, params=params)
 
-    async def stream(self, channels: List[str] = None):
+    async def stream(self, channels: List[Union[str, Tuple[str, str]]] = None):
+        """Stream data from specified channels with optional key filtering for dict baskets.
+
+        Establishes an asynchronous streaming connection to receive real-time updates from the specified channels.
+        For dict basket channels, you can subscribe to specific keys by providing tuples of (channel, key).
+
+        Args:
+            channels: A list of channel names to subscribe to. For dict basket channels,
+                    each entry can be either a string (channel name) or a tuple of
+                    (channel_name, key) to subscribe only to a specific key in a dict basket.
+
+        Yields:
+            Data messages received from the subscribed channels.
+        """
         async for data in self._streamAsync(channels=channels):
             yield data
 
-    async def publish(self, field: str, data: Union[Dict[str, Any], List[Any]]):
-        await self._publish(channel=field, data=data)
+    async def publish(self, field: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
+        """Publish data to a channel or specific key within a dict basket channel.
 
-    async def subscribe(self, field: str):
-        await self._subscribe(channel=field)
+        This asynchronous method sends data to a specific channel. For dict basket channels,
+        a key can be specified to send data to that specific key.
 
-    async def unsubscribe(self, field: str):
-        await self._unsubscribe(channel=field)
+        Args:
+            field: The channel name to publish to.
+            data: The data to publish.
+            key: For dict basket channels, the specific key to publish to. If None, publishes to the entire channel.
+        """
+        await self._publish(channel=field, data=data, key=key)
+
+    async def subscribe(self, field: str, key: Optional[str] = None):
+        """Subscribe to a channel or specific key within a dict basket channel.
+
+        This asynchronous method subscribes to data updates from a specific channel. For dict basket channels,
+        a key can be specified to subscribe only to updates for that specific key.
+
+        Args:
+            field: The channel name to subscribe to.
+            key: For dict basket channels, the specific key to subscribe to. If None, subscribes to the entire channel.
+        """
+        await self._subscribe(channel=field, key=key)
+
+    async def unsubscribe(self, field: str, key: Optional[str] = None):
+        """Unsubscribe from a channel or specific key within a dict basket channel.
+
+        This asynchronous method unsubscribes from data updates from a specific channel. For dict basket channels,
+        a key can be specified to unsubscribe only from updates for that specific key.
+
+        Args:
+            field: The channel name to unsubscribe from.
+            key: For dict basket channels, the specific key to unsubscribe from. If None, unsubscribes from the entire channel.
+        """
+        await self._unsubscribe(channel=field, key=key)
 
 
 class AsyncGatewayClient(AsyncGatewayClientMixin, BaseGatewayClient):
