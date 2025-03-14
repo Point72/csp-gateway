@@ -329,4 +329,4 @@ if __name__ == "__main__":
 
     # You can also run this directly via cli
     # > pip install csp-gateway
-    # > csp-gateway-start --config-dir=csp_gateway/server/demo +config=demo
+    # > csp-gateway-start --config-dir=csp_gateway/server/demo +config=omnibus

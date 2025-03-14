@@ -39,9 +39,9 @@ class MountWebSocketRoutes(GatewayModule):
 
     _channels: Any = PrivateAttr(None)
     _supported_channels: Dict[Tuple[str, Any], Any] = PrivateAttr(default_factory=dict)
-    _dict_basket_keys_and_type_adapter: Dict[str, Tuple[Any, Set[Any]]] = PrivateAttr(
+    _dict_basket_keys_and_type_adapter: Dict[str, Tuple[Any, List[Any]]] = PrivateAttr(
         default_factory=dict
-    )  # Maps dict basket keys to their type adapter and keys
+    )  # Maps dict basket channels to the type adapter for their keys and keys themselves
     _connect_events: Dict[Tuple[str, Any], GenericPushAdapter] = PrivateAttr(default_factory=dict)
     _disconnect_events: Dict[Tuple[str, Any], GenericPushAdapter] = PrivateAttr(default_factory=dict)
     _subscriptions: Dict[str, Set[Tuple[str, Any]]] = PrivateAttr(default_factory=dict)
@@ -59,12 +59,12 @@ class MountWebSocketRoutes(GatewayModule):
             if isinstance(maybe_edge, dict):
                 # For dict baskets, collect each key and edge
                 type_adapter = None
-                keys_for_channel = set()
+                keys_for_channel = []
                 for key, edge in maybe_edge.items():
                     if type_adapter is None:
                         type_adapter = TypeAdapter(key.__class__)
                     edges_and_keys.append((key, edge))
-                    keys_for_channel.add(key)
+                    keys_for_channel.append(key)
                 self._dict_basket_keys_and_type_adapter[field] = (type_adapter, keys_for_channel)
             else:
                 # Regular channel
@@ -244,7 +244,7 @@ class MountWebSocketRoutes(GatewayModule):
             log.info("no channel specified")
             return
 
-        dict_basket_key_type_adapter, dict_basket_keys = self._dict_basket_keys_and_type_adapter.get(channel, (None, set()))
+        dict_basket_key_type_adapter, dict_basket_keys = self._dict_basket_keys_and_type_adapter.get(channel, (None, []))
 
         if dict_basket_keys and "key" not in message:
             if action in ("subscribe", "unsubscribe"):
