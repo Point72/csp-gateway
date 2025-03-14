@@ -133,7 +133,7 @@ class Gateway(ChannelsFactory[GatewayChannels]):
             base_class = type(channels)
             new_channel_name = f"{base_class.__name__}WithDynamicChannels"
             channels_type = create_model(new_channel_name, __base__=base_class, **dynamic_channel_kwargs)
-            channels = channels_type(**{k: v for k, v in channels.model_dump().items() if v is not None})
+            channels = channels_type(**{f: getattr(channels, f) for f in channels.model_dump(exclude_defaults=True)})
 
         self._dynamic_channels_instantiated = True
         return channels

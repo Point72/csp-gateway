@@ -3,7 +3,7 @@ import multiprocessing
 import time
 from datetime import datetime, timedelta
 from io import StringIO
-from typing import Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
 
 import csp
 import numpy as np
@@ -49,6 +49,7 @@ class MyGatewayChannels(GatewayChannels):
     my_static: float = 0.0
     my_static_dict: Dict[str, float] = {}
     my_static_list: List[str] = []
+    my_static_dict_of_objects: Dict[str, Any] = {}
     my_channel: ts[MyStruct] = None
     s_my_channel: ts[State[MyStruct]] = None
     my_list_channel: ts[List[MyStruct]] = None
@@ -751,6 +752,7 @@ def test_shutdown_infinite():
 class MySetModuleDynamicChannels(GatewayModule):
     scalar_channel_name: str
     list_channel_name: str
+    connect_channels_assertion: Optional[Callable[[MyGatewayChannels], None]] = None
 
     def dynamic_channels(self) -> Optional[Dict[str, Union[Type[GatewayStruct], Type[List[GatewayStruct]]]]]:
         return {
@@ -772,6 +774,8 @@ class MySetModuleDynamicChannels(GatewayModule):
         )
         channels.set_state(self.scalar_channel_name, keyby="id")
         channels.set_state(self.list_channel_name, keyby="id")
+        if self.connect_channels_assertion:
+            self.connect_channels_assertion(channels)
 
 
 class MyGetModuleDynamicChannels(GatewayModule):
@@ -863,6 +867,17 @@ def test_conflicting_dynamic_channels():
     )
     with pytest.raises(ValueError, match="Conflicting types for"):
         csp.build_graph(MyGateway(modules=[setter_1, setter_2], channels=MyGatewayChannels()).graph)
+
+
+def test_dynamic_channels_same_static_properties():
+    my_object = {}
+    channel = MyGatewayChannels(my_static_dict_of_objects={"a": my_object})
+
+    def assert_func(c: MyGatewayChannels):
+        assert c.my_static_dict_of_objects["a"] is my_object
+
+    setter = MySetModuleDynamicChannels(scalar_channel_name="channel_1", list_channel_name="channel_2", connect_channels_assertion=assert_func)
+    csp.build_graph(MyGateway(modules=[setter], channels=channel).graph)
 
 
 @pytest.mark.parametrize("harness_first", [False, True])
