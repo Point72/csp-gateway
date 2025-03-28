@@ -1,5 +1,5 @@
 import logging
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from asyncio import (
     AbstractEventLoop,
     Future,
@@ -16,12 +16,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, 
 
 from aiohttp import ClientSession, WSMsgType
 from aiostream.stream import merge
+from ccflow import BaseModel
 from httpx import AsyncClient, Response, get as GET, post as POST
 from jsonref import replace_refs
 from nest_asyncio import apply as applyAsyncioNexting
 from orjson import loads
 from packaging import version
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, PrivateAttr, field_validator, model_validator
 
 if TYPE_CHECKING:
     from pandas import DataFrame as PandasDataFrame
@@ -208,30 +209,25 @@ class ResponseWrapper(BaseModel):
 ResponseType = Union[ResponseWrapper, Dict[str, Any]]
 
 
-class BaseGatewayClient(ABC):
+def _get_or_new_event_loop() -> AbstractEventLoop:
+    try:
+        return get_event_loop()
+    except RuntimeError:
+        log.debug("Attempted to get event loop without one running, creating a new one...")
+        # We need a new event loop if this is running on another thread
+        set_event_loop(new_event_loop())
+        return get_event_loop()
+
+
+class BaseGatewayClient(BaseModel):
     # server configuration
-    _config: GatewayClientConfig
+    config: GatewayClientConfig = Field(default_factory=GatewayClientConfig)
 
     # openapi configureation
-    _initialized: bool
-    _openapi_spec: Dict[Any, Any]
-    _mounted_apis: Dict[str, set]
-
-    # stream configuration
-    _initialized_streaming: Future
-    _request_queue: Queue
-    _event_loop_setup: bool
-    _event_loop: Optional[AbstractEventLoop]
-    _event_loop_thread: Optional[Thread]
-
-    def __init__(self, config: GatewayClientConfig = None) -> None:
-        # server config
-        self._config = config or GatewayClientConfig()
-
-        # openapi config
-        self._initialized = False
-        self._openapi_spec: Dict[Any, Any] = None
-        self._mounted_apis: Dict[str, set] = {
+    _initialized: bool = PrivateAttr(default=False)
+    _openapi_spec: Dict[Any, Any] = PrivateAttr(default=None)
+    _mounted_apis: Dict[str, set] = PrivateAttr(
+        default={
             "controls": set(),
             "last": set(),
             "lookup": set(),
@@ -239,19 +235,31 @@ class BaseGatewayClient(ABC):
             "send": set(),
             "state": set(),
         }
+    )
 
-        # stream config
-        try:
-            self._event_loop = get_event_loop()
-        except RuntimeError:
-            log.debug("Attempted to get event loop without one running, creating a new one...")
-            # We need a new event loop if this is running on another thread
-            set_event_loop(new_event_loop())
-            self._event_loop = get_event_loop()
-        self._initialized_streaming = Future(loop=self._event_loop)
-        self._request_queue = Queue()
-        self._event_loop_setup = False
-        self._event_loop_thread = None
+    # stream configuration
+    _initialized_streaming: Future = PrivateAttr(default=None)
+    _request_queue: Queue = PrivateAttr(default=None)
+    _event_loop_setup: bool = PrivateAttr(default=False)
+    _event_loop: Optional[AbstractEventLoop] = PrivateAttr(default=None)
+    _event_loop_thread: Optional[Thread] = PrivateAttr(default=None)
+
+    def __init__(self, config: GatewayClientConfig = None) -> None:
+        # Exists for compatibility with positional argument instantiation
+        super().__init__(config=config or GatewayClientConfig())
+
+    @model_validator(mode="after")
+    def validate_client(self):
+        if self._event_loop is None:
+            self._event_loop = _get_or_new_event_loop()
+
+        if self._initialized_streaming is None:
+            self._initialized_streaming = Future(loop=self._event_loop)
+
+        if self._request_queue is None:
+            self._request_queue = Queue()
+
+        return self
 
     def _initializeStreaming(self) -> None:
         if not self._initialized_streaming.done():
@@ -274,9 +282,9 @@ class BaseGatewayClient(ABC):
                     Dict[Any, Any],
                     GET(
                         "{}://{}{}/{}".format(
-                            "http" if self._config.port == 80 else "https" if self._config.port == 443 else self._config.protocol,
-                            self._config.host,
-                            ":{}".format(self._config.port) if self._config.port else "",
+                            "http" if self.config.port == 80 else "https" if self.config.port == 443 else self.config.protocol,
+                            self.config.host,
+                            ":{}".format(self.config.port) if self.config.port else "",
                             "openapi.json",
                         )
                     ).json(),
@@ -285,7 +293,7 @@ class BaseGatewayClient(ABC):
 
             # collect mounted routes
             for path in self._openapi_spec["paths"]:
-                path = path.replace(self._config.api_route, "")
+                path = path.replace(self.config.api_route, "")
                 for group, subroute in (
                     ("controls", "/controls/"),
                     ("last", "/last/"),
@@ -315,26 +323,26 @@ class BaseGatewayClient(ABC):
         self._initialized = True
 
     def _buildpath(self, route: str) -> str:
-        return f"{self._config.api_route}/{route}"
+        return f"{self.config.api_route}/{route}"
 
     def _buildroute(self, route: str) -> str:
-        base_url = f"{self._config.protocol}://{self._config.host}"
-        if self._config.port:
-            base_url += f":{self._config.port}"
+        base_url = f"{self.config.protocol}://{self.config.host}"
+        if self.config.port:
+            base_url += f":{self.config.port}"
         base_url += self._buildpath(route)
-        if self._config.authenticate:
-            return base_url, {"token": self._config.api_key}
+        if self.config.authenticate:
+            return base_url, {"token": self.config.api_key}
         return base_url, {}
 
     def _api_path_and_route(self, route: str) -> str:
-        return self._config.api_route + "/" + route
+        return self.config.api_route + "/" + route
 
     def _buildroutews(self, route: str) -> str:
-        protocol = "wss" if "https" in self._config.protocol else "ws"
-        port = f":{self._config.port}" if self._config.port else ""
-        auth = f"?token={self._config.api_key}" if self._config.authenticate else ""
+        protocol = "wss" if "https" in self.config.protocol else "ws"
+        port = f":{self.config.port}" if self.config.port else ""
+        auth = f"?token={self.config.api_key}" if self.config.authenticate else ""
 
-        return f"{protocol}://{self._config.host}{port}{self._config.api_route}/{route}{auth}"
+        return f"{protocol}://{self.config.host}{port}{self.config.api_route}/{route}{auth}"
 
     def _handle_response(self, resp: Response, route: str) -> ResponseType:
         try:
@@ -342,7 +350,7 @@ class BaseGatewayClient(ABC):
         except JSONDecodeError as e:
             resp_json = dict(detail=str(e))
         if resp.status_code == 200:
-            if self._config.return_raw_json:
+            if self.config.return_raw_json:
                 return resp_json
             path = self._buildpath(route=route)
             schema = _get_schema(spec=self._openapi_spec, path=path)
@@ -575,44 +583,44 @@ class SyncGatewayClientMixin:
         self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None
     ) -> ResponseType:
         if return_raw_json_override is not None:
-            old_return_raw_json = self._config.return_raw_json
-            self._config.return_raw_json = return_raw_json_override
+            old_return_raw_json = self.config.return_raw_json
+            self.config.return_raw_json = return_raw_json_override
         if field in ("shutdown",):
             res = self._post("{}/{}".format("controls", field), data=data, timeout=timeout)
         else:
             res = self._get("{}/{}".format("controls", field), timeout=timeout)
         if return_raw_json_override is not None:
-            self._config.return_raw_json = old_return_raw_json
+            self.config.return_raw_json = old_return_raw_json
         return res
 
     @_raiseIfNotMounted
     def last(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None) -> ResponseType:
         if return_raw_json_override is not None:
-            old_return_raw_json = self._config.return_raw_json
-            self._config.return_raw_json = return_raw_json_override
+            old_return_raw_json = self.config.return_raw_json
+            self.config.return_raw_json = return_raw_json_override
         res = self._get("{}/{}".format("last", field), timeout=timeout)
         if return_raw_json_override is not None:
-            self._config.return_raw_json = old_return_raw_json
+            self.config.return_raw_json = old_return_raw_json
         return res
 
     @_raiseIfNotMounted
     def lookup(self, field: str, id: str, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None) -> ResponseType:
         if return_raw_json_override is not None:
-            old_return_raw_json = self._config.return_raw_json
-            self._config.return_raw_json = return_raw_json_override
+            old_return_raw_json = self.config.return_raw_json
+            self.config.return_raw_json = return_raw_json_override
         res = self._get("{}/{}/{}".format("lookup", field, id), timeout=timeout)
         if return_raw_json_override is not None:
-            self._config.return_raw_json = old_return_raw_json
+            self.config.return_raw_json = old_return_raw_json
         return res
 
     @_raiseIfNotMounted
     def next(self, field: str = "", timeout: float = None, return_raw_json_override: Optional[bool] = None) -> ResponseType:
         if return_raw_json_override is not None:
-            old_return_raw_json = self._config.return_raw_json
-            self._config.return_raw_json = return_raw_json_override
+            old_return_raw_json = self.config.return_raw_json
+            self.config.return_raw_json = return_raw_json_override
         res = self._get("{}/{}".format("next", field), timeout=timeout)
         if return_raw_json_override is not None:
-            self._config.return_raw_json = old_return_raw_json
+            self.config.return_raw_json = old_return_raw_json
         return res
 
     @_raiseIfNotMounted
@@ -620,11 +628,11 @@ class SyncGatewayClientMixin:
         self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None
     ) -> ResponseType:
         if return_raw_json_override is not None:
-            old_return_raw_json = self._config.return_raw_json
-            self._config.return_raw_json = return_raw_json_override
+            old_return_raw_json = self.config.return_raw_json
+            self.config.return_raw_json = return_raw_json_override
         res = self._post("{}/{}".format("send", field), data=data, timeout=timeout)
         if return_raw_json_override is not None:
-            self._config.return_raw_json = old_return_raw_json
+            self.config.return_raw_json = old_return_raw_json
         return res
 
     @_raiseIfNotMounted
@@ -632,12 +640,12 @@ class SyncGatewayClientMixin:
         self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None, return_raw_json_override: Optional[bool] = None
     ) -> ResponseType:
         if return_raw_json_override is not None:
-            old_return_raw_json = self._config.return_raw_json
-            self._config.return_raw_json = return_raw_json_override
+            old_return_raw_json = self.config.return_raw_json
+            self.config.return_raw_json = return_raw_json_override
         params = None if query is None else {"query": query.model_dump_json()}
         res = self._get("{}/{}".format("state", field), timeout=timeout, params=params)
         if return_raw_json_override is not None:
-            self._config.return_raw_json = old_return_raw_json
+            self.config.return_raw_json = old_return_raw_json
         return res
 
     def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None):
