@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "csp-gateway"
 description = "CSP Gateway framework"
-version = "2.0.0"
+version = "2.0.1"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{name = "the csp gateway authors", email = "CSPOpenSource@point72.com"}]
@@ -89,7 +89,7 @@ csp-gateway-start = "csp_gateway.server.cli:main"
 csp_gateway_start = "csp_gateway.server.cli:main"
 
 [tool.bumpversion]
-current_version = "2.0.0"
+current_version = "2.0.1"
 commit = true
 tag = true
 
@@ -102,16 +102,6 @@ replace = 'version = "{new_version}"'
 filename = "csp_gateway/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
-
-[[tool.bumpversion.files]]
-filename = "conda-recipe/meta.yaml"
-search = 'version: {current_version}'
-replace = 'version: {new_version}'
-
-[[tool.bumpversion.files]]
-filename = "README.md"
-search = 'version-{current_version}-blue'
-replace = 'version-{new_version}-blue'
 
 [[tool.bumpversion.files]]
 filename = "js/package.json"
