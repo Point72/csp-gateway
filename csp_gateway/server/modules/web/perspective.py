@@ -140,6 +140,7 @@ class MountPerspectiveTables(GatewayModule):
 
     _layouts: Dict[str, str] = PrivateAttr(default={})
     _schema_insts: Dict[str, Dict] = PrivateAttr(default_factory=dict)
+    _ext_schema_insts: Dict[str, Dict] = PrivateAttr(default_factory=dict)
     _arrow_schema_insts: Dict[str, Dict] = PrivateAttr(default_factory=dict)
     _arrow_schema_date_conversions: Dict[str, Set[str]] = PrivateAttr(default_factory=dict)
     _table_insts: Dict[str, Table] = PrivateAttr(default={})
@@ -294,10 +295,14 @@ class MountPerspectiveTables(GatewayModule):
             """
             ret = self._schema_insts.copy()
             for table_name in self._client.get_hosted_table_names():
-                if table_name in ret:
+                if table_name in ret or table_name in self._ext_schema_insts:
                     continue
-                # if the table is not in the schema, add it
-                ret[table_name] = self._client.open_table(table_name).schema()
+                # if the table is not in the schema, add it and preserve order of columns
+                schema = self._client.open_table(table_name).schema()
+                columns = self._client.open_table(table_name).columns()
+                self._ext_schema_insts[table_name] = {x: schema[x] for x in columns}
+
+            ret.update(self._ext_schema_insts)
             return ret
 
         # add route to fetch layouts
