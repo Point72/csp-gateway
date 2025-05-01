@@ -21,8 +21,8 @@ importers:
         specifier: 3.4.3
         version: 3.4.3
       '@finos/perspective-workspace':
-        specifier: 3.4.3
-        version: 3.4.3
+        specifier: 3.6.1
+        version: 3.6.1
       react:
         specifier: ^19.1.0
         version: 19.1.0
@@ -335,11 +335,17 @@ packages:
   '@finos/perspective-viewer@3.4.3':
     resolution: {integrity: sha512-I25kPLYAAs9CPKPq9SAtu7nW5SagpdXZvB60FhGwacJrNnkNjVzaMbIzAi7xk3NGJeBrTv6u6U+8bpU0te470A==}
 
-  '@finos/perspective-workspace@3.4.3':
-    resolution: {integrity: sha512-PYOIXEGfxqPyJeJNrt7kSXE3SbRQj7zpeFg9aP8BxlPcy9E48DLfA/ZJ6gPJkQE/SZ0s7dYRXWYs2DGN9Yg2Ng==}
+  '@finos/perspective-viewer@3.6.1':
+    resolution: {integrity: sha512-qK4aTxJGQ+4/JwLUQd+zRJziyZYxXcHX0RewdFUubOduz9qwzl4jr0dtSeb3/m2HPA89ZeSlDkNN1m3jbeV4EQ==}
+
+  '@finos/perspective-workspace@3.6.1':
+    resolution: {integrity: sha512-ZAk/+5Jox06u7XI7FqkjCkJLkRgite5SUX/fbThh7Tn1ILCEw+dUjidxplSf4g+kieUpxxXkZLYaErFVuWhAqw==}
 
   '@finos/perspective@3.4.3':
     resolution: {integrity: sha512-FH0c9eSP8x/uiG042ud3aerYRg0jBL3PvfrTYl268xGXRjeN+d4vCmtjXg0WsUyJhLh+xtMFhLMW7/4MnayrJg==}
+
+  '@finos/perspective@3.6.1':
+    resolution: {integrity: sha512-n5WiF8J8L8h7sacyf9dggKARQZdboL1eCWdQeXIFoITALlcQBkYGcdXSNkvmFnf4lz1LV7BJuEf7EVN3cxGWzA==}
 
   '@lumino/algorithm@2.0.3':
     resolution: {integrity: sha512-DIcF7cIrGEC1Wh8DNjdwaL7IdcNs4Jj1VjO/90oHefeQPszKgc6DSfCxvbQiRanKR6tl/JL7tq4ZRPZES2oVAA==}
@@ -377,8 +383,8 @@ packages:
   '@lumino/virtualdom@2.0.3':
     resolution: {integrity: sha512-q2C8eBxPvvOOQjN3KuxZ+vJi082JH/GF7KwMdaWsy5g+7wjKdnXPuLQFTBLOrVqIzmbxBDlLeFr93CEhdQXcyQ==}
 
-  '@lumino/widgets@2.7.0':
-    resolution: {integrity: sha512-I7vXPY0YFo2p9JOI0M5Nh5qnF+cGOCwtTwx+T5f4mtfaJFKsA0SY8hE/Z8IgDswMiY2cYpvSSj220Ilh/qtg7Q==}
+  '@lumino/widgets@2.7.1':
+    resolution: {integrity: sha512-gGq3zB1260gG1aK1m3SkqVoWZ/yfUxCKZvUOmRKLIcZPJUs33bgessm4P65oY5C1eAXalU4erLmKBiBaOn5gtw==}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -1864,10 +1870,17 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@finos/perspective-workspace@3.4.3':
+  '@finos/perspective-viewer@3.6.1':
     dependencies:
-      '@finos/perspective': 3.4.3
-      '@finos/perspective-viewer': 3.4.3
+      '@finos/perspective': 3.6.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@finos/perspective-workspace@3.6.1':
+    dependencies:
+      '@finos/perspective': 3.6.1
+      '@finos/perspective-viewer': 3.6.1
       '@lumino/algorithm': 2.0.3
       '@lumino/commands': 2.3.2
       '@lumino/coreutils': 2.2.1
@@ -1875,13 +1888,21 @@ snapshots:
       '@lumino/messaging': 2.0.3
       '@lumino/signaling': 2.1.4
       '@lumino/virtualdom': 2.0.3
-      '@lumino/widgets': 2.7.0
+      '@lumino/widgets': 2.7.1
       lodash: 4.17.21
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
   '@finos/perspective@3.4.3':
+    dependencies:
+      stoppable: 1.1.0
+      ws: 8.18.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@finos/perspective@3.6.1':
     dependencies:
       stoppable: 1.1.0
       ws: 8.18.1
@@ -1938,7 +1959,7 @@ snapshots:
     dependencies:
       '@lumino/algorithm': 2.0.3
 
-  '@lumino/widgets@2.7.0':
+  '@lumino/widgets@2.7.1':
     dependencies:
       '@lumino/algorithm': 2.0.3
       '@lumino/commands': 2.3.2
