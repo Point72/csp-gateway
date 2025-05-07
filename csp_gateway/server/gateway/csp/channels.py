@@ -27,7 +27,7 @@ from csp.impl.types.tstype import TsType, isTsType
 from csp.impl.wiring.delayed_edge import DelayedEdge, _UnsetNodedef
 from csp.impl.wiring.edge import Edge
 from csp.impl.wiring.feedback import FeedbackInputDef, FeedbackOutputDef
-from pydantic import BaseModel, PrivateAttr, create_model
+from pydantic import BaseModel, ConfigDict, PrivateAttr, create_model
 from pydantic._internal._model_construction import ModelMetaclass
 
 from csp_gateway.utils import (
@@ -39,7 +39,6 @@ from csp_gateway.utils import (
     is_dict_basket,
     is_list_basket,
 )
-from csp_gateway.utils.struct.base import _DynamicModel
 
 from .futures import (
     ConcurrentFutureAdapter,
@@ -59,6 +58,10 @@ _NONE_TYPE = type(None)
 _CSP_ENGINE_CYCLE_TIMESTAMP_FIELD = "csp_engine_timestamp"
 
 log = getLogger(__name__)
+
+
+class _SnapshotModelBaseClass(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", coerce_numbers_to_str=True)
 
 
 def _recursive_remove_enums(vals_dict):
@@ -171,7 +174,7 @@ class ChannelsMetaclass(ModelMetaclass):
                 ts_pydantic_field_types[field_name] = ts_pydantic_field_type
 
         ts_pydantic_field_types[_CSP_ENGINE_CYCLE_TIMESTAMP_FIELD] = (Optional[datetime], None)
-        dynamic_pydantic_model = create_model("_snapshot_model", __base__=_DynamicModel, **ts_pydantic_field_types)
+        dynamic_pydantic_model = create_model("_snapshot_model", __base__=_SnapshotModelBaseClass, **ts_pydantic_field_types)
         cls._snapshot_model = dynamic_pydantic_model
         return cls
 

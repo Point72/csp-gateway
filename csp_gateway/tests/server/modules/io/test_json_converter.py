@@ -23,7 +23,6 @@ from csp_gateway.server.shared.json_converter import (
     ChannelValueModel as CVM,
     _convert_orjson_compatible,
     _create_snapshot_dict,
-    _from_pydantic,
 )
 from csp_gateway.testing.shared_helpful_classes import (
     MyEnum,
@@ -276,10 +275,8 @@ def test_convert_orjson_compatible():
     gateway_struct_list = [MyStruct(foo=3.0, time=timedelta(days=4, microseconds=11)), MyStruct(foo=2.9)]
     pydantic_list = _convert_orjson_compatible(gateway_struct_list)
     for pydantic_x, x in zip(pydantic_list, gateway_struct_list):
-        target = x.to_pydantic().model_dump(mode="json")
+        target = x.type_adapter().dump_python(x, mode="json")
         target["timestamp"] = datetime.fromisoformat(target["timestamp"])
-        if target["time"] is None:
-            target.pop("time")  # time not on Struct, but it is None
         assert pydantic_x == target
     # To avoid json encoding issues with these custom enum types
     # _convert_orjson_compatible converts them to their name for encoding
@@ -288,32 +285,6 @@ def test_convert_orjson_compatible():
 
     my_str = "hai"
     assert _convert_orjson_compatible(my_str) == my_str
-
-
-def test_from_pydantic():
-    pydantic_gateway_struct = [
-        MyStruct(foo=3.0).to_pydantic(),
-        MyStruct(foo=2.9).to_pydantic(),
-    ]
-    gateway_struct_list = _from_pydantic(pydantic_gateway_struct)
-    for pyd_struct, gateway_struct in zip(pydantic_gateway_struct, gateway_struct_list):
-        assert pyd_struct.csp() == gateway_struct
-    assert _from_pydantic(MyEnum.ONE, MyEnum) == MyEnum.ONE
-    assert _from_pydantic("hai", str) == "hai"
-
-
-def test_from_pydantic_exclude():
-    pydantic_gateway_struct = [
-        MyStruct(foo=3.0).to_pydantic(),
-        MyStruct(foo=2.9).to_pydantic(),
-    ]
-    gateway_struct_list = _from_pydantic(pydantic_gateway_struct, exclude=set(["id", "timestamp"]))
-    for pyd_struct, gateway_struct in zip(pydantic_gateway_struct, gateway_struct_list):
-        pyd_dict = pyd_struct.csp().to_dict()
-        gateway_struct_dict = gateway_struct.to_dict()
-        assert pyd_dict.pop("id") != gateway_struct_dict.pop("id")
-        assert pyd_dict.pop("timestamp") != gateway_struct_dict.pop("timestamp")
-        assert pyd_dict == gateway_struct_dict
 
 
 def test_parse_snapshot_dict():

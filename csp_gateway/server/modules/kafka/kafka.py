@@ -228,18 +228,16 @@ class ReadWriteKafka(GatewayModule):
         normalized_type = ContainerTypeNormalizer.normalize_type(ts_typ)
         is_list = get_origin(normalized_type) is list
 
-        exclusions = []
+        context = {}
         if not self.subscribe_with_struct_id:
-            exclusions.append("id")
+            context["force_new_id"] = True
         if not self.subscribe_with_struct_timestamp:
-            exclusions.append("timestamp")
+            context["force_new_timestamp"] = True
         if is_list:
             inner_type = get_args(normalized_type)[0]
-            return [inner_type.__pydantic_model__.model_validate(v).csp(exclude=exclusions) for v in obj]
-        if (pydantic_model := getattr(ts_typ, "__pydantic_model__", None)) is not None:
-            return pydantic_model.model_validate(obj).csp(exclude=exclusions)
-        else:
-            return ts_typ(**obj)
+            type_adapter = inner_type.type_adapter()
+            return [type_adapter.validate_python(v, context=context) for v in obj]
+        return ts_typ.type_adapter().validate_python(obj, context=context)
 
     def deserialize(self, encoding: str, ts_typ: object):
         """Receives the encoded string from Kafka and
