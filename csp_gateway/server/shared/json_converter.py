@@ -58,14 +58,6 @@ def read_engine_encoding_json_with_duckdb(channels: ChannelsType, filename: str)
     return duckdb.read_json(filename, columns=columns, format="newline_delimited")
 
 
-def _from_pydantic(obj: Any, typ: Optional[type] = None, exclude: Optional[set] = None) -> Any:
-    if isinstance(obj, (list, tuple, set)):
-        return obj.__class__(val.csp(exclude=exclude) for val in obj)
-    if isinstance(typ, type) and (issubclass(typ, Enum) or typ is str):
-        return obj
-    return obj.csp(exclude=exclude)
-
-
 def _convert_orjson_compatible(obj: Any):
     if isinstance(obj, Struct):
         return {
