@@ -111,15 +111,12 @@ class GatewayStruct(PerspectiveUtilityMixin, Struct, metaclass=PydanticizedCspSt
 
     @classmethod
     def _validate_gateway_struct(cls, val, handler, info: ValidationInfo):
-        force_new_id = False
-        force_new_timestamp = False
-        if isinstance(info.context, dict):
-            force_new_id = info.context.get("force_new_id", False)
-            force_new_timestamp = info.context.get("force_new_timestamp", False)
-        if isinstance(val, dict):
-            if force_new_id:
+        if isinstance(info.context, dict) and isinstance(val, dict):
+            if info.context.get("force_new_id", False):
+                # If we are forcing a new id, we need to remove the old one
                 val.pop("id", None)
-            if force_new_timestamp:
+            if info.context.get("force_new_timestamp", False):
+                # If we are forcing a new timestamp, we need to remove the old one
                 val.pop("timestamp", None)
         csp_struct = handler(val)
         final = cls._validate_gateway_struct_after(csp_struct)
