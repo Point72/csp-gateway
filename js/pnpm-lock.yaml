@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@finos/perspective':
-        specifier: 3.4.3
-        version: 3.4.3
+        specifier: 3.6.1
+        version: 3.6.1
       '@finos/perspective-viewer':
         specifier: 3.4.3
         version: 3.4.3
@@ -338,8 +338,8 @@ packages:
   '@finos/perspective-workspace@3.4.3':
     resolution: {integrity: sha512-PYOIXEGfxqPyJeJNrt7kSXE3SbRQj7zpeFg9aP8BxlPcy9E48DLfA/ZJ6gPJkQE/SZ0s7dYRXWYs2DGN9Yg2Ng==}
 
-  '@finos/perspective@3.4.3':
-    resolution: {integrity: sha512-FH0c9eSP8x/uiG042ud3aerYRg0jBL3PvfrTYl268xGXRjeN+d4vCmtjXg0WsUyJhLh+xtMFhLMW7/4MnayrJg==}
+  '@finos/perspective@3.6.1':
+    resolution: {integrity: sha512-n5WiF8J8L8h7sacyf9dggKARQZdboL1eCWdQeXIFoITALlcQBkYGcdXSNkvmFnf4lz1LV7BJuEf7EVN3cxGWzA==}
 
   '@lumino/algorithm@2.0.3':
     resolution: {integrity: sha512-DIcF7cIrGEC1Wh8DNjdwaL7IdcNs4Jj1VjO/90oHefeQPszKgc6DSfCxvbQiRanKR6tl/JL7tq4ZRPZES2oVAA==}
@@ -1824,7 +1824,7 @@ snapshots:
 
   '@finos/perspective-viewer-d3fc@3.4.3(d3-brush@3.0.0)(d3-dispatch@3.0.1)(d3-fetch@3.0.1)(d3-path@3.1.0)(d3-random@3.0.1)(d3-scale-chromatic@3.1.0)(d3-scale@4.0.2)(d3-shape@3.2.0)(d3-time@3.1.0)(d3-zoom@3.0.0)':
     dependencies:
-      '@finos/perspective': 3.4.3
+      '@finos/perspective': 3.6.1
       '@finos/perspective-viewer': 3.4.3
       chroma-js: 1.4.1
       d3: 7.9.0
@@ -1849,7 +1849,7 @@ snapshots:
 
   '@finos/perspective-viewer-datagrid@3.4.3':
     dependencies:
-      '@finos/perspective': 3.4.3
+      '@finos/perspective': 3.6.1
       '@finos/perspective-viewer': 3.4.3
       chroma-js: 1.4.1
       regular-table: 0.6.6
@@ -1859,14 +1859,14 @@ snapshots:
 
   '@finos/perspective-viewer@3.4.3':
     dependencies:
-      '@finos/perspective': 3.4.3
+      '@finos/perspective': 3.6.1
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
   '@finos/perspective-workspace@3.4.3':
     dependencies:
-      '@finos/perspective': 3.4.3
+      '@finos/perspective': 3.6.1
       '@finos/perspective-viewer': 3.4.3
       '@lumino/algorithm': 2.0.3
       '@lumino/commands': 2.3.2
@@ -1881,7 +1881,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@finos/perspective@3.4.3':
+  '@finos/perspective@3.6.1':
     dependencies:
       stoppable: 1.1.0
       ws: 8.18.1
