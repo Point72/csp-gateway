@@ -18,8 +18,8 @@ importers:
         specifier: 3.6.1
         version: 3.6.1(d3-brush@3.0.0)(d3-dispatch@3.0.1)(d3-fetch@3.0.1)(d3-path@3.1.0)(d3-random@3.0.1)(d3-scale-chromatic@3.1.0)(d3-scale@4.0.2)(d3-shape@3.2.0)(d3-time@3.1.0)(d3-zoom@3.0.0)
       '@finos/perspective-viewer-datagrid':
-        specifier: 3.4.3
-        version: 3.4.3
+        specifier: 3.6.1
+        version: 3.6.1
       '@finos/perspective-workspace':
         specifier: 3.6.1
         version: 3.6.1
@@ -329,8 +329,8 @@ packages:
   '@finos/perspective-viewer-d3fc@3.6.1':
     resolution: {integrity: sha512-EMzSk5ouGnNaHoqxAc1qGQ+jIyZYbitlca6KyU+ZJO5h6lBuvUry0/kI4FGIIUlOTtuTJpcZt1loIvkjqy1QoA==}
 
-  '@finos/perspective-viewer-datagrid@3.4.3':
-    resolution: {integrity: sha512-bjx56+qPG1PFzh6xw336JYtSFpuFTrTzFVvBmPBU0kdKi2nm+TdwDJic1uEV49eC/sgGgB3Kv2OY2e4rzOCkFg==}
+  '@finos/perspective-viewer-datagrid@3.6.1':
+    resolution: {integrity: sha512-v9PrCoFUvSq0Y9KODZ2cml10Gd+tw4JNO7Ct8JUeXJC1ZQdawezMn1KbW1Oeimg9GNjyfGCkqxiWghto8q8HTQ==}
 
   '@finos/perspective-viewer@3.6.1':
     resolution: {integrity: sha512-qK4aTxJGQ+4/JwLUQd+zRJziyZYxXcHX0RewdFUubOduz9qwzl4jr0dtSeb3/m2HPA89ZeSlDkNN1m3jbeV4EQ==}
@@ -1847,7 +1847,7 @@ snapshots:
       - d3-zoom
       - utf-8-validate
 
-  '@finos/perspective-viewer-datagrid@3.4.3':
+  '@finos/perspective-viewer-datagrid@3.6.1':
     dependencies:
       '@finos/perspective': 3.6.1
       '@finos/perspective-viewer': 3.6.1
