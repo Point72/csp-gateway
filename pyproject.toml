@@ -64,7 +64,7 @@ develop = [
     "pytest-asyncio",
     "pytest-cov",
     "python-magic",
-    "ruff>=0.9,<0.12",
+    "ruff>=0.9,<0.13",
     "twine",
     "wheel",
     # client
