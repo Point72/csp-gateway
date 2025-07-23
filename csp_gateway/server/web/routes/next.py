@@ -14,6 +14,7 @@ __all__ = (
     "add_next_available_channels",
 )
 
+
 def add_next_routes(
     api_router: APIRouter,
     field: str,

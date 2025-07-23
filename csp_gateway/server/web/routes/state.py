@@ -14,6 +14,7 @@ __all__ = (
     "add_state_available_channels",
 )
 
+
 def add_state_routes(
     api_router: APIRouter,
     field: str = "",

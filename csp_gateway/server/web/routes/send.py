@@ -17,6 +17,7 @@ __all__ = (
     "add_send_available_channels",
 )
 
+
 def add_send_routes(
     api_router: APIRouter,
     field: str,

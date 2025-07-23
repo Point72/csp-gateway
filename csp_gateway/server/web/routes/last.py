@@ -14,6 +14,7 @@ __all__ = (
     "add_last_available_channels",
 )
 
+
 def add_last_routes(
     api_router: APIRouter,
     field: str,
@@ -151,7 +152,6 @@ def add_last_routes(
 
 
 def add_last_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
-    
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -162,4 +162,3 @@ def add_last_available_channels(api_router: APIRouter, fields: Optional[Set[str]
         This endpoint will return a list of string values of all available channels under the `/last` route.
         """
         return sorted(ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields)
-

@@ -8,6 +8,7 @@ __all__ = (
     "get_next_tick",
 )
 
+
 def prepare_response(
     res: Any,
     is_list_model: bool = False,

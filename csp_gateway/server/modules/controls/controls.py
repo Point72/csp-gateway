@@ -22,7 +22,7 @@ class MountControls(GatewayModule):
     mount_heartbeat: bool = True
     mount_stats: bool = True
     mount_shutdown: bool = True
-    
+
     def connect(self, channels: GatewayChannels) -> None:
         self.subscribe(channels.get_channel("controls"))
         channels.add_send_channel("controls")
@@ -38,7 +38,7 @@ class MountControls(GatewayModule):
         if self.mount_shutdown:
             app.add_controls_api(field="shutdown")
             available.append("shutdown")
-            
+
         app.add_controls_available_channels(fields=set(available))
 
     @csp.node

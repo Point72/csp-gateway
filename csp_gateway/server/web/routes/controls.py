@@ -21,7 +21,6 @@ __all__ = (
 
 
 def add_controls_routes(api_router: APIRouter, field: str) -> None:
-    
     if field == "heartbeat":
         # Add heartbeat channel
         @api_router.get(
@@ -50,6 +49,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
             return prepare_response(data, is_list_model=False)
 
     elif field == "stats":
+
         @api_router.get(
             "/stats",
             responses=get_default_responses(),
@@ -83,6 +83,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
             return prepare_response(data, is_list_model=False)
 
     elif field == "shutdown":
+
         @api_router.post(
             "/shutdown",
             responses=get_default_responses(),
@@ -100,13 +101,12 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
 
             data = Controls(name="shutdown", status="ok")
             return prepare_response(data, is_list_model=False)
-        
+
     else:
         raise ValueError(f"Unsupported controls field: {field}. Supported fields are 'heartbeat', 'stats', and 'shutdown'.")
 
 
 def add_controls_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
-    
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -117,4 +117,3 @@ def add_controls_available_channels(api_router: APIRouter, fields: Optional[Set[
         This endpoint will return a list of string values of all available channels under the `/controls` route.
         """
         return sorted(fields if fields else ("heartbeat", "stats", "shutdown"))
-

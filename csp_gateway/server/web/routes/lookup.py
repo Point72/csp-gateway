@@ -13,6 +13,7 @@ __all__ = (
     "add_lookup_available_channels",
 )
 
+
 def add_lookup_routes(
     api_router: APIRouter,
     field: str,
@@ -48,8 +49,8 @@ def add_lookup_routes(
         include_in_schema=False,
     )(lookup)
 
+
 def add_lookup_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
-    
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -60,5 +61,3 @@ def add_lookup_available_channels(api_router: APIRouter, fields: Optional[Set[st
         This endpoint will return a list of string values of all available channels under the `/lookup` route.
         """
         return sorted(ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields)
-
-
