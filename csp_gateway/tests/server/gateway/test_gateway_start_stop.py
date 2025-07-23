@@ -24,7 +24,7 @@ def test_long_startup_die_cleanly(free_port):
     with patch("os._exit") as exit_mock, patch("os.kill") as kill_mock:
         # instantiate gateway
         gateway = Gateway(
-            settings=GatewaySettings(API_KEY="12345", AUTHENTICATE=False, PORT=free_port),
+            settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
             modules=[
                 # NeverDieModule(),
                 # CspDieModule(),
@@ -50,7 +50,7 @@ def test_start_with_endtime(free_port):
 
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(API_KEY="12345", AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),
@@ -68,7 +68,7 @@ def test_start_with_endtime_usergraph_no_return(free_port):
 
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(API_KEY="12345", AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),
@@ -82,7 +82,7 @@ def test_start_with_endtime_usergraph_no_return(free_port):
 def test_start_and_then_die_with_error(free_port):
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(API_KEY="12345", AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
         modules=[
             ExampleModule(),
             CspDieModule(),
@@ -100,7 +100,7 @@ def test_start_and_then_die_with_error(free_port):
 @pytest.mark.skipif(sys.platform == "darwin", reason="Flaky on MacOS GHA runners")
 def test_start_and_then_graph_start_error(caplog, free_port):
     gateway = Gateway(
-        settings=GatewaySettings(API_KEY="12345", AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
         modules=[
             ExampleModule(),
             MyBuildFailureModule(),

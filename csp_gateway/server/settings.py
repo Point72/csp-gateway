@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     model_config = dict(case_sensitive=True)
 
-    API_V1_STR: str = "/api/v1"
+    API_STR: str = "/api/v1"
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
     TITLE: str = "Gateway"

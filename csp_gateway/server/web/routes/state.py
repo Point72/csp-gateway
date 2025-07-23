@@ -9,6 +9,11 @@ from csp_gateway.utils import NoProviderException, Query, query_json
 from ..utils import get_default_responses
 from .shared import prepare_response
 
+__all__ = (
+    "add_state_routes",
+    "add_state_available_channels",
+)
+
 
 def add_state_routes(
     api_router: APIRouter,
@@ -182,7 +187,7 @@ def add_state_routes(
         )(get_state)
 
 
-def add_state_api_available_channels(
+def add_state_available_channels(
     api_router: APIRouter,
     fields: Optional[Set[str]] = None,
 ) -> None:
@@ -198,8 +203,8 @@ def add_state_api_available_channels(
         Note: This endpoint does not support filtering
         """
         # TODO: Change state channel stuff
-        return [
+        return sorted(
             field[2:]
             for field in ChannelSelection().select_from(request.app.gateway.channels, state_channels=True)
             if fields is None or field in fields
-        ]
+        )

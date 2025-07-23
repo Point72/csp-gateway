@@ -12,6 +12,12 @@ from .shared import prepare_response
 log = logging.getLogger(__name__)
 
 
+__all__ = (
+    "add_send_routes",
+    "add_send_available_channels",
+)
+
+
 def add_send_routes(
     api_router: APIRouter,
     field: str,
@@ -177,7 +183,7 @@ def add_send_routes(
         )(send)
 
 
-def add_send_api_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
+def add_send_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -187,8 +193,8 @@ def add_send_api_available_channels(api_router: APIRouter, fields: Optional[Set[
         """
         This endpoint will return a list of string values of all available channels under the `/send` route.
         """
-        return [
+        return sorted(
             field + ("" if indexer is None else f"/{indexer.name if hasattr(indexer, 'name') else indexer}")
             for field, indexer in request.app.gateway.channels._send_channels.keys()
             if fields is None or field in fields
-        ]
+        )

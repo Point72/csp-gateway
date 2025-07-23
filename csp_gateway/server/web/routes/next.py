@@ -9,6 +9,11 @@ from csp_gateway.utils import NoProviderException
 from ..utils import get_default_responses
 from .shared import get_next_tick, prepare_response
 
+__all__ = (
+    "add_next_routes",
+    "add_next_available_channels",
+)
+
 
 def add_next_routes(
     api_router: APIRouter,
@@ -156,7 +161,7 @@ def add_next_routes(
         )(get_next)
 
 
-def add_next_api_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
+def add_next_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -166,4 +171,4 @@ def add_next_api_available_channels(api_router: APIRouter, fields: Optional[Set[
         """
         This endpoint will return a list of string values of all available channels under the `/next` route.
         """
-        return ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields
+        return sorted(ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields)

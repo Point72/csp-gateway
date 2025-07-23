@@ -16,11 +16,11 @@ class MountRestRoutes(GatewayModule):
         description="For debugging, will mount all rest routes for every channel, including state and send routes, even if not added by any modules",
     )
 
-    mount_last: ChannelSelection = ChannelSelection()
-    mount_next: ChannelSelection = ChannelSelection()
-    mount_send: ChannelSelection = ChannelSelection()
-    mount_state: ChannelSelection = ChannelSelection()
-    mount_lookup: ChannelSelection = ChannelSelection()
+    mount_last: ChannelSelection = Field(default_factory=ChannelSelection, description="Channels to mount for last operations. Defaults to all")
+    mount_next: ChannelSelection = Field(default_factory=ChannelSelection, description="Channels to mount for next operations. Defaults to all")
+    mount_send: ChannelSelection = Field(default_factory=ChannelSelection, description="Channels to mount for send operations. Defaults to all")
+    mount_state: ChannelSelection = Field(default_factory=ChannelSelection, description="Channels to mount for state operations. Defaults to all")
+    mount_lookup: ChannelSelection = Field(default_factory=ChannelSelection, description="Channels to mount for lookup operations. Defaults to all")
 
     @model_validator(mode="before")
     @classmethod
@@ -51,7 +51,7 @@ class MountRestRoutes(GatewayModule):
             # Install on router
             app.add_last_api(name)
 
-        app.add_last_api_available_channels(channels_set)
+        app.add_last_available_channels(channels_set)
 
     def _mount_next(self, app: GatewayWebApp) -> None:
         selection = ChannelSelection() if self.force_mount_all else self.mount_next
@@ -62,7 +62,7 @@ class MountRestRoutes(GatewayModule):
             # Install on router
             app.add_next_api(name)
 
-        app.add_next_api_available_channels(channels_set)
+        app.add_next_available_channels(channels_set)
 
     def _mount_send(self, app: GatewayWebApp) -> None:
         selection = ChannelSelection() if self.force_mount_all else self.mount_send
@@ -87,7 +87,7 @@ class MountRestRoutes(GatewayModule):
             if missing_channels:
                 log.info(f"Requested channels missing send routes are: {list(missing_channels)}")
 
-        app.add_send_api_available_channels(seen_channels)
+        app.add_send_available_channels(seen_channels)
 
     def _mount_state(self, app: GatewayWebApp) -> None:
         selection = ChannelSelection() if self.force_mount_all else self.mount_state
@@ -112,11 +112,15 @@ class MountRestRoutes(GatewayModule):
             if missing_channels:
                 log.info(f"Requested channels missing state routes: {list(channel[2:] for channel in missing_channels)}")
 
-        app.add_state_api_available_channels(seen_channels)
+        app.add_state_available_channels(seen_channels)
 
     def _mount_lookup(self, app: GatewayWebApp) -> None:
         selection = ChannelSelection() if self.force_mount_all else self.mount_lookup
+        channels_set = set(selection.select_from(app.gateway.channels_model))
+
         # Bind every wire
         for name in selection.select_from(app.gateway.channels_model):
             # Install on router
             app.add_lookup_api(name)
+
+        app.add_lookup_available_channels(channels_set)

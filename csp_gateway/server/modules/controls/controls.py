@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import csp
 import psutil
 from csp import ts
-from fastapi import FastAPI
 
 from csp_gateway.server import GatewayChannels, GatewayModule
 
@@ -20,16 +19,27 @@ _USER = getpass.getuser()
 
 
 class MountControls(GatewayModule):
-    app: GatewayWebApp = None
-    fastapi: FastAPI = None
+    mount_heartbeat: bool = True
+    mount_stats: bool = True
+    mount_shutdown: bool = True
 
     def connect(self, channels: GatewayChannels) -> None:
         self.subscribe(channels.get_channel("controls"))
         channels.add_send_channel("controls")
 
     def rest(self, app: GatewayWebApp) -> None:
-        self.app = app
-        self.fastapi = app.get_fastapi()
+        available = []
+        if self.mount_heartbeat:
+            app.add_controls_api(field="heartbeat")
+            available.append("heartbeat")
+        if self.mount_stats:
+            app.add_controls_api(field="stats")
+            available.append("stats")
+        if self.mount_shutdown:
+            app.add_controls_api(field="shutdown")
+            available.append("shutdown")
+
+        app.add_controls_available_channels(fields=set(available))
 
     @csp.node
     def manage_controls(self, data: ts[Controls]):

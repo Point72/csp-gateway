@@ -28,15 +28,17 @@ from csp_gateway.utils import (
 )
 
 from .routes import (
+    add_controls_available_channels,
     add_controls_routes,
-    add_last_api_available_channels,
+    add_last_available_channels,
     add_last_routes,
+    add_lookup_available_channels,
     add_lookup_routes,
-    add_next_api_available_channels,
+    add_next_available_channels,
     add_next_routes,
-    add_send_api_available_channels,
+    add_send_available_channels,
     add_send_routes,
-    add_state_api_available_channels,
+    add_state_available_channels,
     add_state_routes,
 )
 from .static import CacheControlledStaticFiles
@@ -285,7 +287,7 @@ class GatewayWebApp(object):
 
         self.app.include_router(
             api_router,
-            prefix=self.settings.API_V1_STR,
+            prefix=self.settings.API_STR,
             dependencies=self._middlewares,
         )
 
@@ -326,9 +328,9 @@ class GatewayWebApp(object):
 
         add_last_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
 
-    def add_last_api_available_channels(self, fields: Optional[Set[str]] = None) -> None:
+    def add_last_available_channels(self, fields: Optional[Set[str]] = None) -> None:
         api_router = self.get_router("last")
-        add_last_api_available_channels(api_router=api_router, fields=fields)
+        add_last_available_channels(api_router=api_router, fields=fields)
 
     def add_next_api(self, field: str) -> None:
         api_router = self.get_router("next")
@@ -342,9 +344,9 @@ class GatewayWebApp(object):
 
         add_next_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
 
-    def add_next_api_available_channels(self, fields: Optional[Set[str]] = None) -> None:
+    def add_next_available_channels(self, fields: Optional[Set[str]] = None) -> None:
         api_router = self.get_router("next")
-        add_next_api_available_channels(api_router=api_router, fields=fields)
+        add_next_available_channels(api_router=api_router, fields=fields)
 
     def add_lookup_api(self, field: str) -> None:
         api_router = self.get_router("lookup")
@@ -356,6 +358,10 @@ class GatewayWebApp(object):
             model = self._get_field_pydantic_type(field)
 
         add_lookup_routes(api_router=api_router, field=field, model=model)
+
+    def add_lookup_available_channels(self, fields: Optional[Set[str]] = None) -> None:
+        api_router = self.get_router("lookup")
+        add_lookup_available_channels(api_router=api_router, fields=fields)
 
     def add_send_api(self, field: str) -> None:
         api_router = self.get_router("send")
@@ -370,9 +376,9 @@ class GatewayWebApp(object):
 
         add_send_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
 
-    def add_send_api_available_channels(self, fields: Optional[Set[str]] = None) -> None:
+    def add_send_available_channels(self, fields: Optional[Set[str]] = None) -> None:
         api_router = self.get_router("send")
-        add_send_api_available_channels(api_router=api_router, fields=fields)
+        add_send_available_channels(api_router=api_router, fields=fields)
 
     def add_state_api(self, field: str) -> None:
         api_router = self.get_router("state")
@@ -391,18 +397,19 @@ class GatewayWebApp(object):
 
         add_state_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
 
-    def add_state_api_available_channels(self, fields: Optional[Set[str]] = None) -> None:
+    def add_state_available_channels(self, fields: Optional[Set[str]] = None) -> None:
         api_router = self.get_router("state")
-        add_state_api_available_channels(api_router=api_router, fields=fields)
+        add_state_available_channels(api_router=api_router, fields=fields)
 
-    def add_controls_api(self) -> None:
+    def add_controls_api(self, field: str) -> None:
         api_router = self.get_router("controls")
-        add_controls_routes(api_router)
+        add_controls_routes(api_router, field=field)
+
+    def add_controls_available_channels(self, fields: Optional[Set[str]] = None) -> None:
+        api_router = self.get_router("controls")
+        add_controls_available_channels(api_router=api_router, fields=fields)
 
     def _finalize(self) -> None:
-        # Add control APIs
-        self.add_controls_api()
-
         # Mount API routes
         self.add_api()
 

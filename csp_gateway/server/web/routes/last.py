@@ -9,6 +9,11 @@ from csp_gateway.utils import NoProviderException
 from ..utils import get_default_responses
 from .shared import prepare_response
 
+__all__ = (
+    "add_last_routes",
+    "add_last_available_channels",
+)
+
 
 def add_last_routes(
     api_router: APIRouter,
@@ -146,7 +151,7 @@ def add_last_routes(
         )(get_last)
 
 
-def add_last_api_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
+def add_last_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -156,4 +161,4 @@ def add_last_api_available_channels(api_router: APIRouter, fields: Optional[Set[
         """
         This endpoint will return a list of string values of all available channels under the `/last` route.
         """
-        return ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields
+        return sorted(ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields)

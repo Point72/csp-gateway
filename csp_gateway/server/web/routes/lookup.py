@@ -1,10 +1,17 @@
-from typing import List, Union, get_args, get_origin
+from typing import List, Optional, Set, Union, get_args, get_origin
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from csp_gateway.server import ChannelSelection
+
 from ..utils import get_default_responses
 from .shared import prepare_response
+
+__all__ = (
+    "add_lookup_routes",
+    "add_lookup_available_channels",
+)
 
 
 def add_lookup_routes(
@@ -41,3 +48,16 @@ def add_lookup_routes(
         response_model=List[model],
         include_in_schema=False,
     )(lookup)
+
+
+def add_lookup_available_channels(api_router: APIRouter, fields: Optional[Set[str]] = None) -> None:
+    @api_router.get(
+        "/",
+        responses=get_default_responses(),
+        response_model=List[str],
+    )
+    async def get_lookup(request: Request) -> List[str]:
+        """
+        This endpoint will return a list of string values of all available channels under the `/lookup` route.
+        """
+        return sorted(ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields)
