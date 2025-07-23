@@ -279,7 +279,7 @@ if __name__ == "__main__":
     # be instantiated directly as we do so here:
 
     # Setting authentication
-    settings = GatewaySettings(API_KEY="12345", AUTHENTICATE=False)
+    settings = GatewaySettings(AUTHENTICATE=False)
 
     # instantiate gateway
     gateway = Gateway(

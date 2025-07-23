@@ -3,7 +3,7 @@ defaults:
   - /gateway: omnibus
   - _self_
 
-# csp-gateway-start --config-dir=csp_gateway/server/omnibus +config=omnibus
+# csp-gateway-start --config-dir=csp_gateway/server/demo +config=omnibus
 
-authenticate: False
+authenticate: True
 port: 8000

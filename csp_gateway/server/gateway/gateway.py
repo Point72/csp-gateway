@@ -275,11 +275,25 @@ class Gateway(ChannelsFactory[GatewayChannels]):
                 log.info("Launching web server on:")
                 url = f"http://{gethostname()}:{self.settings.PORT}"
 
-                if ui:
-                    if self.settings.AUTHENTICATE:
-                        log.info(f"\tUI: {url}?token={self.settings.API_KEY}")
+                if ui and self.settings.AUTHENTICATE:
+                    from ..middleware import MountAPIKeyMiddleware
+
+                    # TODO: Will need to handle others
+                    auth = ""
+
+                    # Find any middleware enforcing auth
+                    for module in self.modules:
+                        if isinstance(module, MountAPIKeyMiddleware) and module.enforce_ui is True:
+                            auth = module.api_key
+                            break
+
+                    if auth:
+                        log.info(f"\tUI: {url}?{module.api_key_name}={auth}")
                     else:
                         log.info(f"\tUI: {url}")
+
+                else:
+                    log.info(f"\tUI: {url}")
 
                 log.info(f"\tDocs: {url}/docs")
                 log.info(f"\tDocs: {url}/redoc")

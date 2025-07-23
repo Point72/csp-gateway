@@ -30,6 +30,21 @@ modules:
     _target_: csp_gateway.MountWebSocketRoutes
   mount_api_key_middleware:
     _target_: csp_gateway.MountAPIKeyMiddleware
+    api_key: 12345
+    enforce_ui: false
+    enforce_controls: false
+  mount_api_key_middleware_ui:
+    _target_: csp_gateway.MountAPIKeyMiddleware
+    api_key: token
+    enforce: []
+    enforce_ui: true
+    enforce_controls: false
+  mount_api_key_middleware_controls:
+    _target_: csp_gateway.MountAPIKeyMiddleware
+    api_key: 54321
+    enforce: []
+    enforce_ui: false
+    enforce_controls: true
 
 gateway:
   _target_: csp_gateway.Gateway
@@ -37,7 +52,6 @@ gateway:
     PORT: ${port}
     AUTHENTICATE: ${authenticate}
     UI: True
-    API_KEY: "12345"
   modules:
     - /modules/example_module
     - /modules/example_module_feedback
@@ -49,6 +63,8 @@ gateway:
     - /modules/mount_rest_routes
     - /modules/mount_websocket_routes
     - /modules/mount_api_key_middleware
+    - /modules/mount_api_key_middleware_ui
+    - /modules/mount_api_key_middleware_controls
   channels:
     _target_: csp_gateway.server.demo.ExampleGatewayChannels
 
