@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@finos/perspective':
-        specifier: 3.7.3
-        version: 3.7.3
+        specifier: 3.7.4
+        version: 3.7.4
       '@finos/perspective-viewer':
         specifier: 3.7.3
         version: 3.7.3
@@ -341,8 +341,8 @@ packages:
   '@finos/perspective-workspace@3.7.1':
     resolution: {integrity: sha512-VzTVn+8sMdCA2wqk/iAK2Nhuqfr8boCex/wSTvm8vvGaGqfO8nXXqHb53Dd5mUGlLg1VzTe33BXsy8tAA3JmJg==}
 
-  '@finos/perspective@3.7.3':
-    resolution: {integrity: sha512-fSC9jMkejXbVTg81ic5ll+Lq2OdDJPpBQxaWDf9oMWUbmhy5+IsF2Bo8ygAZc+Ln37BhO5ElGYp4s9xRImlhGg==}
+  '@finos/perspective@3.7.4':
+    resolution: {integrity: sha512-bTkxey2CEyK3VlV9Wz5gGhk+UrFiOYyqcKqM62CqEX7vIdQipUt38rM+rluYQoKsQsweKeHkMiw+3RV86szYbw==}
 
   '@lumino/algorithm@2.0.3':
     resolution: {integrity: sha512-DIcF7cIrGEC1Wh8DNjdwaL7IdcNs4Jj1VjO/90oHefeQPszKgc6DSfCxvbQiRanKR6tl/JL7tq4ZRPZES2oVAA==}
@@ -773,8 +773,8 @@ packages:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
     engines: {node: '>=8'}
 
-  follow-redirects@1.15.9:
-    resolution: {integrity: sha512-gew4GsXizNgdoRyqmyfMHyAmXsZDk6mHkSxZFCzW9gwlbtOW44CDtYavM+y+72qD/Vq2l550kMF52DT8fOLJqQ==}
+  follow-redirects@1.15.11:
+    resolution: {integrity: sha512-deG2P0JfjrTxl50XGCDyfI97ZGVCxIpfKYmfyrQ54n5FO/0gfIES8C/Psl6kWVDolizcaaxZJnTS0QSMxvnsBQ==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -1460,8 +1460,8 @@ packages:
   yallist@4.0.0:
     resolution: {integrity: sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==}
 
-  zx@8.7.1:
-    resolution: {integrity: sha512-28u1w2LlIfvyvJvYe6pmCipesk8oL5AFMVp+P/U445LcaPgzrU5lNDtAPd6nJvWmoCNyXZz37R/xKOGokccjsw==}
+  zx@8.7.2:
+    resolution: {integrity: sha512-4Wtl46msLFx6QW6GjLu1aRnFhavukT4VSp4tdXvfRIBRNW3RP7Si3RlRFD7YeQeecQBacVFRQQgm5LTvE/YEGQ==}
     engines: {node: '>= 12.17.0'}
     hasBin: true
 
@@ -1687,7 +1687,7 @@ snapshots:
     dependencies:
       '@d3fc/d3fc-chart': 5.1.9(d3-array@3.2.4)(d3-path@3.1.0)(d3-scale-chromatic@3.1.0)(d3-scale@4.0.2)(d3-selection@3.0.0)(d3-shape@3.2.0)
       '@d3fc/d3fc-element': 6.2.0
-      '@finos/perspective': 3.7.3
+      '@finos/perspective': 3.7.4
       '@finos/perspective-viewer': 3.7.3
       chroma-js: 1.4.1
       d3: 7.9.0
@@ -1714,7 +1714,7 @@ snapshots:
 
   '@finos/perspective-viewer-datagrid@3.7.3':
     dependencies:
-      '@finos/perspective': 3.7.3
+      '@finos/perspective': 3.7.4
       '@finos/perspective-viewer': 3.7.3
       chroma-js: 1.4.1
       regular-table: 0.6.8
@@ -1726,7 +1726,7 @@ snapshots:
 
   '@finos/perspective-viewer@3.7.3':
     dependencies:
-      '@finos/perspective': 3.7.3
+      '@finos/perspective': 3.7.4
       pro_self_extracting_wasm: 0.0.9
     transitivePeerDependencies:
       - bufferutil
@@ -1736,7 +1736,7 @@ snapshots:
 
   '@finos/perspective-workspace@3.7.1':
     dependencies:
-      '@finos/perspective': 3.7.3
+      '@finos/perspective': 3.7.4
       '@finos/perspective-viewer': 3.7.3
       '@lumino/algorithm': 2.0.3
       '@lumino/commands': 2.3.2
@@ -1753,7 +1753,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@finos/perspective@3.7.3':
+  '@finos/perspective@3.7.4':
     dependencies:
       pro_self_extracting_wasm: 0.0.9
       stoppable: 1.1.0
@@ -2387,7 +2387,7 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  follow-redirects@1.15.9: {}
+  follow-redirects@1.15.11: {}
 
   for-each@0.3.5:
     dependencies:
@@ -2493,7 +2493,7 @@ snapshots:
   http-proxy@1.18.1:
     dependencies:
       eventemitter3: 4.0.7
-      follow-redirects: 1.15.9
+      follow-redirects: 1.15.11
       requires-port: 1.0.0
     transitivePeerDependencies:
       - debug
@@ -2790,7 +2790,7 @@ snapshots:
     dependencies:
       http-server: 14.1.1
       leb128: 0.0.5
-      zx: 8.7.1
+      zx: 8.7.2
     transitivePeerDependencies:
       - debug
       - supports-color
@@ -3144,4 +3144,4 @@ snapshots:
 
   yallist@4.0.0: {}
 
-  zx@8.7.1: {}
+  zx@8.7.2: {}
