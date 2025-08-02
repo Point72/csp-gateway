@@ -71,16 +71,8 @@ def csv_writer(path, data):
         writer.writerows(dict_data)
 
 
-def json_writer(path, data, write_bad_file=False, field_map=None):
+def json_writer(path, data, write_bad_file=False):
     dict_data = convert_to_dict(data)
-    if field_map:
-        new_dict_data = []
-        for d in dict_data:
-            new_d = {}
-            for k, v in d.items():
-                new_d[field_map.get(k, k)] = v
-            new_dict_data.append(new_d)
-        dict_data = new_dict_data
     with open(path, "wb") as f:
         data_bytes = orjson.dumps(dict_data)
         if write_bad_file:
@@ -88,15 +80,8 @@ def json_writer(path, data, write_bad_file=False, field_map=None):
         f.write(data_bytes)
 
 
-_FIELD_MAP = {}
-
-
 def json_writer_bad(path, data):
     json_writer(path, data, True)
-
-
-def json_writer_field_map(path, data):
-    json_writer(path, data, False, field_map=_FIELD_MAP)
 
 
 def parquet_writer(path, data):
@@ -475,24 +460,6 @@ def test_config_options(structs):
         out = csp.run(gateway.graph, realtime=True, endtime=timedelta(seconds=2))
         match_data([d[1] for d in out["fd_channel"]], structs, exact=True)
 
-    global _FIELD_MAP
-    _FIELD_MAP = {"i": "int", "s": "string"}
-    rev_field_map = {v: k for k, v in _FIELD_MAP.items()}
-    with tempfile.TemporaryDirectory(dir=".") as dir:
-        dirpath = Path(dir)
-        writer = Writer(data=[[1, json_writer_field_map, str(dirpath / "json_file1.json"), structs]])
-        fd_module = ReadFileDrop(
-            directory_configs={
-                str(dirpath): [ReadFileDropConfiguration(channel_name="fd_channel", filedrop_type=FileDropType.JSON, field_map=rev_field_map)],
-            }
-        )
-        gateway = MyGateway(
-            modules=[writer, fd_module, AddChannelsToGraphOutput()],
-            channels=FDGatewayChannels(),
-        )
-        out = csp.run(gateway.graph, realtime=True, endtime=timedelta(seconds=2))
-        match_data([d[1] for d in out["fd_channel"]], structs)
-
 
 def test_extensions():
     structs_1 = [[FDStruct(i=i) for i in range(10)]]
@@ -572,3 +539,91 @@ def test_dict(structs):
         csp_data = [d[1] for d in out["fd_dict_basket_channel[a]"]]
         data = [d["a"] for d in structs]
         match_data(csp_data, data)
+
+
+@pytest.mark.parametrize(
+    "structs",
+    [
+        [FDStruct(i=i) for i in range(1)],
+        [FDStruct(i=i) for i in range(10)],
+    ],
+)
+def test_filedrop_type_custom(structs):
+    def custom_writer(path, data):
+        dict_data = convert_to_dict(data)
+        new_dict_data = []
+        for d in dict_data:
+            new_d = {}
+            for k, v in d.items():
+                new_d[k.upper()] = v
+            new_dict_data.append(new_d)
+        with open(path, "wb") as f:
+            data_bytes = orjson.dumps(new_dict_data)
+            f.write(data_bytes)
+
+    def custom_loader(path):
+        with open(path, "rb") as f:
+            dict_data = orjson.loads(f.read())
+        dict_data = [{k.lower(): v for k, v in d.items()} for d in dict_data]
+        return dict_data
+
+    with tempfile.TemporaryDirectory(dir=".") as dir:
+        dirpath = Path(dir)
+        writer = Writer(data=[[1, custom_writer, str(dirpath / "json_file1.json"), structs]])
+        fd_module = ReadFileDrop(
+            directory_configs={
+                str(dirpath): [
+                    ReadFileDropConfiguration(channel_name="fd_channel", filedrop_type=FileDropType.CUSTOM, loader=custom_loader),
+                ],
+            }
+        )
+        gateway = MyGateway(
+            modules=[writer, fd_module, AddChannelsToGraphOutput()],
+            channels=FDGatewayChannels(),
+        )
+        out = csp.run(gateway.graph, realtime=True, endtime=timedelta(seconds=2))
+        match_data([d[1] for d in out["fd_channel"]], structs)
+
+
+@pytest.mark.parametrize(
+    "structs",
+    [
+        [FDStruct(i=i) for i in range(1)],
+        [FDStruct(i=i) for i in range(10)],
+    ],
+)
+def test_deserializer(structs):
+    def custom_writer(path, data):
+        dict_data = convert_to_dict(data)
+        new_dict_data = []
+        for d in dict_data:
+            new_d = {}
+            for k, v in d.items():
+                new_d[k.upper()] = v
+            new_dict_data.append(new_d)
+        with open(path, "wb") as f:
+            data_bytes = orjson.dumps(new_dict_data)
+            f.write(data_bytes)
+
+    def deserializer(data):
+        new_data = {k.lower(): v for k, v in data.items()}
+        new_data.pop("id")
+        new_data.pop("timestamp")
+        return FDStruct(**new_data)
+
+    with tempfile.TemporaryDirectory(dir=".") as dir:
+        dirpath = Path(dir)
+        writer = Writer(data=[[1, custom_writer, str(dirpath / "json_file1.json"), structs]])
+        fd_module = ReadFileDrop(
+            directory_configs={
+                str(dirpath): [
+                    ReadFileDropConfiguration(channel_name="fd_channel", filedrop_type=FileDropType.JSON, deserializer=deserializer),
+                ],
+            }
+        )
+        gateway = MyGateway(
+            modules=[writer, fd_module, AddChannelsToGraphOutput()],
+            channels=FDGatewayChannels(),
+        )
+        out = csp.run(gateway.graph, realtime=True, endtime=timedelta(seconds=2))
+        match_data([d[1] for d in out["fd_channel"]], structs)

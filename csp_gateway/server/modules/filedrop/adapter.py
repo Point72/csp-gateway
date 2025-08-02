@@ -3,11 +3,11 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
-from typing import Any, Dict, List, Optional, TypeVar, get_args, get_origin
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
+import csp
 import orjson
 import pyarrow.parquet as pq
-from csp import ts
 from csp.impl.pushadapter import PushInputAdapter
 from csp.impl.types.container_type_normalizer import ContainerTypeNormalizer
 from csp.impl.wiring import py_push_adapter_def
@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 
 class FileDropType(Enum):
+    CUSTOM = auto()
     CSV = auto()
     JSON = auto()
     PARQUET = auto()
@@ -39,10 +40,12 @@ class FileDropAdapterConfiguration:
     dir_path: str
     # Format of files to expect to load properly i.e parquet, json, csv
     filedrop_type: FileDropType
-    # Map the data fields from the file to the fields of the structs
-    field_map: Dict[str, str]
     # List of extensions to filter, empty list means all extensions are allowed
     extensions: List[str]
+    # custom loader for loading files into list of struct like data
+    loader: Optional[Callable[[str], List[Any]]]
+    # deserialize each data point to data type expected by channel type
+    deserializer: Optional[Callable[[Any], Any]]
     # Extra args to the type adapter deserializer
     type_adapter_args: Dict[str, Any]
 
@@ -50,35 +53,22 @@ class FileDropAdapterConfiguration:
 class FileReaderBase:
     """The base file reader that reads data from files and generates structs"""
 
-    def __init__(self, config: FileDropAdapterConfiguration, ts_typ: object, deserializer: Optional[object] = None):
-        self.field_map = config.field_map
+    def __init__(self, config: FileDropAdapterConfiguration, ts_typ: object):
         self.extensions = config.extensions
         if hasattr(config, "type_adapter_args"):
             self.context = config.type_adapter_args
         else:
             self.context = {}
-        if not deserializer:
+        if hasattr(config, "deserializer") and config.deserializer:
+            self.deserializer = config.deserializer
+        else:
             normalized_type = ContainerTypeNormalizer.normalize_type(ts_typ)
             type_adapter = TypeAdapter(normalized_type)
-            if get_origin(normalized_type) is list:
 
-                def deserialize_tick(data, type_adapter=type_adapter, apply_field_map=self.apply_field_map, context=self.context):
-                    data = [apply_field_map(d) for d in data]
-                    return type_adapter.validate_python(data, context=context)
-            elif get_origin(normalized_type) is dict:
-                key_type, inner_type = get_args(normalized_type)
-
-                def deserialize_tick(data, type_adapter=type_adapter, apply_field_map=self.apply_field_map, context=self.context):
-                    data = {k: apply_field_map(d) for k, d in data.items()}
-                    return type_adapter.validate_python(data, context=context)
-            else:
-
-                def deserialize_tick(data, type_adapter=type_adapter, apply_field_map=self.apply_field_map, context=self.context):
-                    return type_adapter.validate_python(apply_field_map(data), context=context)
+            def deserialize_tick(data, type_adapter=type_adapter, context=self.context):
+                return type_adapter.validate_python(data, context=context)
 
             self.deserializer = deserialize_tick
-        else:
-            self.deserializer = deserializer
 
     def read(self, src_path: str) -> object:
         """Generator to return stucts from a filepath"""
@@ -98,23 +88,11 @@ class FileReaderBase:
 
         raise Exception(f"read not implemented for {self}")
 
-    def apply_field_map(self, data: dict) -> dict:
-        """Convert the keys in the data to the field names of the struct"""
-
-        if self.field_map:
-            new_data = {}
-            for k, v in data.items():
-                new_k = self.field_map.get(k, k)
-                new_data[new_k] = v
-            return new_data
-        else:
-            return data
-
 
 class FileReaderCsv(FileReaderBase):
     """File reader for json file type"""
 
-    def read_impl(self, src_path: str) -> List[dict]:
+    def read_impl(self, src_path: str) -> List[Any]:
         data = []
         with open(src_path, "r") as f:
             reader = csv.DictReader(f)
@@ -126,7 +104,7 @@ class FileReaderCsv(FileReaderBase):
 class FileReaderJson(FileReaderBase):
     """File reader for json file type"""
 
-    def read_impl(self, src_path: str) -> List[dict]:
+    def read_impl(self, src_path: str) -> List[Any]:
         with open(src_path, "rb") as f:
             data = orjson.loads(f.read())
         if isinstance(data, list):
@@ -139,9 +117,20 @@ class FileReaderJson(FileReaderBase):
 class FileReaderParquet(FileReaderBase):
     """File reader for parquet file type"""
 
-    def read_impl(self, src_path: str) -> List[dict]:
+    def read_impl(self, src_path: str) -> List[Any]:
         table = pq.read_table(src_path)
         return table.to_pylist()
+
+
+class FileReaderCustom(FileReaderBase):
+    """File reader for a custom file loader"""
+
+    def __init__(self, config: FileDropAdapterConfiguration, ts_typ: object):
+        super().__init__(config, ts_typ)
+        self._loader = config.loader
+
+    def read_impl(self, src_path: str) -> List[Any]:
+        return self._loader(src_path)
 
 
 class EventHandlerCustom(FileSystemEventHandler):
@@ -185,14 +174,15 @@ class _FileDropImpl(PushInputAdapter):
         FileDropType.CSV: FileReaderCsv,
         FileDropType.JSON: FileReaderJson,
         FileDropType.PARQUET: FileReaderParquet,
+        FileDropType.CUSTOM: FileReaderCustom,
     }
 
-    def __init__(self, config: FileDropAdapterConfiguration, ts_typ: T, deserializer: Optional[object] = None):
+    def __init__(self, config: FileDropAdapterConfiguration, ts_typ: T):
         # NOTE ts_typ is assumed to be a List["Y"] type where "Y" is the actual type
         self.dir_path = config.dir_path
         self.observer = Observer()
         reader = self.FILEREADER_MAP[config.filedrop_type]
-        file_reader = reader(config, ts_typ[0], deserializer)
+        file_reader = reader(config, ts_typ[0])
         self.event_handler = EventHandlerCustom(self, file_reader)
         self.observer.schedule(self.event_handler, self.dir_path, recursive=False)
 
@@ -213,11 +203,17 @@ class _FileDropImpl(PushInputAdapter):
 # Further we can only take the object type as output due to issues caused by using List[T] instead of T and bypassing
 # the type normalization process in csp. The user of the adapter, needs to keep track of the type they pass in ts_type,
 # and cast the ts[object] to the required ts[T], they want using csp.appy
-filedrop_adapter_def = py_push_adapter_def(
-    "filedrop_adapter_def",
+_filedrop_adapter_def = py_push_adapter_def(
+    "_filedrop_adapter_def",
     _FileDropImpl,
-    ts[object],
+    csp.ts[object],
     config=FileDropAdapterConfiguration,
     ts_typ=List[T],
-    deserializer=Optional[object],
 )
+
+
+@csp.graph
+def filedrop_adapter_def(config: FileDropAdapterConfiguration, ts_typ: "T") -> csp.ts["T"]:
+    object_data = _filedrop_adapter_def(config=config, ts_typ=[ts_typ])
+    data = csp.apply(object_data, lambda x: x, ts_typ)
+    return data
