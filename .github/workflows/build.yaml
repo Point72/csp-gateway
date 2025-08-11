@@ -35,8 +35,14 @@ jobs:
       with:
         version: 3.11
 
+<<<<<<< before updating
     - name: Set up NodeJS
       uses: actions-ext/node/setup@main
+=======
+    - uses: actions-ext/node/setup@main
+      with:
+        version: 22.x
+>>>>>>> after updating
 
     - name: Install dependencies
       run: make develop
