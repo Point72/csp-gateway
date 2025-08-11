@@ -10,8 +10,8 @@
   "scripts": {
     "build": "node build.mjs",
     "clean": "rm -rf dist playwright-report ../csp_gateway/extension",
-    "lint": "prettier --check \"src/**/*.{js,ts,jsx,tsx,less,css}\" \"tests/**/*.{js,ts,jsx,tsx}\" \"*.mjs\" \"*.json\"",
-    "fix": "prettier  --write \"src/**/*.{js,ts,jsx,tsx,less,css}\" \"tests/**/*.{js,ts,jsx,tsx}\" \"*.mjs\" \"*.json\"",
+    "lint": "prettier --check \"src/**/*.{js,ts,jsx,tsx,less,css}\" \"*.mjs\" \"*.json\"",
+    "fix": "prettier  --write \"src/**/*.{js,ts,jsx,tsx,less,css}\" \"*.mjs\" \"*.json\"",
     "test": "echo \"todo\"",
     "preinstall": "npx only-allow pnpm",
     "prepack": "pnpm run build"
