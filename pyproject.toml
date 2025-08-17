@@ -183,11 +183,15 @@ exclude = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["csp_gateway"]
+<<<<<<< before updating
 exclude = [
     "/docs",
     "/examples",
     "/js"
 ]
+=======
+exclude = ["/js"]
+>>>>>>> after updating
 
 [tool.hatch.build.hooks.hatch-js]
 path = "js"

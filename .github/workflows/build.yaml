@@ -28,15 +28,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python
       uses: actions-ext/python/setup@main
       with:
         version: 3.11
 
+<<<<<<< before updating
     - name: Set up NodeJS
       uses: actions-ext/node/setup@main
+=======
+    - uses: actions-ext/node/setup@main
+      with:
+        version: 22.x
+>>>>>>> after updating
 
     - name: Install dependencies
       run: make develop
