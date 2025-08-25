@@ -258,13 +258,15 @@ class MyAssertStartDetectorModule(GatewayModule):
     gateway: Dict[str, Gateway] = Field(default_factory=dict)
 
     @csp.node
-    def _assert_started(self):
-        with csp.start():
-            if not self.gateway["value"].running:
-                raise ValueError("Gateway thinks it isn't running yet!")
+    def _assert_started(self, timer: ts[bool]):
+        with csp.state():
+            # NOTE: The last csp.start() that runs will be the one that sets `running`
+            assert self.gateway["value"].running is False
+        if csp.ticked(timer):
+            assert self.gateway["value"].running
 
     def connect(self, channels: MyGatewayChannels) -> None:
-        self._assert_started()
+        self._assert_started(csp.const(True))
 
 
 def test_run_no_modules():

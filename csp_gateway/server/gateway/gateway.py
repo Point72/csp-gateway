@@ -165,7 +165,9 @@ class Gateway(ChannelsFactory[GatewayChannels]):
         Args:
             user_graph: A function that will be called with the channels to augment the existing application graph.
         """
-        self._start_csp_detector()
+        # Detect csp stopped, call first so it executes its stop block first
+        self._stop_csp_detector()
+
         try:
             self.channels = self.build(channels=self._instantiate_dynamic_channel(self.modules, object.__getattribute__(self, "channels")))
 
@@ -185,10 +187,16 @@ class Gateway(ChannelsFactory[GatewayChannels]):
         log.info("Launching CSP")
         csp.log(logging.INFO, "CSP Running", csp.const(True), logger=log)
 
+        # Detect csp started, call last so it executes its start block last
+        self._start_csp_detector()
+
     @csp.node
     def _start_csp_detector(self):
         with csp.start():
             self.running = True
+
+    @csp.node
+    def _stop_csp_detector(self):
         with csp.stop():
             self.running = False
 
