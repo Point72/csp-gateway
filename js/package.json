@@ -1,6 +1,6 @@
 {
   "name": "@point72/csp-gateway",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "csp-gateway is a framework for building high-performance streaming applications",
   "repository": "git@github.com:Point72/csp-gateway.git",
   "author": "Point72, L.P. <OpenSource@point72.com>",
