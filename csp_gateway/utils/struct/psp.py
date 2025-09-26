@@ -177,7 +177,18 @@ def psp_schema(cls, excluded_columns: Optional[ExcludedColumns] = None) -> Dict[
         if issubclass(value, list) or issubclass(value, ndarray):
             try:
                 # will be unrolled into root type
-                annotation = cls.__annotations__[field]
+                try:
+                    annotation = cls.__annotations__[field]
+                except KeyError:
+                    # Fallback: search bases for annotation
+                    annotation = None
+                    for base in cls.__mro__[1:]:
+                        anns = getattr(base, "__annotations__", {})
+                        if field in anns:
+                            annotation = anns[field]
+                            break
+                    if annotation is None:
+                        raise KeyError(field)
 
                 # get arg type
                 arg = get_args(annotation)[0]

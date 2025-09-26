@@ -31,12 +31,12 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr, create_model
 from pydantic._internal._model_construction import ModelMetaclass
 
 from csp_gateway.utils import (
-    GatewayStruct,
     NoProviderException,
     get_dict_basket_key_type,
     get_dict_basket_value_tstype,
     get_dict_basket_value_type,
     is_dict_basket,
+    is_gateway_struct_like,
     is_list_basket,
 )
 
@@ -89,7 +89,7 @@ def _get_ts_pydantic_field_type(outer_type):
         if is_list:
             ts_type = get_args(normalized_type)[0]
 
-        if isinstance(ts_type, type) and issubclass(ts_type, GatewayStruct):
+        if isinstance(ts_type, type) and is_gateway_struct_like(ts_type):
             if is_list:
                 return (
                     Optional[Dict[key_type, List[ts_type]]],
@@ -108,7 +108,7 @@ def _get_ts_pydantic_field_type(outer_type):
         is_list = get_origin(normalized_type) is list
         if is_list:
             ts_type = get_args(normalized_type)[0]
-        if not isinstance(ts_type, type) or (not issubclass(ts_type, GatewayStruct) and not issubclass(ts_type, State)):
+        if not isinstance(ts_type, type) or (not is_gateway_struct_like(ts_type) and not issubclass(ts_type, State)):
             # if not issubclass(ts_type, csp.Struct):
             #     raise Exception(
             #         "GatewayChannels instances can only contain timeseries of GatewayStruct, got: {}".format(
@@ -119,7 +119,7 @@ def _get_ts_pydantic_field_type(outer_type):
                 ("GatewayChannels received a type other than GatewayStruct, this channel will not be available via web APIs: {}".format(ts_type)),
                 stacklevel=1,
             )
-        if isinstance(ts_type, type) and issubclass(ts_type, GatewayStruct):
+        if isinstance(ts_type, type) and is_gateway_struct_like(ts_type):
             if is_list:
                 return (
                     Optional[List[ts_type]],

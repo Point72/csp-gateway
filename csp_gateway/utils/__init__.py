@@ -2,7 +2,15 @@ try:
     from .csp import *
     from .fastapi import query_json
     from .id_generator import get_counter
-    from .struct import GatewayStruct, IdType
+    from .struct import (
+        GatewayLookupMixin,
+        GatewayPydanticMixin,
+        GatewayStruct,
+        GatewayStructMixins,
+        IdType,
+        PerspectiveUtilityMixin,
+        is_gateway_struct_like,
+    )
     from .web.controls import Controls
 except ImportError:
     pass

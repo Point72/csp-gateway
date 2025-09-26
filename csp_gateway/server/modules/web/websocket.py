@@ -20,7 +20,7 @@ from csp_gateway.server.web import (
     get_default_responses,
     prepare_response,
 )
-from csp_gateway.utils import GatewayStruct
+from csp_gateway.utils import is_gateway_struct_like
 
 log = getLogger(__name__)
 
@@ -291,7 +291,7 @@ class MountWebSocketRoutes(GatewayModule):
                 log.info(f"unsupported data: {message}")
                 return
 
-            if issubclass(channel_type, GatewayStruct):
+            if is_gateway_struct_like(channel_type):
                 # parse out the object and send
                 msg_data = message.get("data")
 

@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 import csp
 from csp import Struct
-from csp.impl.struct import StructMeta
 from pydantic import ValidationInfo
 from pydantic_core import CoreConfig, core_schema
 
@@ -13,77 +12,61 @@ from .psp import PerspectiveUtilityMixin
 
 IdType = str
 
-__all__ = ("GatewayStruct", "IdType", "PydanticizedCspStruct")
+__all__ = (
+    "GatewayStruct",
+    "IdType",
+    "GatewayLookupMixin",
+    "GatewayPydanticMixin",
+    "GatewayStructMixins",
+    "is_gateway_struct_like",
+)
 
 
-class PydanticizedCspStruct(StructMeta):
-    """A subclass of StructMeta from csp, this class adds additional properties onto csp.Struct classes to link them into the Gateway format.
-
-    Specifically, allows lookups and automatic id generation.
-    """
-
-    def __init__(cls: Any, name: str, bases: Any, attr_dict: Any) -> None:
-        super().__init__(name, bases, attr_dict)
-        # Automatically construct pydantic model from csp.struct
-
-        # Attach an id generator to every class
+class GatewayLookupMixin:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
         cls.id_generator = get_counter(cls)
-
-        # Allow for looking up by ID
         cls._internal_mapping: Dict[str, Any] = {}
-
-        # But expose this lookup as a readonly mapping proxy
         cls.lookup = MappingProxyType(cls._internal_mapping).get
         cls._include_in_lookup = True
 
-    def omit_from_lookup(cls, omit=True):
-        cls._include_in_lookup = not omit
-
-    def included_in_lookup(cls):
-        return cls._include_in_lookup
-
-
-class GatewayStruct(PerspectiveUtilityMixin, Struct, metaclass=PydanticizedCspStruct):
-    """Sub-class of csp.Struct specifically designed for usage with csp-gateway.
-    These classes inherit from csp.Struct, but each one also contains a pydantic model
-    as an attribute that mirrors the underlying struct class.
-
-    The pydantic model can be constructed by running `.to_pydantic()` on an instance of the
-    given GatewayStruct. To access the underlying class, one can call `__pydantic_model__` on the specific GatewayStruct sub-class object.
-    For example:
-        class MyClass(GatewayStruct):
-            x: int
-        pydantic_model = MyClass.__pydantic_model__
-
-    The pydantic model of the the GatewayStruct allows for data validation. Furthermore, the utilities
-    in csp-gateway (such as Rest routes, Kafka, Perspective integrations) are specifically designed for GatewayStruct's.
-    """
-
-    id: IdType
-    timestamp: datetime
-
     def __init__(self, **kwargs: Any) -> None:
-        # auto generate id on every new construction
         if "id" not in kwargs:
-            # TODO consider postfixing with a _ for conflicts
             kwargs["id"] = str(self.__class__.id_generator.next())
         if "timestamp" not in kwargs:
             kwargs["timestamp"] = datetime.now(timezone.utc)
-
-        # And put into lookup
-        # TODO make this nicer when we switch to pydantic as first class instead of csp struct
-        if self.__class__.included_in_lookup():
+        if getattr(self.__class__, "_include_in_lookup", True):
+            # Insert into lookup before super to keep behavior consistent
+            # with previous GatewayStruct construction
+            # (instance becomes available immediately after init)
+            # Self will be fully initialized once super returns
             self.__class__._internal_mapping[kwargs["id"]] = self
-
-        # and defer to normal csp.struct construction
         super().__init__(**kwargs)
 
+    @classmethod
+    def omit_from_lookup(cls, omit=True):
+        cls._include_in_lookup = not omit
+
+    @classmethod
+    def included_in_lookup(cls):
+        return cls._include_in_lookup
+
+    @classmethod
+    def generate_id(cls) -> str:
+        return str(cls.id_generator.next())
+
+
+class GatewayPydanticMixin:
     @classmethod
     def _validate_gateway_struct_after(cls, val):
         """Validate GatewayStruct after pydantic type validation.
         A validator attached to every GatewayStruct to allow for defining custom
         model-level after validators that run after pydantic type validation.
         If not defined on a child class, the parent's validator will be used.  If defined on a child class, the parent's validator will be ignored. Please call the parent's validator directly if you want to run both.
+
+        This is meant to be mixed-in with csp.Struct's. We do not inherit from a csp.Struct
+        since csp.Struct's do not support multiple inheritance with other csp.Struct's
+
         Args:
             cls: The class this validator is attached to
             val: The value to validate
@@ -133,6 +116,42 @@ class GatewayStruct(PerspectiveUtilityMixin, Struct, metaclass=PydanticizedCspSt
             function=cls._validate_gateway_struct, schema=parent_schema, serialization=parent_schema.get("serialization")
         )
 
-    @classmethod
-    def generate_id(cls) -> str:
-        return str(cls.id_generator.next())
+
+GatewayStructMixins = (GatewayLookupMixin, GatewayPydanticMixin, PerspectiveUtilityMixin)
+
+
+class GatewayStruct(
+    *GatewayStructMixins,
+    Struct,
+):
+    """Convenience class composing gateway mixins with csp.Struct.
+
+    Provides id/timestamp fields, lookup/registry utilities, and pydantic
+    integration, plus Perspective utilities.
+    """
+
+    id: IdType
+    timestamp: datetime
+
+
+def is_gateway_struct_like(cls) -> bool:
+    """Strict check: requires all gateway mixins and `csp.Struct`.
+
+    Returns True only if `cls` is a `csp.Struct` subclass AND also
+    subclasses `GatewayLookupMixin`, `GatewayPydanticMixin`, and
+    `PerspectiveUtilityMixin`.
+    """
+    if not isinstance(cls, type):
+        return False
+    # Shortcut for explicit GatewayStruct
+    if issubclass(cls, GatewayStruct):
+        return True
+    try:
+        return (
+            issubclass(cls, Struct)
+            and issubclass(cls, GatewayLookupMixin)
+            and issubclass(cls, GatewayPydanticMixin)
+            and issubclass(cls, PerspectiveUtilityMixin)
+        )
+    except Exception:
+        return False

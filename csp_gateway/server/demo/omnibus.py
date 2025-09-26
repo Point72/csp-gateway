@@ -23,7 +23,8 @@ from csp_gateway import (
     GatewayChannels,
     GatewayModule,
     GatewaySettings,
-    GatewayStruct,
+    GatewayStructMixins,
+    IdType,
     MountAPIKeyMiddleware,
     MountChannelsGraph,
     MountControls,
@@ -68,7 +69,7 @@ def nonnegative_check(v):
     return v
 
 
-class ExampleData(GatewayStruct):
+class ExampleDataBase(csp.Struct):
     x: Annotated[int, AfterValidator(nonnegative_check)]
     y: str = ""
     internal_csp_struct: ExampleCspStruct = ExampleCspStruct()
@@ -80,6 +81,14 @@ class ExampleData(GatewayStruct):
     @classmethod
     def __get_validator_dict__(cls):
         return {"_validate_example": field_validator("x", mode="after")(nonnegative_check)}
+
+
+# We can just add in the mixins to make an existing csp.Struct
+# csp-gateway compatible, but we also could have defined
+# ExampleDataBase to inherit from GatewayStruct directly
+class ExampleData(*GatewayStructMixins, ExampleDataBase):
+    id: IdType
+    timestamp: datetime
 
 
 class ExampleEnum(Enum):

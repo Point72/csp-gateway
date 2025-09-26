@@ -8,7 +8,13 @@ from csp import Enum, Struct
 from csp.typing import Numpy1DArray
 from pydantic import BaseModel, BeforeValidator, Field, TypeAdapter, ValidationError, ValidatorFunctionWrapHandler, WrapValidator, field_validator
 
-from csp_gateway import GatewayStruct
+from csp_gateway.utils.struct import (
+    GatewayLookupMixin,
+    GatewayPydanticMixin,
+    GatewayStruct,
+    IdType,
+    PerspectiveUtilityMixin,
+)
 
 
 def nonnegative_check(cls, v):
@@ -449,3 +455,77 @@ def test_validate_gateway_struct_after_inheritance():
 
     # Fine since no custom validation
     adapter_no_new_validator.validate_python({"value": 42, "name": ""})
+
+
+def test_mixins_on_existing_csp_struct():
+    assert issubclass(GatewayStruct, Struct)
+
+    class PlainStruct(Struct):
+        a: int
+        b: str = "default"
+
+    class EnhancedStruct(
+        GatewayLookupMixin,
+        GatewayPydanticMixin,
+        PerspectiveUtilityMixin,
+        PlainStruct,
+    ):
+        id: IdType
+        timestamp: datetime
+
+    # Construct without id/timestamp to verify auto-population
+    e = EnhancedStruct(a=1)
+
+    assert isinstance(e.id, str)
+    assert isinstance(e.timestamp, datetime)
+
+    # Lookup should find the instance
+    assert EnhancedStruct.lookup(e.id) == e
+
+    # Pydantic validation via TypeAdapter should work
+    adapter = TypeAdapter(EnhancedStruct)
+    # Validate from python dict
+    e2 = adapter.validate_python({"a": 2, "b": "x"})
+    assert isinstance(e2.id, str)
+    assert isinstance(e2.timestamp, datetime)
+    assert e2.a == 2
+    assert e2.b == "x"
+
+    # Force new id/timestamp through context
+    e3 = EnhancedStruct.type_adapter().validate_python(e2.to_dict(), context={"force_new_id": True, "force_new_timestamp": True})
+    assert e3.id != e2.id
+    assert e3.timestamp != e2.timestamp
+
+    # generate_id returns a string and increments
+    id1 = EnhancedStruct.generate_id()
+    id2 = EnhancedStruct.generate_id()
+    assert isinstance(id1, str) and isinstance(id2, str)
+    assert id1 != id2
+
+
+def test_add_pydantic_mixin_in_subclass():
+    class Base(Struct):
+        a: int
+        id: str
+        timestamp: datetime
+
+    class LookupBase(GatewayLookupMixin, Base):
+        pass
+
+    # Subclass adds Pydantic mixin later
+    class PydEnhanced(GatewayPydanticMixin, LookupBase):
+        pass
+
+    e = PydEnhanced(a=10)
+    assert isinstance(e.id, str)
+    assert isinstance(e.timestamp, datetime)
+
+    # Test pydantic validation with context
+    e2 = PydEnhanced.type_adapter().validate_python(e.to_dict(), context={"force_new_id": True, "force_new_timestamp": True})
+    assert e2.id != e.id
+    assert e2.timestamp != e.timestamp
+
+    # Test pydantic validation with context
+    e3 = PydEnhanced.type_adapter().validate_python(e.to_dict())
+    assert e3.id == e.id
+    assert e3.timestamp == e.timestamp
