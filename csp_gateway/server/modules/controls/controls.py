@@ -4,8 +4,13 @@ import socket
 import threading
 from datetime import datetime, timezone
 
+try:
+    import psutil
+except ImportError:
+    # Hold and raise in model validator
+    psutil = None
+
 import csp
-import psutil
 from csp import ts
 
 from csp_gateway.server import GatewayChannels, GatewayModule
@@ -53,16 +58,16 @@ class MountControls(GatewayModule):
                 stats = {}
 
                 # Machine information
-                stats["cpu"] = psutil.cpu_percent()
-                stats["memory"] = psutil.virtual_memory().percent
+                stats["cpu"] = psutil.cpu_percent() if psutil else None
+                stats["memory"] = psutil.virtual_memory().percent if psutil else None
                 stats["memory-total"] = round(
-                    psutil.virtual_memory().available * 100 / psutil.virtual_memory().total,
+                    psutil.virtual_memory().available * 100 / psutil.virtual_memory().total if psutil else 0,
                     2,
                 )
 
                 # Process and thread information
-                current_process = psutil.Process()
-                stats["pid"] = current_process.pid
+                current_process = psutil.Process() if psutil else None
+                stats["pid"] = current_process.pid if current_process else None
                 stats["active_threads"] = threading.active_count()
 
                 # Get max threads from ulimit
