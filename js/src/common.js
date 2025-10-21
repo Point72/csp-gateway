@@ -34,15 +34,7 @@ export const processTables = (to_restore, tables, workspace, theme) => {
   const sortedTables = Object.keys(tables);
   sortedTables.sort();
 
-  const allTables = [];
-
-  sortedTables.forEach((name) => {
-    if (allTables.indexOf(name) < 0) {
-      allTables.push(name);
-    }
-  });
-
-  allTables.forEach((tableName, index) => {
+  sortedTables.forEach((tableName, index) => {
     const { table } = tables[tableName];
     const { schema } = tables[tableName];
 
@@ -58,8 +50,6 @@ export const processTables = (to_restore, tables, workspace, theme) => {
       sort: [["timestamp", "desc"]],
       theme: theme === "dark" ? "Pro Dark" : "Pro Light",
     };
-    // include all columns except id by default
-    viewer_config.columns = Object.keys(schema).filter((col) => col !== "id");
 
     if (tableName === "my_bad_struct") {
       viewer_config.group_by = [
@@ -67,15 +57,6 @@ export const processTables = (to_restore, tables, workspace, theme) => {
         "group_by_col_b",
         "group_by_col_c",
       ];
-      viewer_config.columns = Object.keys(schema).filter(
-        (col) =>
-          ![
-            "id",
-            "group_by_col_a",
-            "group_by_col_b",
-            "group_by_col_c",
-          ].includes(col),
-      );
     }
     // groupby last for all by default
     viewer_config.aggregates = Object.keys(schema).reduce((attrs, key) => {
