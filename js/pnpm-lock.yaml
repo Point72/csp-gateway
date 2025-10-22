@@ -49,7 +49,7 @@ importers:
         specifier: ^12.0.1
         version: 12.0.1
       esbuild:
-        specifier: ^0.25.8
+        specifier: ^0.25.10
         version: 0.25.10
       npm-run-all:
         specifier: ^4.1.5
