@@ -37,13 +37,16 @@ develop = [
     "hatch-js",
     "hatch-multi>=1",
     "hatchling",
-    "mdformat>=0.7.22,<0.8",
+    "mdformat>=0.7.22,<1.1",
     "mdformat-tables>=1",
     "pytest",
     "pytest-aiohttp",
     "pytest-asyncio",
     "pytest-cov",
+<<<<<<< before updating
     "python-magic",
+=======
+>>>>>>> after updating
     "ruff>=0.9,<0.15",
     "twine",
     "wheel",
