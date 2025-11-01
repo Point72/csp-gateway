@@ -30,21 +30,10 @@
     "react-modern-drawer": "^1.4.0"
   },
   "devDependencies": {
-<<<<<<< before updating
     "@finos/perspective-esbuild-plugin": "3.2.1",
     "@prospective.co/procss": "^0.1.17",
     "cpy": "^12.1.0",
     "esbuild": "^0.25.11",
-=======
-    "@finos/perspective-esbuild-plugin": "^3.2.1",
-    "@playwright/test": "^1.56.1",
-    "@prospective.co/procss": "^0.1.17",
-    "cpy": "^12.1.0",
-    "esbuild": "^0.25.11",
-    "esbuild-plugin-less": "^1.3.28",
-    "http-server": "^14.1.1",
-    "nodemon": "^3.1.10",
->>>>>>> after updating
     "npm-run-all": "^4.1.5",
     "prettier": "^3.6.2"
   }
