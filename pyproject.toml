@@ -79,7 +79,7 @@ server = [
     "perspective-python>=4,<4.1",
     "psutil",
     "pyarrow",
-    "pydantic>=2,<2.12",
+    "pydantic>=2,<2.13",
     "uvicorn>=0.28.1,<0.39",
     "uvloop",
     "websockets",
@@ -92,7 +92,7 @@ client = [
     "jsonref",
     "nest-asyncio",
     "packaging",
-    "pydantic>=2,<2.12",
+    "pydantic>=2,<2.13",
     # "polars",
     # "pandas",
 ]
