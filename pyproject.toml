@@ -43,10 +43,7 @@ develop = [
     "pytest-aiohttp",
     "pytest-asyncio",
     "pytest-cov",
-<<<<<<< before updating
     "python-magic",
-=======
->>>>>>> after updating
     "ruff>=0.9,<0.15",
     "twine",
     "wheel",
