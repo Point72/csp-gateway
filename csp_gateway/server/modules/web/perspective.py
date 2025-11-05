@@ -305,6 +305,13 @@ class MountPerspectiveTables(GatewayModule):
             all_tables[table_name] = {col: schema[col] for col in table.columns()}
         return all_tables
 
+    def _get_table_sizes(self) -> Dict[str, int]:
+        all_tables = {table_name: None for table_name in self._client.get_hosted_table_names()}
+        for table_name in all_tables:
+            table = self._client.open_table(table_name)
+            all_tables[table_name] = table.size()
+        return all_tables
+
     def rest(self, app: GatewayWebApp) -> None:
         async def websocket_handler(websocket: WebSocket) -> None:
             handler = PerspectiveStarletteHandler(perspective_server=self._server, websocket=websocket)
@@ -373,6 +380,7 @@ class MountPerspectiveTables(GatewayModule):
                 "layouts": self.layouts,
                 "default_layout": self.default_layout,
                 "tables": self._get_tables(),
+                "table_sizes": self._get_table_sizes(),
             }
 
     def run_perspective(self):
