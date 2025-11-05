@@ -21,9 +21,8 @@ export const fetchTables = async () => {
     `${protocol}//${window.location.host}/api/v1/perspective`,
   );
 
-  const response = await fetch("/api/v1/perspective/tables");
-  const schemas = await response.json();
   const meta = await (await fetch("/api/v1/perspective/meta")).json();
+  const schemas = meta.tables;
 
   const table_names = [...Object.keys(schemas)];
   const table_handles = await Promise.all(
@@ -33,9 +32,12 @@ export const fetchTables = async () => {
   const tables = await Promise.all(
     table_names.map(async (table_name, idx) => {
       const table_handle = table_handles[idx];
-      const limit = meta.limit[table_name] || undefined;
-      const index = meta.index[table_name] || undefined;
-      const architecture = meta.architecture[table_name] || "client-server";
+      const limit = meta.limits[table_name] || meta.default_limit || undefined;
+      const index = meta.indexes[table_name] || meta.default_index || undefined;
+      const architecture =
+        meta.architectures[table_name] ||
+        meta.default_architecture ||
+        "client-server";
 
       if (architecture != "server") {
         const view = await table_handle.view();

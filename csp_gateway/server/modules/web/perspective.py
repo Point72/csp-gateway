@@ -120,21 +120,33 @@ class MountPerspectiveTables(GatewayModule):
     requires: Optional[ChannelSelection] = []
 
     tables: ChannelSelection = Field(default_factory=ChannelSelection)
+
     limits: Dict[str, int] = Field(
         description="Dict mapping table name to [perspective limit](https://perspective-dev.github.io/guide/explanation/table/options.html)",
         default={},
     )
+    default_limit: Optional[int] = Field(None, description="Default limit for all tables, i.e. 1000")
     indexes: Dict[str, Optional[str]] = Field(
         description="Dict mapping table name to [perspective index](https://perspective-dev.github.io/guide/explanation/table/options.html)",
         default={},
     )
-    architecture: Dict[str, Literal["server", "client-server"]] = Field(
+    default_index: Optional[str] = Field(None, description="Default index field for all tables, i.e. 'id'")
+    architectures: Dict[str, Literal["server", "client-server"]] = Field(
         description="Dict mapping table name to [perspective data architecture](https://perspective-dev.github.io/guide/explanation/architecture.html), default is client-server",
         default={},
     )
+    default_architecture: Literal["server", "client-server"] = Field(
+        "client-server",
+        description="Default architecture for all tables, i.e. 'client-server'",
+    )
+
     layouts: Dict[str, str] = Field(default={})
+    default_layout: Optional[str] = Field(
+        None,
+        description="Default layout to use for all tables if no specific layout is provided.",
+    )
+
     update_interval: timedelta = Field(default=timedelta(seconds=2))
-    default_index: Optional[str] = Field(None, description="Default index field for all tables, i.e. 'id'")
     perspective_field: str = Field(
         None,
         description="Optional field on the channels which has an instance of perspective.Server to use, "
@@ -185,7 +197,7 @@ class MountPerspectiveTables(GatewayModule):
                 self.add_table(
                     field,
                     schema,
-                    limit=self.limits.get(field),
+                    limit=self.limits.get(field, self.default_limit),
                     index=self.indexes.get(field, self.default_index),
                 )
 
@@ -206,7 +218,7 @@ class MountPerspectiveTables(GatewayModule):
                 self.add_table(
                     field,
                     schema,
-                    limit=self.limits.get(field),
+                    limit=self.limits.get(field, self.default_limit),
                     index=self.indexes.get(field, self.default_index),
                 )
                 self.push_to_perspective(
@@ -285,6 +297,14 @@ class MountPerspectiveTables(GatewayModule):
                 s_buffer = {}
             csp.schedule_alarm(alarm, self.update_interval, True)
 
+    def _get_tables(self) -> Dict[str, Dict[str, str]]:
+        all_tables = {table_name: None for table_name in self._client.get_hosted_table_names()}
+        for table_name in all_tables:
+            table = self._client.open_table(table_name)
+            schema = table.schema()
+            all_tables[table_name] = {col: schema[col] for col in table.columns()}
+        return all_tables
+
     def rest(self, app: GatewayWebApp) -> None:
         async def websocket_handler(websocket: WebSocket) -> None:
             handler = PerspectiveStarletteHandler(perspective_server=self._server, websocket=websocket)
@@ -307,7 +327,7 @@ class MountPerspectiveTables(GatewayModule):
             response_model=Dict[str, Dict[str, str]],
             tags=["Utility"],
         )
-        async def get_perspective_table_names() -> Dict[str, Dict[str, str]]:
+        async def get_perspective_table_names():
             """
             This endpoint exposes the served [perspective](https://github.com/perspective-dev/perspective) table names and schemas.
 
@@ -315,12 +335,7 @@ class MountPerspectiveTables(GatewayModule):
             such as the one provided as an example for the `csp-gateway` project.
             Depending on your server's configuration, this might be available at [`/`](/)
             """
-            all_tables = {table_name: None for table_name in self._client.get_hosted_table_names()}
-            for table_name in all_tables:
-                table = self._client.open_table(table_name)
-                schema = table.schema()
-                all_tables[table_name] = {col: schema[col] for col in table.columns()}
-            return all_tables
+            return self._get_tables()
 
         # add route to fetch layouts
         @api_router.get(
@@ -329,7 +344,7 @@ class MountPerspectiveTables(GatewayModule):
             response_model=Dict[str, str],
             tags=["Utility"],
         )
-        async def get_perspective_layouts() -> Dict[str, str]:
+        async def get_perspective_layouts():
             """
             This endpoint exposes saved [perspective](https://github.com/perspective-dev/perspective) workspace layouts.
             These layouts can be configured server side to be provided to all clients.
@@ -340,18 +355,24 @@ class MountPerspectiveTables(GatewayModule):
         @api_router.get(
             "{}/{}".format(self._route, "meta"),
             responses=get_default_responses(),
-            response_model=Dict[str, Dict[str, Union[str, int]]],
+            response_model=Dict[str, Union[None, int, str, Dict[str, Union[str, int]], Dict[str, Dict[str, str]]]],
             tags=["Utility"],
         )
-        async def get_perspective_meta() -> Dict[str, Dict[str, Union[str, int]]]:
+        async def get_perspective_meta():
             """
             This endpoint exposes perspective meta information, including limits,
             indexes, and architecture.
             """
             return {
-                "limit": self.limits,
-                "index": self.indexes,
-                "architecture": self.architecture,
+                "limits": self.limits,
+                "default_limit": self.default_limit,
+                "indexes": self.indexes,
+                "default_index": self.default_index,
+                "architectures": self.architectures,
+                "default_architecture": self.default_architecture,
+                "layouts": self.layouts,
+                "default_layout": self.default_layout,
+                "tables": self._get_tables(),
             }
 
     def run_perspective(self):
