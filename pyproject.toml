@@ -8,9 +8,15 @@ authors = [{name = "Point72, L.P.", email = "OpenSource@point72.com"}]
 description = "csp-gateway is a framework for building high-performance streaming applications"
 readme = "README.md"
 license = { text = "Apache-2.0" }
+<<<<<<< before updating
 version = "2.4.2"
 requires-python = ">=3.10"
 keywords = ["csp", "csp-gateway"]
+=======
+version = "0.1.0"
+requires-python = ">=3.10"
+keywords = []
+>>>>>>> after updating
 
 classifiers = [
     "Development Status :: 3 - Alpha",
