@@ -45,7 +45,14 @@ class MountOutputsFolder(GatewayModule):
             if os.path.abspath(file_or_dir).startswith(self.dir) and os.path.exists(file_or_dir):
                 if os.path.isdir(file_or_dir):
                     files = os.listdir(file_or_dir)
-                    files_paths = sorted([f"{request.url._url}/{f}".replace("outputs//", "outputs/") for f in files])
+                    # Build the base url without query string (so we don't accidentally
+                    # append filenames into the query portion of the url). For example,
+                    # `http://host/outputs/testing?token=abc` should generate links like
+                    # `http://host/outputs/testing/filename?token=abc` not
+                    # `http://host/outputs/testing?token=abc/filename`.
+                    base = str(request.url).split("?", 1)[0].rstrip("/")
+                    query = f"?{request.url.query}" if request.url.query else ""
+                    files_paths = sorted([f"{base}/{f}{query}" for f in files])
                     return app.templates.TemplateResponse(
                         "files.html.j2", {"request": request, "files": files_paths, "pid": os.getpid()}, media_type="text/html"
                     )
@@ -63,4 +70,4 @@ class MountOutputsFolder(GatewayModule):
                     media_type = None
 
                 return StreamingResponse(iterfile(), media_type=media_type)
-            raise HTTPException(status_code=404, detail="Not found: {}".format(request.url._url))
+            raise HTTPException(status_code=404, detail="Not found: {}".format(str(request.url)))

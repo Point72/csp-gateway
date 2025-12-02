@@ -123,6 +123,31 @@ class TestGatewayWebserver:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
 
+        # Ensure that the files listing renders links with the token appended *after*
+        # the filename (i.e., the token should be a query parameter on the generated
+        # URL), and that the query parameter isn't accidentally placed before the
+        # filename.
+        import re
+
+        # Parent directory should include a link to the sub-directory 'temp'
+        response = rest_client.get("/outputs/testing?token=test")
+        assert response.status_code == 200
+        html = response.text
+        anchors = re.findall(r'href="([^"]+)"', html)
+        # There should be a link to the 'temp' directory and it should have the token
+        link_dir = next((a for a in anchors if a.endswith("/temp?token=test")), None)
+        assert link_dir is not None
+        assert link_dir.rfind("?") > link_dir.rfind("/")
+
+        # And the 'temp' directory listing should include the tempfile.txt link
+        response = rest_client.get("/outputs/testing/temp?token=test")
+        assert response.status_code == 200
+        html = response.text
+        anchors = re.findall(r'href="([^"]+)"', html)
+        link_file = next((a for a in anchors if a.endswith("/tempfile.txt?token=test")), None)
+        assert link_file is not None
+        assert link_file.rfind("?") > link_file.rfind("/")
+
     def test_control_heartbeat(self, rest_client: TestClient):
         response = rest_client.get("/api/v1/controls/heartbeat?token=test")
         assert response.status_code == 200
