@@ -97,13 +97,8 @@ jobs:
     - name: Test
       run: make coverage
 
-<<<<<<< before updating
     - name: Upload test results (Python)
-      uses: actions/upload-artifact@v5
-=======
-    - name: Upload test results
       uses: actions/upload-artifact@v6
->>>>>>> after updating
       with:
         name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
         path: '**/junit.xml'
@@ -128,16 +123,8 @@ jobs:
       matrix:
         wheel: ["", "client"]
 
-<<<<<<< before updating
     steps:
     - uses: actions/checkout@v6
-=======
-    - uses: actions/upload-artifact@v6
-      with:
-        name: dist-${{matrix.os}}
-        path: dist
-      if: matrix.os == 'ubuntu-latest'
->>>>>>> after updating
 
     - name: Set up Python
       uses: actions-ext/python/setup@main
