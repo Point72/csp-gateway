@@ -31,16 +31,16 @@ importers:
         version: 0.1.0(@finos/perspective-viewer@3.8.0)(@finos/perspective@3.8.0)
       react:
         specifier: ^19.2.0
-        version: 19.2.0
+        version: 19.2.3
       react-dom:
         specifier: ^19.2.0
-        version: 19.2.0(react@19.2.0)
+        version: 19.2.0(react@19.2.3)
       react-icons:
         specifier: ^5.5.0
-        version: 5.5.0(react@19.2.0)
+        version: 5.5.0(react@19.2.3)
       react-modern-drawer:
         specifier: ^1.4.0
-        version: 1.4.0(react@19.2.0)
+        version: 1.4.0(react@19.2.3)
     devDependencies:
       '@finos/perspective-esbuild-plugin':
         specifier: 3.2.1
@@ -1230,8 +1230,8 @@ packages:
     peerDependencies:
       react: '>16.0.0'
 
-  react@19.2.0:
-    resolution: {integrity: sha512-tmbWg6W31tQLeB5cdIBOicJDJRR2KzXsV7uSK9iNfLWQ5bIZfxuPEHp7M8wiHyHnn0DD1i7w3Zmin0FtkrwoCQ==}
+  react@19.2.3:
+    resolution: {integrity: sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA==}
     engines: {node: '>=0.10.0'}
 
   read-pkg@3.0.0:
@@ -1449,6 +1449,7 @@ packages:
   whatwg-encoding@2.0.0:
     resolution: {integrity: sha512-p41ogyeMUrw3jWclHWTQg1k05DSVXPLcVxRTYsXUk+ZooOCZLcoYgPZ/HL/D/N+uQPOtcp1me1WhBEaX02mhWg==}
     engines: {node: '>=12'}
+    deprecated: Use @exodus/bytes instead for a more spec-conformant and faster implementation
 
   whatwg-url@5.0.0:
     resolution: {integrity: sha512-saE57nupxk6v3HY35+jzBwYa0rKSy0XR8JSxZPwgLr7ys0IBzhGviA1/TUGJLmSVqs8pb9AnvICXEuOHLprYTw==}
@@ -2865,20 +2866,20 @@ snapshots:
 
   queue-microtask@1.2.3: {}
 
-  react-dom@19.2.0(react@19.2.0):
+  react-dom@19.2.0(react@19.2.3):
     dependencies:
-      react: 19.2.0
+      react: 19.2.3
       scheduler: 0.27.0
 
-  react-icons@5.5.0(react@19.2.0):
+  react-icons@5.5.0(react@19.2.3):
     dependencies:
-      react: 19.2.0
+      react: 19.2.3
 
-  react-modern-drawer@1.4.0(react@19.2.0):
+  react-modern-drawer@1.4.0(react@19.2.3):
     dependencies:
-      react: 19.2.0
+      react: 19.2.3
 
-  react@19.2.0: {}
+  react@19.2.3: {}
 
   read-pkg@3.0.0:
     dependencies:
