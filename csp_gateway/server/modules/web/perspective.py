@@ -8,6 +8,7 @@ from typing import (
     Literal,
     Optional,
     Set,
+    Tuple,
     TypeVar,
     Union,
 )
@@ -21,7 +22,7 @@ from csp import ts
 from fastapi import APIRouter, WebSocket
 from perspective import Client, Server, Table
 from perspective.handlers.starlette import PerspectiveStarletteHandler
-from pydantic import Field, PrivateAttr
+from pydantic import Field, PrivateAttr, field_validator
 from starlette.websockets import WebSocketDisconnect
 from typing_extensions import TypeAliasType
 
@@ -66,7 +67,7 @@ def perspective_thread(client: Client) -> None:
     psp_loop.run_forever()
 
 
-def create_pyarrow_table(key_name, data, arrow_schema, date_conversion_set):
+def create_pyarrow_table(key_name, data, computed_index, arrow_schema, date_conversion_set):
     new_data = []
     for item in data:
         flattened_items = item.psp_flatten()
@@ -74,6 +75,11 @@ def create_pyarrow_table(key_name, data, arrow_schema, date_conversion_set):
             for f in flattened_items:
                 # TODO better
                 f["basket-key"] = key_name
+        if computed_index:
+            index_name, index_fields = computed_index
+            for f in flattened_items:
+                computed_index_value = "-".join(str(f[field]) for field in index_fields)
+                f[index_name] = computed_index_value
         new_data.extend(flattened_items)
 
     # convert to arrow
@@ -93,13 +99,20 @@ def create_pyarrow_table(key_name, data, arrow_schema, date_conversion_set):
     return table
 
 
-def pull_data_thread(queue: PickleableQueue, table_insts, arrow_schema_insts, arrow_schema_date_conversions):
+def pull_data_thread(
+    queue: PickleableQueue,
+    table_insts,
+    computed_indexes,
+    arrow_schema_insts,
+    arrow_schema_date_conversions,
+):
     while True:
         try:
             for (table_name, key_name), timeserieses in queue.get().items():
                 table = create_pyarrow_table(
                     key_name,
                     timeserieses,
+                    computed_indexes.get(table_name),
                     arrow_schema_insts[table_name],
                     arrow_schema_date_conversions[table_name],
                 )
@@ -116,6 +129,17 @@ def pull_data_thread(queue: PickleableQueue, table_insts, arrow_schema_insts, ar
 
 ExcludedColumns = TypeAliasType("ExcludedColumns", "Union[Set[str], Dict[str, Union[bool, ExcludedColumns]]]")
 
+ViewConfig = Dict[
+    Literal["table", "group_by", "split_by", "aggregates", "columns", "sort", "filter", "expressions"],
+    Union[
+        str,  # table
+        List[str],  # group_by, split_by, columns, expressions
+        Dict[str, str],  # aggregates
+        List[Dict[str, Union[str, Literal["asc", "desc"]]]],  # sort
+        List[Dict[str, Union[str, List[Union[str, int, float]]]]],  # filter
+    ],
+]
+
 
 class MountPerspectiveTables(GatewayModule):
     requires: Optional[ChannelSelection] = []
@@ -123,16 +147,22 @@ class MountPerspectiveTables(GatewayModule):
     tables: ChannelSelection = Field(default_factory=ChannelSelection)
     _unused_tables: Optional[List[str]] = PrivateAttr(default_factory=list)
 
+    server_views: Optional[Dict[str, ViewConfig]] = Field(
+        default_factory=dict, description="Optional dict mapping new table name to a dict with table and view information"
+    )
+
     limits: Dict[str, int] = Field(
         description="Dict mapping table name to [perspective limit](https://perspective-dev.github.io/guide/explanation/table/options.html)",
         default={},
     )
     default_limit: Optional[int] = Field(None, description="Default limit for all tables, i.e. 1000")
-    indexes: Dict[str, Optional[str]] = Field(
-        description="Dict mapping table name to [perspective index](https://perspective-dev.github.io/guide/explanation/table/options.html)",
+    indexes: Dict[str, Optional[Union[str, List[str]]]] = Field(
+        description="Dict mapping table name to [perspective index](https://perspective-dev.github.io/guide/explanation/table/options.html). . If a multi-index is provided, will create a new computed index field.",
         default={},
     )
-    default_index: Optional[str] = Field(None, description="Default index field for all tables, i.e. 'id'")
+    default_index: Optional[Union[str, List[str]]] = Field(
+        None, description="Default index field for all tables, i.e. 'id'. If a multi-index is provided, will create a new computed index field."
+    )
     architectures: Dict[str, Literal["server", "client-server"]] = Field(
         description="Dict mapping table name to [perspective data architecture](https://perspective-dev.github.io/guide/explanation/architecture.html), default is client-server",
         default={},
@@ -178,10 +208,25 @@ class MountPerspectiveTables(GatewayModule):
     _arrow_schema_insts: Dict[str, Dict] = PrivateAttr(default_factory=dict)
     _arrow_schema_date_conversions: Dict[str, Set[str]] = PrivateAttr(default_factory=dict)
     _table_insts: Dict[str, Table] = PrivateAttr(default={})
+    # Mapping from table name to (computed index field name, list of fields used to compute index)
+    _computed_indexes: Dict[str, Tuple[str, List[str]]] = PrivateAttr(default={})
+
     _queue: PickleableQueue = PrivateAttr(default_factory=PickleableQueue)
 
+    @field_validator("server_views", mode="after")
+    def _validate_server_views(cls, v: Dict[str, ViewConfig]) -> Dict[str, ViewConfig]:
+        for new_table_name, view_config in v.items():
+            # Must specify table
+            if "table" not in view_config:
+                raise ValueError(f"View config for {new_table_name} must specify a base 'table' to create the view from.")
+            # Must specify at least one view operation
+            if len(view_config.keys()) == 1:
+                raise ValueError(f"View config for {new_table_name} must specify at least one view operation in addition to the base 'table'.")
+        return v
+
     def _connect_all_tables(self, channels: GatewayChannels) -> None:
-        for field in self.tables.select_from(channels):
+        selected_tables = set(self.tables.select_from(channels)) | set(_["table"] for _ in self.server_views.values())
+        for field in selected_tables:
             edge = channels.get_channel(field)
             excluded_columns = self.excluded_table_columns.get(field, None)
             if isinstance(edge, dict):
@@ -235,6 +280,12 @@ class MountPerspectiveTables(GatewayModule):
                 if v is date:
                     self._arrow_schema_date_conversions[field].add(k)
 
+        # Add server-defined views
+        for new_table_name, view_config in self.server_views.items():
+            base_table = self._client.open_table(view_config.pop("table"))
+            view = base_table.view(**view_config)
+            self._table_insts[new_table_name] = self._client.table(view, name=new_table_name)
+
     def get_schema_from_field(self, channels: GatewayChannels, field: str):
         edge = channels.get_channel(field)
 
@@ -257,6 +308,12 @@ class MountPerspectiveTables(GatewayModule):
         return struct_type.psp_schema(excluded_columns)
 
     def add_table(self, field: str, schema, limit: int = None, index: str = None):
+        if isinstance(index, list):
+            # create a new computed index field
+            index_fields = index
+            index = "index" if "index" not in schema else "-".join(index)
+            schema[index] = str
+            self._computed_indexes[field] = (index, index_fields)
         self._table_insts[field] = self._client.table(schema, limit, index, name=field)
 
     def connect(self, channels: GatewayChannels) -> None:
@@ -376,7 +433,16 @@ class MountPerspectiveTables(GatewayModule):
         @api_router.get(
             "{}/{}".format(self._route, "meta"),
             responses=get_default_responses(),
-            response_model=Dict[str, Union[None, int, str, Dict[str, Union[str, int]], Dict[str, Dict[str, str]], List[str]]],
+            response_model=Dict[
+                str,
+                Union[
+                    None,
+                    int,  # limit
+                    str,  # index, architecture
+                    List[str],  # index, unused tables
+                    Dict[str, Union[str, int, List[str], Dict[str, str]]],
+                ],
+            ],
             tags=["Utility"],
         )
         async def get_perspective_meta():
@@ -387,7 +453,7 @@ class MountPerspectiveTables(GatewayModule):
             return {
                 "limits": self.limits,
                 "default_limit": self.default_limit,
-                "indexes": self.indexes,
+                "indexes": {**self.indexes, **{k: v[0] for k, v in self._computed_indexes.items()}},
                 "default_index": self.default_index,
                 "architectures": self.architectures,
                 "default_architecture": self.default_architecture,
@@ -405,6 +471,7 @@ class MountPerspectiveTables(GatewayModule):
             args=(
                 self._queue,
                 self._table_insts,
+                self._computed_indexes,
                 self._arrow_schema_insts,
                 self._arrow_schema_date_conversions,
             ),

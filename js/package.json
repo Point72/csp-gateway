@@ -17,15 +17,15 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@perspective-dev/client": "~4.0.1",
-    "@perspective-dev/server": "~4.0.1",
-    "@perspective-dev/viewer": "~4.0.1",
-    "@perspective-dev/viewer-d3fc": "~4.0.1",
-    "@perspective-dev/viewer-datagrid": "~4.0.1",
-    "@perspective-dev/workspace": "~4.0.1",
+    "@perspective-dev/client": "~4.1.0",
+    "@perspective-dev/server": "~4.1.0",
+    "@perspective-dev/viewer": "~4.1.0",
+    "@perspective-dev/viewer-d3fc": "~4.1.0",
+    "@perspective-dev/viewer-datagrid": "~4.1.0",
+    "@perspective-dev/workspace": "~4.1.0",
     "perspective-summary": "~0.1.0",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "react-icons": "^5.5.0",
     "react-modern-drawer": "^1.4.0"
   },
@@ -35,6 +35,6 @@
     "cpy": "^12.1.0",
     "esbuild": "^0.27.2",
     "npm-run-all": "^4.1.5",
-    "prettier": "^3.7.4"
+    "prettier": "^3.8.1"
   }
 }

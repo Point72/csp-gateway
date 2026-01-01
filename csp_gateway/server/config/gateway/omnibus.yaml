@@ -27,6 +27,12 @@ modules:
       str_basket: 20
     architectures:
       basket: server
+    indexes:
+      example: ["x", "y"]
+    server_views:
+      server_view:
+        table: example
+        group_by: ["z"]
   mount_rest_routes:
     _target_: csp_gateway.MountRestRoutes
     force_mount_all: True

@@ -48,7 +48,7 @@ export function Workspace(props) {
                 viewer.theme = theme === "dark" ? "Pro Dark" : "Pro Light";
               }
             });
-            await workspace.current.restore(layout);
+            // await workspace.current.restore(layout);
           }
 
           // update previous ref
@@ -62,31 +62,34 @@ export function Workspace(props) {
   // setup tables
   useEffect(() => {
     if (workspace.current) {
-      fetchTables().then((tables) => {
-        // load tables into perspective workspace
-        const defaultLayout = getDefaultWorkspaceLayout();
+      // load tables into perspective workspace
+      const defaultLayout = getDefaultWorkspaceLayout();
 
-        // handle theme
-        const theme = getCurrentTheme();
+      fetchTables().then(({ worker, tables }) => {
+        console.log(worker);
+        console.log(tables);
+        workspace.current.load(worker).then(() => {
+          // handle theme
+          const theme = getCurrentTheme();
 
-        // handle tables
-        if (processTables) {
-          processTables(defaultLayout, tables, workspace.current, theme);
-        } else {
-          const sortedTables = Object.keys(tables);
-          sortedTables.sort();
-          sortedTables.forEach((tableName, index) => {
-            const { table, schema } = tables[tableName];
-            workspace.current.addTable(tableName, table);
-            const generated_id = `${tableName.toUpperCase()}_GENERATED_${index + 1}`;
-            defaultLayout.detail.main.widgets.push(generated_id);
-            defaultLayout.viewers[generated_id] = getDefaultViewerConfig(
-              tableName,
-              schema,
-              theme,
-            );
-          });
-        }
+          // handle tables
+          if (processTables) {
+            processTables(defaultLayout, tables, workspace.current, theme);
+          } else {
+            const sortedTables = Object.keys(tables);
+            sortedTables.sort();
+            sortedTables.forEach((tableName, index) => {
+              const { table, schema } = tables[tableName];
+              const generated_id = `${tableName.toUpperCase()}_GENERATED_${index + 1}`;
+              defaultLayout.detail.main.widgets.push(generated_id);
+              defaultLayout.viewers[generated_id] = getDefaultViewerConfig(
+                tableName,
+                schema,
+                theme,
+              );
+            });
+          }
+        });
 
         // hide the progress bar
         hideLoader();
