@@ -8,6 +8,8 @@ and those tests in turn ensure that this demo works.
 from datetime import date, datetime, timedelta
 from logging import INFO, basicConfig
 from pathlib import Path
+from random import choice
+from string import ascii_lowercase
 from typing import Annotated, Dict, List
 
 import csp
@@ -72,6 +74,7 @@ def nonnegative_check(v):
 class ExampleDataBase(csp.Struct):
     x: Annotated[int, AfterValidator(nonnegative_check)]
     y: str = ""
+    z: str = ""
     internal_csp_struct: ExampleCspStruct = ExampleCspStruct()
     data: Numpy1DArray[float] = np.array([])
     mapping: Dict[str, int] = {}
@@ -152,6 +155,7 @@ class ExampleModule(GatewayModule):
             return ExampleData(
                 x=last_x,
                 y=str(last_x) * multiplier,
+                z=choice(ascii_lowercase),
                 data=np.random.random((SCALE,)),
                 mapping={str(last_x): last_x},
             )
@@ -304,6 +308,15 @@ if __name__ == "__main__":
                 perspective_field="perspective",
                 layouts={
                     "Server Defined Layout": '{"sizes":[1],"detail":{"main":{"type":"split-area","orientation":"vertical","children":[{"type":"split-area","orientation":"horizontal","children":[{"type":"tab-area","widgets":["EXAMPLE_LIST_GENERATED_4"],"currentIndex":0},{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_1"],"currentIndex":0}],"sizes":[0.3,0.7]},{"type":"split-area","orientation":"horizontal","children":[{"type":"tab-area","widgets":["EXAMPLE_GENERATED_3"],"currentIndex":0},{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_0"],"currentIndex":0}],"sizes":[0.3,0.7]}],"sizes":[0.5,0.5]}},"viewers":{"EXAMPLE_LIST_GENERATED_4":{"version":"3.3.4","plugin":"Datagrid","plugin_config":{"columns":{},"edit_mode":"READ_ONLY","scroll_lock":false},"columns_config":{},"title":"example_list","group_by":[],"split_by":[],"columns":["timestamp","x","y","data","mapping","dt","d","internal_csp_struct.z"],"filter":[],"sort":[["timestamp","desc"]],"expressions":{},"aggregates":{},"table":"example_list","settings":false},"PERSPECTIVE_GENERATED_ID_1":{"version":"3.3.4","plugin":"X Bar","plugin_config":{},"columns_config":{},"title":"example_list (*)","group_by":["x"],"split_by":[],"columns":["y"],"filter":[],"sort":[["x","asc"]],"expressions":{},"aggregates":{"y":"median"},"table":"example_list","settings":false},"EXAMPLE_GENERATED_3":{"version":"3.3.4","plugin":"Datagrid","plugin_config":{"columns":{},"edit_mode":"READ_ONLY","scroll_lock":false},"columns_config":{},"title":"example","group_by":[],"split_by":[],"columns":["timestamp","x","y","data","mapping","dt","d","internal_csp_struct.z"],"filter":[],"sort":[["timestamp","desc"]],"expressions":{},"aggregates":{},"table":"example","settings":false},"PERSPECTIVE_GENERATED_ID_0":{"version":"3.3.4","plugin":"Treemap","plugin_config":{},"columns_config":{},"title":"example (*)","group_by":["x"],"split_by":[],"columns":["y","x",null],"filter":[],"sort":[["timestamp","desc"]],"expressions":{},"aggregates":{},"table":"example","settings":false}}}'  # noqa: E501
+                },
+                limits={"str_basket": 20},
+                architectures={"basket": "server"},
+                indexes={"example": ["x", "y"]},
+                server_views={
+                    "server_view": {
+                        "table": "example",
+                        "group_by": ["z"],
+                    },
                 },
                 update_interval=timedelta(seconds=1),
             ),
