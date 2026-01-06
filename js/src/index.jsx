@@ -14,6 +14,8 @@ import {
   getServerDefinedLayouts,
 } from "./components/perspective";
 
+import { processTables } from "./common";
+
 /* exports */
 export * from "./common";
 export * from "./components";
@@ -22,7 +24,6 @@ export default function App(props) {
   const {
     headerLogo,
     footerLogo,
-    processTables,
     overrideSettingsButtons,
     extraSettingsButtons,
     shutdown,
