@@ -383,6 +383,25 @@ class TestGatewayWebserver:
         response = rest_client.get(f"/api/v1/lookup/example_list/{id}?token=test")
         assert datum == response.json()[0]
 
+    def test_csp_global_lookup_by_id(self, rest_client: TestClient):
+        """Test the global lookup endpoint that looks up any GatewayStruct by its unique ID."""
+        # get an existing object to fetch its ID
+        data = self._wait_for_data(rest_client=rest_client)
+        datum = data[0]
+        assert "id" in datum
+        id = datum["id"]
+
+        # lookup by global ID endpoint
+        response = rest_client.get(f"/api/v1/lookup/id/{id}?token=test")
+        assert response.status_code == 200
+        assert response.json()[0]["id"] == id
+
+    def test_csp_global_lookup_not_found(self, rest_client: TestClient):
+        """Test that global lookup returns 404 for non-existent ID."""
+        response = rest_client.get("/api/v1/lookup/id/nonexistent_id_12345?token=test")
+        assert response.status_code == 404
+        assert "No GatewayStruct found" in response.json()["detail"]
+
     def test_csp_toplevel_last(self, rest_client: TestClient):
         self._wait_for_data(rest_client=rest_client)
 
