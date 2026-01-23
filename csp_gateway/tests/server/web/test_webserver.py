@@ -25,7 +25,7 @@ from csp_gateway import (
     Query,
     __version__,
 )
-from csp_gateway.client import GatewayClient, GatewayClientConfig
+from csp_gateway.client import GatewayClient, GatewayClientConfig, ReturnType
 from csp_gateway.server.demo import (
     ExampleEnum,
     ExampleGatewayChannels,
@@ -572,7 +572,7 @@ class TestGatewayWebserver:
             assert isinstance(datum["data"], list)
             assert isinstance(datum["mapping"], dict)
 
-        data_response = gateway_client.last("example", return_raw_json_override=False)
+        data_response = gateway_client.last("example", return_type_override=ReturnType.Wrapper)
         expected_columns = {"id", "timestamp", "x", "y", "data", "dt", "d", "internal_csp_struct.z", "mapping"}
         data_pd = data_response.as_pandas_df()
         actual_columns_pd = set(data_pd.columns)
