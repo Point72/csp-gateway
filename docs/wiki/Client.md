@@ -23,9 +23,15 @@ A client as a small number of general-purpose methods. In alphabetical order:
 
 Additionally, a client has some streaming methods available when websockets are configured:
 
-- `stream`: call a callback when a channel ticks
-- `subscribe`: subscribe to data on a channel
-- `unsubscribe`: unsubscribe to data on a channel
+- `stream`: stream data from channels (callback-based for sync client, async generator for async client)
+- `subscribe`: subscribe to data on a channel (for use with manual streaming control)
+- `unsubscribe`: unsubscribe from data on a channel
+- `publish`: send data to a channel via websocket
+
+> [!NOTE]
+>
+> For dict basket channels, streaming methods accept an optional `key` parameter to target specific basket keys.
+> In `stream()`, you can pass tuples of `(channel, key)` to subscribe to specific keys.
 
 Let's explore some of the functionality of the basic demo server. To start, we should run the demo server in another process:
 

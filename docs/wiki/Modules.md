@@ -235,20 +235,22 @@ modules:
 
 > [!NOTE]
 >
-> The REST API is launched when starting the `Gateway` instance with `rest=True`
+> The Websocket API is launched when starting the `Gateway` instance with `rest=True`
 
 ### Configuration
 
 ```yaml
 modules:
   mount_websocket_routes:
-    _target_: csp_gateway.MountRestRoutes
+    _target_: csp_gateway.MountWebSocketRoutes
 ```
 
 It has a few additional configuration options:
 
 - **readonly** (`bool=False`): disallow sending in data back to the `Gateway`
 - **ping_time_s** (`int=1`): configure the default websocket ping (keepalive) interval in seconds
+- **selection** (`ChannelSelection`): configure which channels are available for websocket streaming
+- **prefix** (`str="/stream"`): configure the websocket endpoint path
 
 ## PrintChannels
 
