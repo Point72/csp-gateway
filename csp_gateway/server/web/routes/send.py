@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from csp_gateway.utils import NoProviderException
 
 from ..utils import get_default_responses
-from .shared import prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +32,9 @@ def add_send_routes(
         is_list_model = False
         base_model = model
         list_model = List[model]
+
+    # Get the fully qualified type name for the description
+    fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
 
@@ -82,6 +85,7 @@ def add_send_routes(
             "/{}/{{key:path}}".format(field),
             responses=get_default_responses(),
             name="Send {} by key".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(send)
         api_router.post(
             "/{}/{{key:path}}".format(field.replace("_", "-")),
@@ -118,6 +122,7 @@ def add_send_routes(
             "/{}".format(field),
             responses=get_default_responses(),
             name="Send {}".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(send)
         api_router.post(
             "/{}".format(field.replace("_", "-")),
@@ -174,6 +179,7 @@ def add_send_routes(
             "/{}".format(field),
             responses=get_default_responses(),
             name="Send {}".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(send)
         api_router.post(
             "/{}".format(field.replace("_", "-")),
