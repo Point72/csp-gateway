@@ -6,8 +6,9 @@ import polars
 import pytest
 from packaging import version
 
-from csp_gateway import ClientConfig, GatewayClient, ResponseWrapper
+from csp_gateway import ClientConfig, GatewayClient, ResponseWrapper, ReturnType
 from csp_gateway.client.client import _host
+from csp_gateway.server.demo import ExampleData
 from csp_gateway.utils import get_thread
 
 #  Struct for response wrapper
@@ -197,3 +198,119 @@ def test_host_parsing():
 
     cfg = ClientConfig(host="https://my.host", port=None, protocol="http")
     assert _host(cfg) == "https://my.host"
+
+
+def test_return_type_enum():
+    """Test that ReturnType enum values are correct."""
+    assert ReturnType.Raw == "raw"
+    assert ReturnType.JSON == "json"
+    assert ReturnType.Pandas == "pandas"
+    assert ReturnType.Polars == "polars"
+    assert ReturnType.Struct == "struct"
+    assert ReturnType.Wrapper == "wrapper"
+
+
+def test_client_config_return_type():
+    """Test that ClientConfig accepts return_type parameter."""
+    cfg = ClientConfig(return_type=ReturnType.Raw)
+    assert cfg.return_type == ReturnType.Raw
+
+    cfg = ClientConfig(return_type=ReturnType.JSON)
+    assert cfg.return_type == ReturnType.JSON
+
+    cfg = ClientConfig(return_type=ReturnType.Pandas)
+    assert cfg.return_type == ReturnType.Pandas
+
+    cfg = ClientConfig(return_type=ReturnType.Struct)
+    assert cfg.return_type == ReturnType.Struct
+
+    # Test string conversion (string values are promoted to enum)
+    cfg = ClientConfig(return_type="wrapper")
+    assert cfg.return_type == ReturnType.Wrapper
+
+    cfg = ClientConfig(return_type="raw")
+    assert cfg.return_type == ReturnType.Raw
+
+    cfg = ClientConfig(return_type="json")
+    assert cfg.return_type == ReturnType.JSON
+
+    cfg = ClientConfig(return_type="pandas")
+    assert cfg.return_type == ReturnType.Pandas
+
+    cfg = ClientConfig(return_type="polars")
+    assert cfg.return_type == ReturnType.Polars
+
+    cfg = ClientConfig(return_type="struct")
+    assert cfg.return_type == ReturnType.Struct
+
+
+def test_response_wrapper_as_struct():
+    """Test ResponseWrapper.as_struct() method."""
+    # Create sample ExampleData JSON
+    example_json = [
+        {"id": "test-id-1", "x": 1, "y": "111", "data": [], "mapping": {}},
+        {"id": "test-id-2", "x": 2, "y": "222", "data": [], "mapping": {}},
+    ]
+
+    # Create ResponseWrapper with type_name
+    resp = ResponseWrapper(
+        json_data=example_json,
+        type_name="csp_gateway.server.demo.omnibus.ExampleData",
+    )
+
+    # Convert to structs
+    structs = resp.as_struct()
+
+    assert isinstance(structs, list)
+    assert len(structs) == 2
+    assert all(isinstance(s, ExampleData) for s in structs)
+    assert structs[0].x == 1
+    assert structs[0].y == "111"
+    assert structs[1].x == 2
+    assert structs[1].y == "222"
+
+
+def test_response_wrapper_as_struct_single_item():
+    """Test ResponseWrapper.as_struct() with a single item (not a list)."""
+    example_json = {"id": "test-id-1", "x": 5, "y": "55555", "data": [], "mapping": {}}
+
+    resp = ResponseWrapper(
+        json_data=example_json,
+        type_name="csp_gateway.server.demo.omnibus.ExampleData",
+    )
+
+    struct = resp.as_struct()
+
+    assert isinstance(struct, ExampleData)
+    assert struct.x == 5
+    assert struct.y == "55555"
+
+
+def test_response_wrapper_as_struct_empty():
+    """Test ResponseWrapper.as_struct() with empty data."""
+    resp = ResponseWrapper(
+        json_data=[],
+        type_name="csp_gateway.server.demo.omnibus.ExampleData",
+    )
+
+    structs = resp.as_struct()
+    assert structs == []
+
+
+def test_response_wrapper_as_struct_no_type_name():
+    """Test ResponseWrapper.as_struct() raises error when type_name is missing."""
+    resp = ResponseWrapper(json_data=[{"x": 1}])
+
+    with pytest.raises(ValueError, match="no type_name available"):
+        resp.as_struct()
+
+
+def test_response_wrapper_as_struct_invalid_type():
+    """Test ResponseWrapper.as_struct() raises error for invalid type name."""
+    resp = ResponseWrapper(
+        json_data=[{"x": 1}],
+        type_name="nonexistent.module.SomeClass",
+    )
+
+    with pytest.raises(ValueError, match="Cannot import type"):
+        resp.as_struct()

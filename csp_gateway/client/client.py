@@ -11,6 +11,7 @@ from asyncio import (
     wrap_future,
 )
 from copy import deepcopy
+from enum import Enum
 from functools import lru_cache
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
@@ -53,6 +54,7 @@ __all__ = (
     "GatewayClientConfig",
     "ResponseWrapper",
     "ResponseType",
+    "ReturnType",
     "BaseGatewayClient",
     "SyncGatewayClientMixin",
     "SyncGatewayClient",
@@ -84,6 +86,26 @@ _POLARS_TYPE_MAPPING = {
     "boolean": "Boolean",
     "object": "Object",
 }
+
+
+class ReturnType(str, Enum):
+    """Enum specifying how the client should return response data.
+
+    Attributes:
+        Raw: Return raw JSON data as a dictionary
+        JSON: Alias for Raw - return raw JSON data as a dictionary
+        Pandas: Return data as a pandas DataFrame
+        Polars: Return data as a polars DataFrame
+        Struct: Return data as the original struct type (requires type_ in openapi_extra)
+        Wrapper: Return data wrapped in a ResponseWrapper object
+    """
+
+    Raw = "raw"
+    JSON = "json"
+    Pandas = "pandas"
+    Polars = "polars"
+    Struct = "struct"
+    Wrapper = "wrapper"
 
 
 def _openapi_to_dataframe_dtypes(schema, path, df_type_mapping):
@@ -139,6 +161,34 @@ def _get_schema(spec: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_type_name(spec: Dict[str, Any], path: str) -> Optional[str]:
+    """Get the fully qualified type name from the openapi_extra type_ field.
+
+    Args:
+        spec: The OpenAPI specification dictionary
+        path: The API path to look up
+
+    Returns:
+        The fully qualified type name (e.g., 'csp_gateway.server.demo.omnibus.ExampleData')
+        or None if not found.
+    """
+    if (paths := spec.get("paths")) is None:
+        return None
+
+    if (path_data := paths.get(path)) is None:
+        # could be a lookup for an id, or a key
+        base_path = path.rpartition("/")[0]
+        if (possible_path := paths.get(base_path + "/{id}")) is not None:
+            path_data = possible_path
+        elif (possible_path := paths.get(base_path + "/{key}")) is not None:
+            path_data = possible_path
+        else:
+            return None
+
+    response_type = "get" if "get" in path_data else "post"
+    return path_data[response_type].get("type_")
+
+
 def _raiseIfNotMounted(foo: Callable) -> Callable:
     group = foo.__name__
 
@@ -183,9 +233,18 @@ class GatewayClientConfig(BaseModel):
     api_route: str = "/api/v1"
     authenticate: bool = False
     api_key: str = ""
-    return_raw_json: bool = Field(
-        True, description="Determines whether REST request responses should be returned as raw json data, or as a ResponseWrapper object."
+    return_type: ReturnType = Field(
+        default=ReturnType.Raw,
+        description="Determines how REST request responses should be returned. Options: 'raw' (JSON dict), 'pandas' (DataFrame), 'polars' (DataFrame), 'struct' (original type), 'wrapper' (ResponseWrapper object).",
     )
+
+    @field_validator("return_type", mode="before")
+    @classmethod
+    def _promote_return_type(cls, v):
+        """Allow string values to be promoted to ReturnType enum."""
+        if isinstance(v, str):
+            return ReturnType(v)
+        return v
 
     @model_validator(mode="after")
     def validate_config(self):
@@ -207,6 +266,7 @@ class GatewayClientConfig(BaseModel):
 class ResponseWrapper(BaseModel):
     json_data: Any
     openapi_schema: Optional[Dict[str, Any]] = None
+    type_name: Optional[str] = None
 
     @field_validator("openapi_schema", mode="after")
     def validate_openapi_schema(cls, v):
@@ -221,6 +281,55 @@ class ResponseWrapper(BaseModel):
 
     def as_json(self):
         return self.json_data
+
+    def as_struct(self) -> Union[Any, List[Any]]:
+        """Convert JSON data to the original struct type using the type_ from openapi_extra.
+
+        This method uses the fully qualified type name stored in openapi_extra to
+        dynamically import and instantiate the appropriate struct class.
+
+        Returns:
+            A single struct instance or a list of struct instances, depending on the JSON data.
+
+        Raises:
+            ValueError: If no type_name is available or the type cannot be imported.
+
+        Example:
+            >>> resp = client.last("example")  # with return_type=ReturnType.Wrapper
+            >>> structs = resp.as_struct()  # Returns List[ExampleData]
+        """
+        if not self.type_name:
+            raise ValueError("Cannot convert to struct: no type_name available. Ensure the route has 'type_' defined in openapi_extra.")
+
+        # Import the class dynamically
+        try:
+            module_path, class_name = self.type_name.rsplit(".", 1)
+            import importlib
+
+            module = importlib.import_module(module_path)
+            struct_class = getattr(module, class_name)
+        except (ValueError, ImportError, AttributeError) as e:
+            raise ValueError(f"Cannot import type '{self.type_name}': {e}") from e
+
+        # Convert JSON to struct instances using type_adapter if available (for GatewayStruct types)
+        # or model_validate for pydantic types, or direct instantiation for simple types
+        if not self.json_data:
+            return []
+
+        def _create_instance(item):
+            # Try type_adapter first (for GatewayStruct types with pydantic integration)
+            if hasattr(struct_class, "type_adapter"):
+                return struct_class.type_adapter().validate_python(item)
+            # Try model_validate for standard pydantic models
+            if hasattr(struct_class, "model_validate"):
+                return struct_class.model_validate(item)
+            # Fall back to direct instantiation
+            return struct_class(**item)
+
+        if isinstance(self.json_data, list):
+            return [_create_instance(item) for item in self.json_data]
+        else:
+            return _create_instance(self.json_data)
 
     def as_pandas_df(self) -> "PandasDataFrame":
         try:
@@ -272,7 +381,7 @@ class ResponseWrapper(BaseModel):
         return pl.json_normalize(self.json_data, schema=polars_dtypes)
 
 
-ResponseType = Union[ResponseWrapper, Dict[str, Any]]
+ResponseType = Union[ResponseWrapper, Dict[str, Any], "PandasDataFrame", "PolarsDataFrame", List[Any], Any]
 
 
 def _get_or_new_event_loop() -> AbstractEventLoop:
@@ -412,11 +521,25 @@ class BaseGatewayClient(BaseModel):
         except JSONDecodeError as e:
             resp_json = dict(detail=str(e))
         if resp.status_code == 200:
-            if self.config.return_raw_json:
+            return_type = self.config.return_type
+            if return_type in (ReturnType.Raw, ReturnType.JSON):
                 return resp_json
+
             path = self._buildpath(route=route)
             schema = _get_schema(spec=self._openapi_spec, path=path)
-            return ResponseWrapper(json_data=resp_json, openapi_schema=schema)
+            type_name = _get_type_name(spec=self._openapi_spec, path=path)
+            wrapper = ResponseWrapper(json_data=resp_json, openapi_schema=schema, type_name=type_name)
+
+            if return_type == ReturnType.Wrapper:
+                return wrapper
+            elif return_type == ReturnType.Pandas:
+                return wrapper.as_pandas_df()
+            elif return_type == ReturnType.Polars:
+                return wrapper.as_polars_df()
+            elif return_type == ReturnType.Struct:
+                return wrapper.as_struct()
+            else:
+                return wrapper
         elif resp.status_code == 404:
             raise ServerRouteNotFoundException(resp_json.get("detail"))
         elif resp.status_code == 422:
@@ -662,72 +785,72 @@ class BaseGatewayClient(BaseModel):
 class SyncGatewayClientMixin:
     @_raiseIfNotMounted
     def controls(
-        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None
+        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None
     ) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         if field in ("shutdown",):
             res = self._post("{}/{}".format("controls", field), data=data, timeout=timeout)
         else:
             res = self._get("{}/{}".format("controls", field), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
-    def last(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+    def last(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None) -> ResponseType:
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._get("{}/{}".format("last", field), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
-    def lookup(self, field: str, id: str, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+    def lookup(self, field: str, id: str, timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None) -> ResponseType:
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._get("{}/{}/{}".format("lookup", field, id), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
-    def next(self, field: str = "", timeout: float = None, return_raw_json_override: Optional[bool] = None) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+    def next(self, field: str = "", timeout: float = None, return_type_override: Optional[ReturnType] = None) -> ResponseType:
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._get("{}/{}".format("next", field), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
     def send(
-        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None
+        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None
     ) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._post("{}/{}".format("send", field), data=data, timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
     def state(
-        self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None, return_raw_json_override: Optional[bool] = None
+        self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None, return_type_override: Optional[ReturnType] = None
     ) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         params = None if query is None else {"query": query.model_dump_json()}
         res = self._get("{}/{}".format("state", field), timeout=timeout, params=params)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None):
