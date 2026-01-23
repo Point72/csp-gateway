@@ -24,7 +24,7 @@ class ExampleModule(GatewayModule):
         ...
 ```
 
-`GatewayModule` is a subclass of Pydantic `BaseModel`, and so has type validation ands Hydra-driven configuration.
+`GatewayModule` is a subclass of Pydantic `BaseModel`, and so has type validation and Hydra-driven configuration.
 
 ## Extending the API
 
