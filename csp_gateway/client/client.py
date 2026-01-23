@@ -12,7 +12,6 @@ from asyncio import (
 )
 from copy import deepcopy
 from functools import lru_cache
-from json import JSONDecodeError
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
@@ -27,9 +26,14 @@ try:
 except ImportError:
     from pydantic import BaseModel
 try:
-    from orjson import loads
+    from orjson import JSONDecodeError, dumps as orjson_dumps, loads
+
+    def dumps(obj):
+        """Wrapper for orjson.dumps that returns a string instead of bytes."""
+        return orjson_dumps(obj).decode("utf-8")
+
 except ImportError:
-    from json import loads
+    from json import JSONDecodeError, loads
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
