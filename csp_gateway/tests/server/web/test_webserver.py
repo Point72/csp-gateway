@@ -86,6 +86,79 @@ class TestGatewayWebserver:
         assert json["info"]["title"] == "Gateway"
         assert json["info"]["version"] == __version__
 
+    def test_openapi_includes_fully_qualified_type_name(self, rest_client: TestClient):
+        """Test that the OpenAPI schema includes the fully qualified type name in openapi_extra type_ field."""
+        response = rest_client.get("/openapi.json?token=test")
+        assert response.status_code == 200
+        openapi_json = response.json()
+
+        # Check paths that should have the fully qualified type name in openapi_extra.type_
+        paths = openapi_json.get("paths", {})
+
+        # Test /api/v1/last/example route
+        last_example_path = paths.get("/api/v1/last/example", {})
+        last_example_get = last_example_path.get("get", {})
+        last_example_type = last_example_get.get("type_", "")
+        assert last_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/last/example type_, got: {last_example_type}"
+        )
+
+        # Test /api/v1/next/example route
+        next_example_path = paths.get("/api/v1/next/example", {})
+        next_example_get = next_example_path.get("get", {})
+        next_example_type = next_example_get.get("type_", "")
+        assert next_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/next/example type_, got: {next_example_type}"
+        )
+
+        # Test /api/v1/send/example route
+        send_example_path = paths.get("/api/v1/send/example", {})
+        send_example_post = send_example_path.get("post", {})
+        send_example_type = send_example_post.get("type_", "")
+        assert send_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/send/example type_, got: {send_example_type}"
+        )
+
+        # Test /api/v1/lookup/example/{id} route
+        lookup_example_path = paths.get("/api/v1/lookup/example/{id}", {})
+        lookup_example_get = lookup_example_path.get("get", {})
+        lookup_example_type = lookup_example_get.get("type_", "")
+        assert lookup_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/lookup/example/{{id}} type_, got: {lookup_example_type}"
+        )
+
+        # Test /api/v1/state/example route
+        state_example_path = paths.get("/api/v1/state/example", {})
+        state_example_get = state_example_path.get("get", {})
+        state_example_type = state_example_get.get("type_", "")
+        assert state_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/state/example type_, got: {state_example_type}"
+        )
+
+        # Test /api/v1/controls/heartbeat route
+        heartbeat_path = paths.get("/api/v1/controls/heartbeat", {})
+        heartbeat_get = heartbeat_path.get("get", {})
+        heartbeat_type = heartbeat_get.get("type_", "")
+        assert heartbeat_type == "csp_gateway.utils.web.controls.Controls", (
+            f"Expected fully qualified type name in /api/v1/controls/heartbeat type_, got: {heartbeat_type}"
+        )
+
+        # Test /api/v1/controls/stats route
+        stats_path = paths.get("/api/v1/controls/stats", {})
+        stats_get = stats_path.get("get", {})
+        stats_type = stats_get.get("type_", "")
+        assert stats_type == "csp_gateway.utils.web.controls.Controls", (
+            f"Expected fully qualified type name in /api/v1/controls/stats type_, got: {stats_type}"
+        )
+
+        # Test /api/v1/controls/shutdown route
+        shutdown_path = paths.get("/api/v1/controls/shutdown", {})
+        shutdown_post = shutdown_path.get("post", {})
+        shutdown_type = shutdown_post.get("type_", "")
+        assert shutdown_type == "csp_gateway.utils.web.controls.Controls", (
+            f"Expected fully qualified type name in /api/v1/controls/shutdown type_, got: {shutdown_type}"
+        )
+
     def test_docs(self, rest_client: TestClient):
         response = rest_client.get("/docs?token=test")
         assert response.status_code == 200

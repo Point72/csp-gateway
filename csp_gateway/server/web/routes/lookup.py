@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from csp_gateway.server import ChannelSelection
 
 from ..utils import get_default_responses
-from .shared import prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_lookup_routes",
@@ -21,6 +21,9 @@ def add_lookup_routes(
 ) -> None:
     if model and get_origin(model) is list:
         model = get_args(model)[0]
+
+    # Get the fully qualified type name for the description
+    fq_type_name = get_fully_qualified_type_name(model)
 
     async def lookup(id: str, request: Request) -> List[model]:  # type: ignore[misc, valid-type]
         """
@@ -40,6 +43,7 @@ def add_lookup_routes(
         responses=get_default_responses(),
         response_model=List[model],
         name="Lookup {}".format(field),
+        openapi_extra={"type_": fq_type_name} if fq_type_name else None,
     )(lookup)
 
     api_router.get(
