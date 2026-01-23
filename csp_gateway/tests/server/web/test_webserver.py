@@ -123,6 +123,29 @@ class TestGatewayWebserver:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
 
+    def test_log_viewer_query_param_position(self, rest_client: TestClient):
+        """Test that API key query parameters are placed correctly in file URLs.
+
+        When browsing logs with a query parameter (e.g., ?token=test), the file links
+        should have the query parameter at the end of the URL, not embedded in the path.
+        e.g., /outputs/file.txt?token=test, NOT /outputs?token=test/file.txt
+        """
+        # Ensure directory and files exist
+        os.makedirs(os.path.join(os.getcwd(), "outputs", "testing", "temp"), exist_ok=True)
+        with open(os.path.join(os.getcwd(), "outputs", "testing", "temp", "tempfile.txt"), "w") as fp:
+            fp.write("test content")
+
+        # Request the directory listing with a query parameter
+        response = rest_client.get("/outputs/testing/temp?token=test")
+        assert response.status_code == 200
+
+        # Check that the HTML content has correct URL structure
+        html_content = response.text
+        # The link should be /outputs/testing/temp/tempfile.txt?token=test
+        # NOT /outputs/testing/temp?token=test/tempfile.txt
+        assert "tempfile.txt?token=test" in html_content
+        assert "?token=test/tempfile.txt" not in html_content
+
     def test_control_heartbeat(self, rest_client: TestClient):
         response = rest_client.get("/api/v1/controls/heartbeat?token=test")
         assert response.status_code == 200
