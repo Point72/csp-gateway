@@ -721,25 +721,24 @@ class BaseGatewayClient(BaseModel):
     async def _connectAsync(self):
         from aiostream.stream import merge
 
-        session = self._aiohttp_session()
-
         route = self._buildroutews("stream")
 
-        async with session.ws_connect(route) as ws:
-            # merge async generators
-            merged = merge(self._websocketData(ws), self._clientRequests())
+        async with self._aiohttp_session() as session:
+            async with session.ws_connect(route) as ws:
+                # merge async generators
+                merged = merge(self._websocketData(ws), self._clientRequests())
 
-            async with merged.stream() as streamer:
-                async for direction, data in streamer:
-                    if direction == "in":
-                        # send to server
-                        await ws.send_json(data)
-                    elif direction == "out":
-                        # yield out to client
-                        yield data
-                    else:
-                        # ignore
-                        ...
+                async with merged.stream() as streamer:
+                    async for direction, data in streamer:
+                        if direction == "in":
+                            # send to server
+                            await ws.send_json(data)
+                        elif direction == "out":
+                            # yield out to client
+                            yield data
+                        else:
+                            # ignore
+                            ...
 
     # Public Functions
 
