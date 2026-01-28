@@ -28,7 +28,7 @@ def test_LogChannels(which_channels, caplog):
     with caplog.at_level(logging.INFO):
         gateway.start(starttime=datetime(2020, 1, 1), endtime=timedelta(seconds=1))
     expected = (
-        "csp_gateway.server.modules.logging.logging",
+        "csp_gateway.server.modules.logging.stdlib",
         logging.INFO,
         "2020-01-01 00:00:01 example:1",
     )

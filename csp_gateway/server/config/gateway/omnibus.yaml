@@ -43,6 +43,7 @@ gateway:
     UI: True
     API_KEY: "12345"
   modules:
+    - /modules/logfire
     - /modules/example_module
     - /modules/example_module_feedback
     - /modules/example_custom_table
