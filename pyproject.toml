@@ -86,15 +86,11 @@ server = [
 ]
 client = [
     # NOTE: Optional
-    # "aiohttp",
-    # "aiostream",
     "httpx",
     "jsonref",
     "nest-asyncio",
     "packaging",
-    "pydantic>=2,<2.12",
-    # "polars",
-    # "pandas",
+    "pydantic>=2",
 ]
 
 [project.scripts]
