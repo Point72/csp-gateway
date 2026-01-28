@@ -684,7 +684,11 @@ class BaseGatewayClient(BaseModel):
         )
 
     async def _websocketData(self, ws):
-        from aiohttp import WSMsgType
+        try:
+            from aiohttp import WSMsgType
+        except ImportError:
+            log.exception("Must have aiohttp installed to use async WebSocket streaming")
+            raise
 
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -715,11 +719,15 @@ class BaseGatewayClient(BaseModel):
 
             return ClientSession()
         except ImportError:
-            log.exception("Must have aiohttp installed to use WebSocket streaming")
+            log.exception("Must have aiohttp installed to use async WebSocket streaming")
             raise
 
     async def _connectAsync(self):
-        from aiostream.stream import merge
+        try:
+            from aiostream.stream import merge
+        except ImportError:
+            log.exception("Must have aiostream installed to use async WebSocket streaming")
+            raise
 
         route = self._buildroutews("stream")
 
@@ -902,6 +910,87 @@ class SyncGatewayClientMixin:
             key: For dict basket channels, the specific key to unsubscribe from. If None, unsubscribes from the entire channel.
         """
         self._event_loop.run_until_complete(self._unsubscribe(channel=field, key=key))
+
+    def stream_csp(self, subscribe, unsubscribe=None, data=None, push_mode=None, connection_timeout=-1):
+        """Stream data bidirectionally with the gateway server over websockets using CSP.
+
+        This method creates a CSP DynamicBasket that streams data from the specified
+        channels on the gateway server. Channels can be dynamically added or removed by
+        ticking on the `subscribe` and `unsubscribe` inputs. Each channel becomes a key
+        in the returned DynamicBasket, with values being the data received for that channel.
+
+        The client will buffer subscribe/unsubscribe/data requests until the connection
+        is established. If the server is unavailable, the client will retry with exponential
+        backoff according to the connection_timeout parameter.
+
+        Args:
+            subscribe: A time series (ts[str]) of channel names to subscribe to.
+                Each time this ticks, a new channel is added and a new dynamic output
+                key is created in the returned basket.
+            unsubscribe: Optional time series (ts[str]) of channel names to unsubscribe from.
+                Each time this ticks, the channel is removed and the dynamic key is removed
+                from the basket using csp.remove_dynamic_key.
+            data: Optional time series (ts[Dict[str, Any]]) to send back through the websocket.
+                Each tick will send the data to the server. The dictionary should map
+                channel names to the data to send. For example:
+                - {"my_channel": {"value": 42}} - sends single dict to channel
+                - {"my_channel": [{"value": 1}, {"value": 2}]} - sends list to channel
+                - {"ch1": {"v": 1}, "ch2": [{"v": 2}]} - sends to multiple channels
+            push_mode: How to handle buffered ticks. Options are:
+                - csp.PushMode.LAST_VALUE: Only tick the latest value since the last cycle
+                - csp.PushMode.BURST: Tick all buffered values as a list
+                - csp.PushMode.NON_COLLAPSING: Tick all events without collapsing (default)
+            connection_timeout: How long to wait for the server to be available (in seconds).
+                - 0: Expect server to be immediately available at startup
+                - -1: Wait indefinitely for the server (default)
+                - positive number: Wait up to this many seconds before raising an error
+
+        Returns:
+            A csp.DynamicBasket[str, object] where each key is a channel name and values
+            are the data (GatewayStruct or dict) received for that channel.
+
+        Raises:
+            csp_gateway.client.csp_stream.ConnectionError: If the connection fails or is lost.
+
+        Example:
+            >>> import csp
+            >>> from datetime import timedelta
+            >>> from csp_gateway.client import GatewayClient
+            >>>
+            >>> @csp.graph
+            >>> def my_graph():
+            ...     client = GatewayClient(host="localhost", port=8000)
+            ...
+            ...     # Subscribe to channels dynamically
+            ...     subscribe = csp.curve(str, [(timedelta(seconds=0), "channel1"),
+            ...                                  (timedelta(seconds=1), "channel2")])
+            ...     unsubscribe = csp.curve(str, [(timedelta(seconds=5), "channel1")])
+            ...
+            ...     # Returns a DynamicBasket where each key is a channel name
+            ...     basket = client.stream_csp(subscribe=subscribe, unsubscribe=unsubscribe)
+            ...
+            ...     # Print the basket as data arrives
+            ...     csp.print("basket", basket)
+            ...
+            ...     # Bidirectional streaming - send data back to server
+            ...     outgoing = csp.const({"my_channel": {"value": 42}})
+            ...     basket = client.stream_csp(subscribe=subscribe, data=outgoing)
+            ...
+            ...     # With connection timeout - wait up to 10 seconds for server
+            ...     basket = client.stream_csp(subscribe=subscribe, connection_timeout=10)
+        """
+        try:
+            import csp
+        except ImportError:
+            log.exception("Must have csp installed to use stream_csp")
+            raise
+
+        from .csp_stream import _create_stream_csp_graph
+
+        if push_mode is None:
+            push_mode = csp.PushMode.NON_COLLAPSING
+
+        return _create_stream_csp_graph(self.config, connection_timeout)(subscribe, unsubscribe, data, push_mode)
 
 
 class SyncGatewayClient(SyncGatewayClientMixin, BaseGatewayClient):
