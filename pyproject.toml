@@ -69,7 +69,7 @@ server = [
     "colorlog",
     "csp>=0.14.0,<1",
     "deprecation",
-    "duckdb>=0.10,<1.4.1",
+    "duckdb>=1.4.1",
     "fastapi>=0.110",
     "fsspec",
     "hydra-core",
