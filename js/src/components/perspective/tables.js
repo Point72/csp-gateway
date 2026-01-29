@@ -41,7 +41,7 @@ export const fetchTables = async () => {
 
       if (architecture != "server") {
         const view = await table_handle.view();
-        return worker.table(view, { index, limit });
+        return worker.table(view, { index, limit, name: table_name });
       }
       return table_handle;
     }),
@@ -54,5 +54,5 @@ export const fetchTables = async () => {
     };
     return acc;
   }, {});
-  return new_tables;
+  return { worker, tables: new_tables };
 };
