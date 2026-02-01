@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from unittest.mock import patch
 
 import numpy
 import pandas
@@ -6,7 +8,7 @@ import polars
 import pytest
 from packaging import version
 
-from csp_gateway import ClientConfig, GatewayClient, ResponseWrapper, ReturnType
+from csp_gateway import AsyncClient, ClientConfig, GatewayClient, ResponseWrapper, ReturnType
 from csp_gateway.client.client import _host
 from csp_gateway.server.demo import ExampleData
 from csp_gateway.utils import get_thread
@@ -314,3 +316,55 @@ def test_response_wrapper_as_struct_invalid_type():
 
     with pytest.raises(ValueError, match="Cannot import type"):
         resp.as_struct()
+
+
+@pytest.mark.asyncio
+async def test_async_client_stream_timeout_raises_on_slow_iteration():
+    """Test that AsyncClient.stream() raises TimeoutError when iteration takes too long."""
+    client = AsyncClient(host="localhost", port=8000)
+
+    async def slow_generator():
+        """A generator that yields slowly - slower than our timeout."""
+        await asyncio.sleep(10)  # Sleep longer than timeout
+        yield {"data": "test"}
+
+    # Patch _streamAsync to return our slow generator
+    with patch.object(client, "_streamAsync", return_value=slow_generator()):
+        with pytest.raises(asyncio.TimeoutError):
+            async for _ in client.stream(channels=["test"], timeout=0.1):
+                pass
+
+
+@pytest.mark.asyncio
+async def test_async_client_stream_no_timeout_waits_indefinitely():
+    """Test that AsyncClient.stream() without timeout doesn't raise TimeoutError."""
+    client = AsyncClient(host="localhost", port=8000)
+
+    async def quick_generator():
+        """A generator that yields quickly then stops."""
+        yield {"data": "test1"}
+        yield {"data": "test2"}
+
+    results = []
+    with patch.object(client, "_streamAsync", return_value=quick_generator()):
+        async for data in client.stream(channels=["test"], timeout=None):
+            results.append(data)
+
+    assert len(results) == 2
+    assert results[0] == {"data": "test1"}
+    assert results[1] == {"data": "test2"}
+
+
+def test_stream_method_signature_has_timeout():
+    """Test that stream() method accepts timeout parameter."""
+    import inspect
+
+    # Check AsyncClient.stream signature
+    sig = inspect.signature(AsyncClient.stream)
+    params = list(sig.parameters.keys())
+    assert "timeout" in params
+
+    # Check SyncGatewayClient.stream signature
+    sig = inspect.signature(GatewayClient.stream)
+    params = list(sig.parameters.keys())
+    assert "timeout" in params
