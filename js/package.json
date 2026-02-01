@@ -22,7 +22,7 @@
     "@perspective-dev/viewer": "~4.0.1",
     "@perspective-dev/viewer-d3fc": "~4.0.1",
     "@perspective-dev/viewer-datagrid": "~4.0.1",
-    "@perspective-dev/workspace": "~4.0.1",
+    "@perspective-dev/workspace": "~4.1.0",
     "perspective-summary": "~0.1.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
