@@ -8,6 +8,7 @@ from asyncio import (
     new_event_loop,
     run_coroutine_threadsafe,
     set_event_loop,
+    wait_for,
     wrap_future,
 )
 from copy import deepcopy
@@ -596,19 +597,21 @@ class BaseGatewayClient(BaseModel):
         self,
         channels: Optional[List[Union[str, Tuple[str, str]]]] = None,
         callback: Callable = None,
+        timeout: Optional[float] = None,
     ):
         if callback:
-            async_generator = self._streamAsync(channels=channels)
-            iterator = async_generator.__aiter__()
+            it = aiter(self._streamAsync(channels=channels))
 
-            async def wait_for_aio_fut(aio_fut):
-                return await aio_fut
+            async def get_next():
+                if timeout is not None:
+                    return await wait_for(anext(it), timeout=timeout)
+                return await anext(it)
 
             try:
                 if self._event_loop.is_running():
                     applyAsyncioNesting(self._event_loop)
                 while True:
-                    callback(self._event_loop.run_until_complete(iterator.__anext__()))
+                    callback(self._event_loop.run_until_complete(get_next()))
             except StopAsyncIteration:
                 return
 
@@ -774,7 +777,7 @@ class BaseGatewayClient(BaseModel):
     def state(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None) -> ResponseType: ...
 
     @abstractmethod
-    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None): ...
+    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, timeout: Optional[float] = None): ...
 
     # NOTE: sync version
     # def stream(self, channels: List[str] = None, callback: Callable = None):
@@ -860,7 +863,7 @@ class SyncGatewayClientMixin:
             self.config.return_type = old_return_type
         return res
 
-    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None):
+    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None, timeout: Optional[float] = None):
         """Stream data from specified channels with optional key filtering for dict baskets.
 
         Establishes a synchronous streaming connection to receive real-time updates from the specified channels.
@@ -871,8 +874,11 @@ class SyncGatewayClientMixin:
                     each entry can be either a string (channel name) or a tuple of
                     (channel_name, key) to subscribe only to a specific key in a dict basket.
             callback: A function that will be called with each received message.
+            timeout: Optional timeout in seconds for receiving messages. If no message is received
+                    within this time, asyncio.TimeoutError is raised. Useful for detecting dead
+                    connections when the server sends regular heartbeats.
         """
-        self._stream(channels=channels, callback=callback)
+        self._stream(channels=channels, callback=callback, timeout=timeout)
 
     def publish(self, field: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
         """Publish data to a channel or specific key within a dict basket channel.
@@ -1047,7 +1053,7 @@ class AsyncGatewayClientMixin:
         params = None if query is None else {"query": query.model_dump_json()}
         return await self._getasync("{}/{}".format("state", field), timeout=timeout, params=params)
 
-    async def stream(self, channels: List[Union[str, Tuple[str, str]]] = None):
+    async def stream(self, channels: List[Union[str, Tuple[str, str]]] = None, timeout: Optional[float] = None):
         """Stream data from specified channels with optional key filtering for dict baskets.
 
         Establishes an asynchronous streaming connection to receive real-time updates from the specified channels.
@@ -1057,12 +1063,26 @@ class AsyncGatewayClientMixin:
             channels: A list of channel names to subscribe to. For dict basket channels,
                     each entry can be either a string (channel name) or a tuple of
                     (channel_name, key) to subscribe only to a specific key in a dict basket.
+            timeout: Optional timeout in seconds for receiving messages. If no message is received
+                    within this time, asyncio.TimeoutError is raised. Useful for detecting dead
+                    connections when the server sends regular heartbeats.
 
         Yields:
             Data messages received from the subscribed channels.
+
+        Raises:
+            asyncio.TimeoutError: If timeout is set and no message is received within the timeout period.
         """
-        async for data in self._streamAsync(channels=channels):
-            yield data
+        if timeout is None:
+            async for data in self._streamAsync(channels=channels):
+                yield data
+        else:
+            it = aiter(self._streamAsync(channels=channels))
+            while True:
+                try:
+                    yield await wait_for(anext(it), timeout=timeout)
+                except StopAsyncIteration:
+                    break
 
     async def publish(self, field: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
         """Publish data to a channel or specific key within a dict basket channel.
