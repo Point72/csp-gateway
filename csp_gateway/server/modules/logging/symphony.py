@@ -3,9 +3,16 @@ from typing import List, Tuple, TypeVar
 
 import csp
 from csp import ts
-from csp_adapter_symphony import SymphonyAdapter, SymphonyMessage
+from pydantic import model_validator
 
 from csp_gateway.server import GatewayChannels, GatewayModule
+
+try:
+    from csp_adapter_symphony import SymphonyAdapter, SymphonyMessage
+except ImportError:
+    # Hold and raise in model validator
+    SymphonyAdapter = None
+    SymphonyMessage = None
 
 T = TypeVar("T")
 
@@ -72,35 +79,42 @@ class PublishSymphony(GatewayModule):
             key = f.read()
         return cert, key
 
+    @model_validator(mode="before")
+    def check_import(cls, values):
+        if SymphonyAdapter is None:
+            raise ImportError("csp_adapter_symphony is required for PublishSymphony. Install it with: pip install csp-adapter-symphony")
+        return values
+
     def connect(self, channels: GatewayChannels):
         cert, key = self.get_cert_and_key()
         symphony_manager = SymphonyAdapter(cert, key)
-        for channel in self.selections:
-            sub = self.subscribe_channel(channels.get_channel(channel))
-            symphony_manager.publish(csp.unroll(sub.messages))
 
-    @csp.node
-    def subscribe_channel(self, channel: ts["T"]) -> csp.Outputs(messages=ts[List[SymphonyMessage]]):
-        if csp.ticked(channel):
-            msgs = []
-            # TODO: Not sure how to manage a dict basket here
-            if isinstance(channel, list):
-                msgs.extend(
-                    [
+        @csp.node
+        def subscribe_channel(self, channel: ts["T"]) -> csp.Outputs(messages=ts[List[SymphonyMessage]]):
+            if csp.ticked(channel):
+                msgs = []
+                # TODO: Not sure how to manage a dict basket here
+                if isinstance(channel, list):
+                    msgs.extend(
+                        [
+                            SymphonyMessage(
+                                user=self.user,
+                                room=self.room_name,
+                                msg=json.dumps(c.to_dict(), default=str),
+                            )
+                            for c in channel
+                        ]
+                    )
+                else:
+                    msgs.append(
                         SymphonyMessage(
                             user=self.user,
                             room=self.room_name,
-                            msg=json.dumps(c.to_dict(), default=str),
+                            msg=json.dumps(channel.to_dict(), default=str),
                         )
-                        for c in channel
-                    ]
-                )
-            else:
-                msgs.append(
-                    SymphonyMessage(
-                        user=self.user,
-                        room=self.room_name,
-                        msg=json.dumps(channel.to_dict(), default=str),
                     )
-                )
-            csp.output(messages=msgs)
+                csp.output(messages=msgs)
+
+        for channel in self.selections:
+            sub = subscribe_channel(channels.get_channel(channel))
+            symphony_manager.publish(csp.unroll(sub.messages))
