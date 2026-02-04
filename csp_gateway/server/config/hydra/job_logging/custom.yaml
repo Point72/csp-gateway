@@ -1,4 +1,20 @@
 # See https://hydra.cc/docs/configure_hydra/logging/
+#
+# DEPRECATED: This hydra job_logging configuration is deprecated.
+# Use the Logging module instead for programmatic logging configuration:
+#
+#   modules:
+#     logging:
+#       _target_: csp_gateway.server.modules.logging.Logging
+#       console_level: INFO
+#       file_level: DEBUG
+#       use_colors: true
+#       logger_levels:
+#         uvicorn.error: CRITICAL
+#
+# The Logging module provides the same defaults as this file but with
+# a consistent pattern matching other observability modules like Logfire.
+#
 version: 1
 disable_existing_loggers: False
 formatters:
