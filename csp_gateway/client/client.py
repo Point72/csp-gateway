@@ -399,6 +399,10 @@ class BaseGatewayClient(BaseModel):
     # server configuration
     config: GatewayClientConfig = Field(default_factory=GatewayClientConfig)
 
+    http_args: Dict[str, Any] = Field(
+        default=dict(follow_redirects=True), description="Additional arguments to pass to httpx requests (e.g., headers, auth, etc.)"
+    )
+
     # openapi configureation
     _initialized: bool = PrivateAttr(default=False)
     _openapi_spec: Dict[Any, Any] = PrivateAttr(default=None)
@@ -458,7 +462,10 @@ class BaseGatewayClient(BaseModel):
         if not self._initialized:
             # grab openapi spec
             self._openapi_spec: Dict[Any, Any] = replace_refs(
-                cast(Dict[Any, Any], GET(f"{_host(self.config)}/openapi.json")).json(),
+                cast(
+                    Dict[Any, Any],
+                    GET(f"{_host(self.config)}/openapi.json", **self.http_args),
+                ).json(),
             )
 
             # collect mounted routes
@@ -555,7 +562,7 @@ class BaseGatewayClient(BaseModel):
     ) -> ResponseType:
         params = params or {}
         resolved_route, extra_params = self._buildroute(route)
-        return self._handle_response(GET(resolved_route, params={**params, **extra_params}, timeout=timeout), route=route)
+        return self._handle_response(GET(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route)
 
     async def _getasync(
         self,
@@ -566,7 +573,9 @@ class BaseGatewayClient(BaseModel):
         params = params or {}
         resolved_route, extra_params = self._buildroute(route)
         async with httpx_AsyncClient() as client:
-            return self._handle_response(await client.get(resolved_route, params={**params, **extra_params}, timeout=timeout), route=route)
+            return self._handle_response(
+                await client.get(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route
+            )
 
     def _post(
         self,
@@ -577,7 +586,9 @@ class BaseGatewayClient(BaseModel):
     ) -> ResponseType:
         params = params or {}
         resolved_route, extra_params = self._buildroute(route)
-        return self._handle_response(POST(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout), route=route)
+        return self._handle_response(
+            POST(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout, **self.http_args), route=route
+        )
 
     async def _postasync(
         self,
@@ -590,7 +601,7 @@ class BaseGatewayClient(BaseModel):
         resolved_route, extra_params = self._buildroute(route)
         async with httpx_AsyncClient() as client:
             return self._handle_response(
-                await client.post(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout), route=route
+                await client.post(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout, **self.http_args), route=route
             )
 
     def _stream(
