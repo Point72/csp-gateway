@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Any
 
 __all__ = ["SymlinkFileHandler"]
 
@@ -12,9 +13,9 @@ class SymlinkFileHandler(logging.FileHandler):
         filename: str,
         log_links_dir: str,
         symlink_filename: str,
-        *args,
-        **kwargs,
-    ):
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         self.log_links_dir = Path(log_links_dir)
         self.symlink_filename = symlink_filename
 
@@ -23,19 +24,18 @@ class SymlinkFileHandler(logging.FileHandler):
         try:
             self.log_links_dir.mkdir(parents=True, exist_ok=True)
             log.debug("Ensured symlink directory exists: %s", self.log_links_dir)
+        except (OSError, PermissionError) as e:
+            log.error("Failed to create symlink directory %s: %s", self.log_links_dir, e, exc_info=True)
+            return
 
-            target = Path(self.baseFilename).resolve()
+        target = Path(self.baseFilename).resolve()
 
-            # Timestamped symlink
-            named_link = self.log_links_dir / self.symlink_filename
+        # Timestamped symlink
+        named_link = self.log_links_dir / self.symlink_filename
+        self._create_file_symlink(target, named_link)
 
-            self._create_file_symlink(target, named_link)
-
-            # Latest symlink
-            self._create_file_symlink(target, self.log_links_dir / "latest.log")
-
-        except Exception:
-            log.exception("Failed to create log symlink(s)")
+        # Latest symlink
+        self._create_file_symlink(target, self.log_links_dir / "latest.log")
 
     @staticmethod
     def _create_file_symlink(target: Path, symlink_path: Path) -> None:
@@ -54,5 +54,5 @@ class SymlinkFileHandler(logging.FileHandler):
 
             log.info("Created symlink %s -> %s", symlink_path, target)
 
-        except Exception:
-            log.exception("Failed to create symlink %s", symlink_path)
+        except (OSError, PermissionError) as e:
+            log.error("Failed to create symlink %s: %s", symlink_path, e, exc_info=True)
