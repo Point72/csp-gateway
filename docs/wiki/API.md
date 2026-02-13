@@ -85,32 +85,125 @@ In addition to a REST API, a more `csp`-like streaming API is also available via
 This API is bidirectional, providing the ability to receive data as it ticks or to tick in new data.
 Any data available via `last`/`send` above is available via websocket.
 
+### Subscribing to Channels
+
 To subscribe to channels, send a JSON message of the form:
 
-```
+```json
 {
     "action": "subscribe",
     "channel": "<channel name>"
 }
 ```
 
-To unsubscribe to channels, send a JSON message of the form:
+For **dict basket channels** (channels keyed by an enum or string), you can subscribe to a specific key:
 
+```json
+{
+    "action": "subscribe",
+    "channel": "<channel name>",
+    "key": "<basket key>"
+}
 ```
+
+If you omit the `key` for a dict basket channel, you will subscribe to **all keys** in that basket.
+
+### Unsubscribing from Channels
+
+To unsubscribe from channels, send a JSON message of the form:
+
+```json
 {
     "action": "unsubscribe",
     "channel": "<channel name>"
 }
 ```
 
-Data will be sent across the websocket for all subscribed channels. It has the form:
+For dict basket channels, you can unsubscribe from a specific key:
 
-```
+```json
 {
+    "action": "unsubscribe",
     "channel": "<channel name>",
-    "data": <the same data that would be transmitted over e.g. the `last` endpoint>
+    "key": "<basket key>"
 }
 ```
+
+If you omit the `key` for a dict basket channel, you will unsubscribe from **all keys** in that basket.
+
+### Receiving Data
+
+Data will be sent across the websocket for all subscribed channels. It has the form:
+
+```json
+{
+    "channel": "<channel name>",
+    "data": "<the same data that would be transmitted over e.g. the last endpoint>"
+}
+```
+
+For dict basket channels, the message also includes the key:
+
+```json
+{
+    "channel": "<channel name>",
+    "key": "<basket key>",
+    "data": "<the data for this specific key>"
+}
+```
+
+### Sending Data
+
+To send data into a channel via websocket, use the `send` action:
+
+```json
+{
+    "action": "send",
+    "channel": "<channel name>",
+    "data": {"field1": "value1", "field2": "value2"}
+}
+```
+
+Data can also be sent as a list:
+
+```json
+{
+    "action": "send",
+    "channel": "<channel name>",
+    "data": [{"field1": "value1"}, {"field1": "value2"}]
+}
+```
+
+For dict basket channels, you **must** specify the key:
+
+```json
+{
+    "action": "send",
+    "channel": "<channel name>",
+    "key": "<basket key>",
+    "data": {"field1": "value1"}
+}
+```
+
+### Heartbeat
+
+A special `heartbeat` channel is always available. Subscribe to it to receive periodic `PING` messages:
+
+```json
+{"channel": "heartbeat", "data": "PING"}
+```
+
+This can be used to verify the connection is alive.
+
+### Available Channels
+
+You can query the list of available websocket channels via the REST endpoint:
+
+```
+GET /api/v1/stream
+```
+
+This returns a list of channel names. Dict basket channels are listed with their keys, e.g., `basket/A`, `basket/B`, etc.
 
 ## Python Client
 

@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
-from types import MappingProxyType
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Type, TypeVar
 
 import csp
 from csp import Struct
@@ -19,15 +18,44 @@ __all__ = (
     "GatewayPydanticMixin",
     "GatewayStructMixins",
     "is_gateway_struct_like",
+    "global_lookup",
 )
+
+T = TypeVar("T")
+
+# Global registry: maps ID -> instance for all GatewayLookupMixin instances
+_global_registry: Dict[str, Any] = {}
+
+# Class-specific registry: maps (class, ID) -> instance
+_class_registry: Dict[tuple, Any] = {}
+
+
+def global_lookup(id: IdType, cls: Optional[Type[T]] = None) -> Optional[T]:
+    """Look up a GatewayStruct instance by ID.
+
+    Args:
+        id: The unique ID of the instance to look up.
+        cls: Optional class to filter by. If provided, only returns
+             instances of that specific class.
+
+    Returns:
+        The instance if found, None otherwise.
+    """
+    if cls is not None:
+        return _class_registry.get((cls, id))
+    return _global_registry.get(id)
 
 
 class GatewayLookupMixin:
+    # Shared global ID generator
+    id_generator = None
+
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
-        cls.id_generator = get_counter(cls)
-        cls._internal_mapping: Dict[str, Any] = {}
-        cls.lookup = MappingProxyType(cls._internal_mapping).get
+        # Use the single global generator for all classes
+        if GatewayLookupMixin.id_generator is None:
+            GatewayLookupMixin.id_generator = get_counter()
+        cls.id_generator = GatewayLookupMixin.id_generator
         cls._include_in_lookup = True
 
     def __init__(self, **kwargs: Any) -> None:
@@ -36,11 +64,9 @@ class GatewayLookupMixin:
         if "timestamp" not in kwargs:
             kwargs["timestamp"] = datetime.now(timezone.utc)
         if getattr(self.__class__, "_include_in_lookup", True):
-            # Insert into lookup before super to keep behavior consistent
-            # with previous GatewayStruct construction
-            # (instance becomes available immediately after init)
-            # Self will be fully initialized once super returns
-            self.__class__._internal_mapping[kwargs["id"]] = self
+            # Insert into both global and class-specific registries
+            _global_registry[kwargs["id"]] = self
+            _class_registry[(self.__class__, kwargs["id"])] = self
         super().__init__(**kwargs)
 
     @classmethod
@@ -54,6 +80,18 @@ class GatewayLookupMixin:
     @classmethod
     def generate_id(cls) -> str:
         return str(cls.id_generator.next())
+
+    @classmethod
+    def lookup(cls, id: IdType) -> Optional[Any]:
+        """Look up an instance by ID, scoped to this class.
+
+        Args:
+            id: The unique ID of the instance to look up.
+
+        Returns:
+            The instance if found in this class's registry, None otherwise.
+        """
+        return _class_registry.get((cls, id))
 
 
 class GatewayPydanticMixin:

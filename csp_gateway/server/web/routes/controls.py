@@ -7,12 +7,15 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from csp_gateway.utils import Controls
 
 from ..utils import get_default_responses
-from .shared import prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response
 
 log = logging.getLogger(__name__)
 
 
 _WAIT_THRESHOLD = 0.1
+
+# Get the fully qualified type name for Controls
+_CONTROLS_FQ_TYPE_NAME = get_fully_qualified_type_name(Controls)
 
 __all__ = (
     "add_controls_routes",
@@ -28,6 +31,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
             responses=get_default_responses(),
             response_model=Controls,
             name="Get Heartbeat",
+            openapi_extra={"type_": _CONTROLS_FQ_TYPE_NAME} if _CONTROLS_FQ_TYPE_NAME else None,
         )
         async def heartbeat(request: Request) -> Controls:
             """
@@ -55,6 +59,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
             responses=get_default_responses(),
             response_model=Controls,
             name="Get CSP Stats",
+            openapi_extra={"type_": _CONTROLS_FQ_TYPE_NAME} if _CONTROLS_FQ_TYPE_NAME else None,
         )
         async def stats(request: Request) -> Controls:
             """This endpoint will collect and return various engine and system stats, including:
@@ -89,6 +94,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
             responses=get_default_responses(),
             response_model=Controls,
             name="Shutdown Server",
+            openapi_extra={"type_": _CONTROLS_FQ_TYPE_NAME} if _CONTROLS_FQ_TYPE_NAME else None,
         )
         async def shutdown(request: Request, background_tasks: BackgroundTasks) -> Controls:
             """

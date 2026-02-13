@@ -31,6 +31,7 @@ Notes for editors:
 - [Extending the API](Develop#Extending-the-API)
 - [Extending the UI](Develop#Extending-the-UI)
 - [Advanced Usage](Develop#Advanced-Usage)
+- [Testing Gateway Applications](Develop#Testing-Gateway-Applications)
 
 **Modules**
 

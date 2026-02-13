@@ -8,11 +8,12 @@ from asyncio import (
     new_event_loop,
     run_coroutine_threadsafe,
     set_event_loop,
+    wait_for,
     wrap_future,
 )
 from copy import deepcopy
+from enum import Enum
 from functools import lru_cache
-from json import JSONDecodeError
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
@@ -27,9 +28,14 @@ try:
 except ImportError:
     from pydantic import BaseModel
 try:
-    from orjson import loads
+    from orjson import JSONDecodeError, dumps as orjson_dumps, loads
+
+    def dumps(obj):
+        """Wrapper for orjson.dumps that returns a string instead of bytes."""
+        return orjson_dumps(obj).decode("utf-8")
+
 except ImportError:
-    from json import loads
+    from json import JSONDecodeError, loads
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
@@ -49,6 +55,7 @@ __all__ = (
     "GatewayClientConfig",
     "ResponseWrapper",
     "ResponseType",
+    "ReturnType",
     "BaseGatewayClient",
     "SyncGatewayClientMixin",
     "SyncGatewayClient",
@@ -80,6 +87,26 @@ _POLARS_TYPE_MAPPING = {
     "boolean": "Boolean",
     "object": "Object",
 }
+
+
+class ReturnType(str, Enum):
+    """Enum specifying how the client should return response data.
+
+    Attributes:
+        Raw: Return raw JSON data as a dictionary
+        JSON: Alias for Raw - return raw JSON data as a dictionary
+        Pandas: Return data as a pandas DataFrame
+        Polars: Return data as a polars DataFrame
+        Struct: Return data as the original struct type (requires type_ in openapi_extra)
+        Wrapper: Return data wrapped in a ResponseWrapper object
+    """
+
+    Raw = "raw"
+    JSON = "json"
+    Pandas = "pandas"
+    Polars = "polars"
+    Struct = "struct"
+    Wrapper = "wrapper"
 
 
 def _openapi_to_dataframe_dtypes(schema, path, df_type_mapping):
@@ -135,6 +162,34 @@ def _get_schema(spec: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_type_name(spec: Dict[str, Any], path: str) -> Optional[str]:
+    """Get the fully qualified type name from the openapi_extra type_ field.
+
+    Args:
+        spec: The OpenAPI specification dictionary
+        path: The API path to look up
+
+    Returns:
+        The fully qualified type name (e.g., 'csp_gateway.server.demo.omnibus.ExampleData')
+        or None if not found.
+    """
+    if (paths := spec.get("paths")) is None:
+        return None
+
+    if (path_data := paths.get(path)) is None:
+        # could be a lookup for an id, or a key
+        base_path = path.rpartition("/")[0]
+        if (possible_path := paths.get(base_path + "/{id}")) is not None:
+            path_data = possible_path
+        elif (possible_path := paths.get(base_path + "/{key}")) is not None:
+            path_data = possible_path
+        else:
+            return None
+
+    response_type = "get" if "get" in path_data else "post"
+    return path_data[response_type].get("type_")
+
+
 def _raiseIfNotMounted(foo: Callable) -> Callable:
     group = foo.__name__
 
@@ -179,9 +234,18 @@ class GatewayClientConfig(BaseModel):
     api_route: str = "/api/v1"
     authenticate: bool = False
     api_key: str = ""
-    return_raw_json: bool = Field(
-        True, description="Determines whether REST request responses should be returned as raw json data, or as a ResponseWrapper object."
+    return_type: ReturnType = Field(
+        default=ReturnType.Raw,
+        description="Determines how REST request responses should be returned. Options: 'raw' (JSON dict), 'pandas' (DataFrame), 'polars' (DataFrame), 'struct' (original type), 'wrapper' (ResponseWrapper object).",
     )
+
+    @field_validator("return_type", mode="before")
+    @classmethod
+    def _promote_return_type(cls, v):
+        """Allow string values to be promoted to ReturnType enum."""
+        if isinstance(v, str):
+            return ReturnType(v)
+        return v
 
     @model_validator(mode="after")
     def validate_config(self):
@@ -203,6 +267,7 @@ class GatewayClientConfig(BaseModel):
 class ResponseWrapper(BaseModel):
     json_data: Any
     openapi_schema: Optional[Dict[str, Any]] = None
+    type_name: Optional[str] = None
 
     @field_validator("openapi_schema", mode="after")
     def validate_openapi_schema(cls, v):
@@ -217,6 +282,55 @@ class ResponseWrapper(BaseModel):
 
     def as_json(self):
         return self.json_data
+
+    def as_struct(self) -> Union[Any, List[Any]]:
+        """Convert JSON data to the original struct type using the type_ from openapi_extra.
+
+        This method uses the fully qualified type name stored in openapi_extra to
+        dynamically import and instantiate the appropriate struct class.
+
+        Returns:
+            A single struct instance or a list of struct instances, depending on the JSON data.
+
+        Raises:
+            ValueError: If no type_name is available or the type cannot be imported.
+
+        Example:
+            >>> resp = client.last("example")  # with return_type=ReturnType.Wrapper
+            >>> structs = resp.as_struct()  # Returns List[ExampleData]
+        """
+        if not self.type_name:
+            raise ValueError("Cannot convert to struct: no type_name available. Ensure the route has 'type_' defined in openapi_extra.")
+
+        # Import the class dynamically
+        try:
+            module_path, class_name = self.type_name.rsplit(".", 1)
+            import importlib
+
+            module = importlib.import_module(module_path)
+            struct_class = getattr(module, class_name)
+        except (ValueError, ImportError, AttributeError) as e:
+            raise ValueError(f"Cannot import type '{self.type_name}': {e}") from e
+
+        # Convert JSON to struct instances using type_adapter if available (for GatewayStruct types)
+        # or model_validate for pydantic types, or direct instantiation for simple types
+        if not self.json_data:
+            return []
+
+        def _create_instance(item):
+            # Try type_adapter first (for GatewayStruct types with pydantic integration)
+            if hasattr(struct_class, "type_adapter"):
+                return struct_class.type_adapter().validate_python(item)
+            # Try model_validate for standard pydantic models
+            if hasattr(struct_class, "model_validate"):
+                return struct_class.model_validate(item)
+            # Fall back to direct instantiation
+            return struct_class(**item)
+
+        if isinstance(self.json_data, list):
+            return [_create_instance(item) for item in self.json_data]
+        else:
+            return _create_instance(self.json_data)
 
     def as_pandas_df(self) -> "PandasDataFrame":
         try:
@@ -268,7 +382,7 @@ class ResponseWrapper(BaseModel):
         return pl.json_normalize(self.json_data, schema=polars_dtypes)
 
 
-ResponseType = Union[ResponseWrapper, Dict[str, Any]]
+ResponseType = Union[ResponseWrapper, Dict[str, Any], "PandasDataFrame", "PolarsDataFrame", List[Any], Any]
 
 
 def _get_or_new_event_loop() -> AbstractEventLoop:
@@ -284,6 +398,10 @@ def _get_or_new_event_loop() -> AbstractEventLoop:
 class BaseGatewayClient(BaseModel):
     # server configuration
     config: GatewayClientConfig = Field(default_factory=GatewayClientConfig)
+
+    http_args: Dict[str, Any] = Field(
+        default=dict(follow_redirects=True), description="Additional arguments to pass to httpx requests (e.g., headers, auth, etc.)"
+    )
 
     # openapi configureation
     _initialized: bool = PrivateAttr(default=False)
@@ -344,7 +462,10 @@ class BaseGatewayClient(BaseModel):
         if not self._initialized:
             # grab openapi spec
             self._openapi_spec: Dict[Any, Any] = replace_refs(
-                cast(Dict[Any, Any], GET(f"{_host(self.config)}/openapi.json")).json(),
+                cast(
+                    Dict[Any, Any],
+                    GET(f"{_host(self.config)}/openapi.json", **self.http_args),
+                ).json(),
             )
 
             # collect mounted routes
@@ -408,11 +529,25 @@ class BaseGatewayClient(BaseModel):
         except JSONDecodeError as e:
             resp_json = dict(detail=str(e))
         if resp.status_code == 200:
-            if self.config.return_raw_json:
+            return_type = self.config.return_type
+            if return_type in (ReturnType.Raw, ReturnType.JSON):
                 return resp_json
+
             path = self._buildpath(route=route)
             schema = _get_schema(spec=self._openapi_spec, path=path)
-            return ResponseWrapper(json_data=resp_json, openapi_schema=schema)
+            type_name = _get_type_name(spec=self._openapi_spec, path=path)
+            wrapper = ResponseWrapper(json_data=resp_json, openapi_schema=schema, type_name=type_name)
+
+            if return_type == ReturnType.Wrapper:
+                return wrapper
+            elif return_type == ReturnType.Pandas:
+                return wrapper.as_pandas_df()
+            elif return_type == ReturnType.Polars:
+                return wrapper.as_polars_df()
+            elif return_type == ReturnType.Struct:
+                return wrapper.as_struct()
+            else:
+                return wrapper
         elif resp.status_code == 404:
             raise ServerRouteNotFoundException(resp_json.get("detail"))
         elif resp.status_code == 422:
@@ -427,7 +562,7 @@ class BaseGatewayClient(BaseModel):
     ) -> ResponseType:
         params = params or {}
         resolved_route, extra_params = self._buildroute(route)
-        return self._handle_response(GET(resolved_route, params={**params, **extra_params}, timeout=timeout), route=route)
+        return self._handle_response(GET(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route)
 
     async def _getasync(
         self,
@@ -438,7 +573,9 @@ class BaseGatewayClient(BaseModel):
         params = params or {}
         resolved_route, extra_params = self._buildroute(route)
         async with httpx_AsyncClient() as client:
-            return self._handle_response(await client.get(resolved_route, params={**params, **extra_params}, timeout=timeout), route=route)
+            return self._handle_response(
+                await client.get(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route
+            )
 
     def _post(
         self,
@@ -449,7 +586,9 @@ class BaseGatewayClient(BaseModel):
     ) -> ResponseType:
         params = params or {}
         resolved_route, extra_params = self._buildroute(route)
-        return self._handle_response(POST(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout), route=route)
+        return self._handle_response(
+            POST(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout, **self.http_args), route=route
+        )
 
     async def _postasync(
         self,
@@ -462,26 +601,28 @@ class BaseGatewayClient(BaseModel):
         resolved_route, extra_params = self._buildroute(route)
         async with httpx_AsyncClient() as client:
             return self._handle_response(
-                await client.post(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout), route=route
+                await client.post(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout, **self.http_args), route=route
             )
 
     def _stream(
         self,
         channels: Optional[List[Union[str, Tuple[str, str]]]] = None,
         callback: Callable = None,
+        timeout: Optional[float] = None,
     ):
         if callback:
-            async_generator = self._streamAsync(channels=channels)
-            iterator = async_generator.__aiter__()
+            it = aiter(self._streamAsync(channels=channels))
 
-            async def wait_for_aio_fut(aio_fut):
-                return await aio_fut
+            async def get_next():
+                if timeout is not None:
+                    return await wait_for(anext(it), timeout=timeout)
+                return await anext(it)
 
             try:
                 if self._event_loop.is_running():
                     applyAsyncioNesting(self._event_loop)
                 while True:
-                    callback(self._event_loop.run_until_complete(iterator.__anext__()))
+                    callback(self._event_loop.run_until_complete(get_next()))
             except StopAsyncIteration:
                 return
 
@@ -557,7 +698,11 @@ class BaseGatewayClient(BaseModel):
         )
 
     async def _websocketData(self, ws):
-        from aiohttp import WSMsgType
+        try:
+            from aiohttp import WSMsgType
+        except ImportError:
+            log.exception("Must have aiohttp installed to use async WebSocket streaming")
+            raise
 
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -588,31 +733,34 @@ class BaseGatewayClient(BaseModel):
 
             return ClientSession()
         except ImportError:
-            log.exception("Must have aiohttp installed to use WebSocket streaming")
+            log.exception("Must have aiohttp installed to use async WebSocket streaming")
             raise
 
     async def _connectAsync(self):
-        from aiostream.stream import merge
-
-        session = self._aiohttp_session()
+        try:
+            from aiostream.stream import merge
+        except ImportError:
+            log.exception("Must have aiostream installed to use async WebSocket streaming")
+            raise
 
         route = self._buildroutews("stream")
 
-        async with session.ws_connect(route) as ws:
-            # merge async generators
-            merged = merge(self._websocketData(ws), self._clientRequests())
+        async with self._aiohttp_session() as session:
+            async with session.ws_connect(route) as ws:
+                # merge async generators
+                merged = merge(self._websocketData(ws), self._clientRequests())
 
-            async with merged.stream() as streamer:
-                async for direction, data in streamer:
-                    if direction == "in":
-                        # send to server
-                        await ws.send_json(data)
-                    elif direction == "out":
-                        # yield out to client
-                        yield data
-                    else:
-                        # ignore
-                        ...
+                async with merged.stream() as streamer:
+                    async for direction, data in streamer:
+                        if direction == "in":
+                            # send to server
+                            await ws.send_json(data)
+                        elif direction == "out":
+                            # yield out to client
+                            yield data
+                        else:
+                            # ignore
+                            ...
 
     # Public Functions
 
@@ -640,7 +788,7 @@ class BaseGatewayClient(BaseModel):
     def state(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None) -> ResponseType: ...
 
     @abstractmethod
-    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None): ...
+    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, timeout: Optional[float] = None): ...
 
     # NOTE: sync version
     # def stream(self, channels: List[str] = None, callback: Callable = None):
@@ -658,75 +806,75 @@ class BaseGatewayClient(BaseModel):
 class SyncGatewayClientMixin:
     @_raiseIfNotMounted
     def controls(
-        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None
+        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None
     ) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         if field in ("shutdown",):
             res = self._post("{}/{}".format("controls", field), data=data, timeout=timeout)
         else:
             res = self._get("{}/{}".format("controls", field), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
-    def last(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+    def last(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None) -> ResponseType:
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._get("{}/{}".format("last", field), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
-    def lookup(self, field: str, id: str, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+    def lookup(self, field: str, id: str, timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None) -> ResponseType:
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._get("{}/{}/{}".format("lookup", field, id), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
-    def next(self, field: str = "", timeout: float = None, return_raw_json_override: Optional[bool] = None) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+    def next(self, field: str = "", timeout: float = None, return_type_override: Optional[ReturnType] = None) -> ResponseType:
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._get("{}/{}".format("next", field), timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
     def send(
-        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_raw_json_override: Optional[bool] = None
+        self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT, return_type_override: Optional[ReturnType] = None
     ) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         res = self._post("{}/{}".format("send", field), data=data, timeout=timeout)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
     @_raiseIfNotMounted
     def state(
-        self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None, return_raw_json_override: Optional[bool] = None
+        self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None, return_type_override: Optional[ReturnType] = None
     ) -> ResponseType:
-        if return_raw_json_override is not None:
-            old_return_raw_json = self.config.return_raw_json
-            self.config.return_raw_json = return_raw_json_override
+        if return_type_override is not None:
+            old_return_type = self.config.return_type
+            self.config.return_type = return_type_override
         params = None if query is None else {"query": query.model_dump_json()}
         res = self._get("{}/{}".format("state", field), timeout=timeout, params=params)
-        if return_raw_json_override is not None:
-            self.config.return_raw_json = old_return_raw_json
+        if return_type_override is not None:
+            self.config.return_type = old_return_type
         return res
 
-    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None):
+    def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None, timeout: Optional[float] = None):
         """Stream data from specified channels with optional key filtering for dict baskets.
 
         Establishes a synchronous streaming connection to receive real-time updates from the specified channels.
@@ -737,8 +885,11 @@ class SyncGatewayClientMixin:
                     each entry can be either a string (channel name) or a tuple of
                     (channel_name, key) to subscribe only to a specific key in a dict basket.
             callback: A function that will be called with each received message.
+            timeout: Optional timeout in seconds for receiving messages. If no message is received
+                    within this time, asyncio.TimeoutError is raised. Useful for detecting dead
+                    connections when the server sends regular heartbeats.
         """
-        self._stream(channels=channels, callback=callback)
+        self._stream(channels=channels, callback=callback, timeout=timeout)
 
     def publish(self, field: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
         """Publish data to a channel or specific key within a dict basket channel.
@@ -776,6 +927,87 @@ class SyncGatewayClientMixin:
             key: For dict basket channels, the specific key to unsubscribe from. If None, unsubscribes from the entire channel.
         """
         self._event_loop.run_until_complete(self._unsubscribe(channel=field, key=key))
+
+    def stream_csp(self, subscribe, unsubscribe=None, data=None, push_mode=None, connection_timeout=-1):
+        """Stream data bidirectionally with the gateway server over websockets using CSP.
+
+        This method creates a CSP DynamicBasket that streams data from the specified
+        channels on the gateway server. Channels can be dynamically added or removed by
+        ticking on the `subscribe` and `unsubscribe` inputs. Each channel becomes a key
+        in the returned DynamicBasket, with values being the data received for that channel.
+
+        The client will buffer subscribe/unsubscribe/data requests until the connection
+        is established. If the server is unavailable, the client will retry with exponential
+        backoff according to the connection_timeout parameter.
+
+        Args:
+            subscribe: A time series (ts[str]) of channel names to subscribe to.
+                Each time this ticks, a new channel is added and a new dynamic output
+                key is created in the returned basket.
+            unsubscribe: Optional time series (ts[str]) of channel names to unsubscribe from.
+                Each time this ticks, the channel is removed and the dynamic key is removed
+                from the basket using csp.remove_dynamic_key.
+            data: Optional time series (ts[Dict[str, Any]]) to send back through the websocket.
+                Each tick will send the data to the server. The dictionary should map
+                channel names to the data to send. For example:
+                - {"my_channel": {"value": 42}} - sends single dict to channel
+                - {"my_channel": [{"value": 1}, {"value": 2}]} - sends list to channel
+                - {"ch1": {"v": 1}, "ch2": [{"v": 2}]} - sends to multiple channels
+            push_mode: How to handle buffered ticks. Options are:
+                - csp.PushMode.LAST_VALUE: Only tick the latest value since the last cycle
+                - csp.PushMode.BURST: Tick all buffered values as a list
+                - csp.PushMode.NON_COLLAPSING: Tick all events without collapsing (default)
+            connection_timeout: How long to wait for the server to be available (in seconds).
+                - 0: Expect server to be immediately available at startup
+                - -1: Wait indefinitely for the server (default)
+                - positive number: Wait up to this many seconds before raising an error
+
+        Returns:
+            A csp.DynamicBasket[str, object] where each key is a channel name and values
+            are the data (GatewayStruct or dict) received for that channel.
+
+        Raises:
+            csp_gateway.client.csp_stream.ConnectionError: If the connection fails or is lost.
+
+        Example:
+            >>> import csp
+            >>> from datetime import timedelta
+            >>> from csp_gateway.client import GatewayClient
+            >>>
+            >>> @csp.graph
+            >>> def my_graph():
+            ...     client = GatewayClient(host="localhost", port=8000)
+            ...
+            ...     # Subscribe to channels dynamically
+            ...     subscribe = csp.curve(str, [(timedelta(seconds=0), "channel1"),
+            ...                                  (timedelta(seconds=1), "channel2")])
+            ...     unsubscribe = csp.curve(str, [(timedelta(seconds=5), "channel1")])
+            ...
+            ...     # Returns a DynamicBasket where each key is a channel name
+            ...     basket = client.stream_csp(subscribe=subscribe, unsubscribe=unsubscribe)
+            ...
+            ...     # Print the basket as data arrives
+            ...     csp.print("basket", basket)
+            ...
+            ...     # Bidirectional streaming - send data back to server
+            ...     outgoing = csp.const({"my_channel": {"value": 42}})
+            ...     basket = client.stream_csp(subscribe=subscribe, data=outgoing)
+            ...
+            ...     # With connection timeout - wait up to 10 seconds for server
+            ...     basket = client.stream_csp(subscribe=subscribe, connection_timeout=10)
+        """
+        try:
+            import csp
+        except ImportError:
+            log.exception("Must have csp installed to use stream_csp")
+            raise
+
+        from .csp_stream import _create_stream_csp_graph
+
+        if push_mode is None:
+            push_mode = csp.PushMode.NON_COLLAPSING
+
+        return _create_stream_csp_graph(self.config, connection_timeout)(subscribe, unsubscribe, data, push_mode)
 
 
 class SyncGatewayClient(SyncGatewayClientMixin, BaseGatewayClient):
@@ -832,7 +1064,7 @@ class AsyncGatewayClientMixin:
         params = None if query is None else {"query": query.model_dump_json()}
         return await self._getasync("{}/{}".format("state", field), timeout=timeout, params=params)
 
-    async def stream(self, channels: List[Union[str, Tuple[str, str]]] = None):
+    async def stream(self, channels: List[Union[str, Tuple[str, str]]] = None, timeout: Optional[float] = None):
         """Stream data from specified channels with optional key filtering for dict baskets.
 
         Establishes an asynchronous streaming connection to receive real-time updates from the specified channels.
@@ -842,12 +1074,26 @@ class AsyncGatewayClientMixin:
             channels: A list of channel names to subscribe to. For dict basket channels,
                     each entry can be either a string (channel name) or a tuple of
                     (channel_name, key) to subscribe only to a specific key in a dict basket.
+            timeout: Optional timeout in seconds for receiving messages. If no message is received
+                    within this time, asyncio.TimeoutError is raised. Useful for detecting dead
+                    connections when the server sends regular heartbeats.
 
         Yields:
             Data messages received from the subscribed channels.
+
+        Raises:
+            asyncio.TimeoutError: If timeout is set and no message is received within the timeout period.
         """
-        async for data in self._streamAsync(channels=channels):
-            yield data
+        if timeout is None:
+            async for data in self._streamAsync(channels=channels):
+                yield data
+        else:
+            it = aiter(self._streamAsync(channels=channels))
+            while True:
+                try:
+                    yield await wait_for(anext(it), timeout=timeout)
+                except StopAsyncIteration:
+                    break
 
     async def publish(self, field: str, data: Union[Dict[str, Any], List[Any]], key: Optional[str] = None):
         """Publish data to a channel or specific key within a dict basket channel.

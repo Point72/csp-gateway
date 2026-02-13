@@ -7,7 +7,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException
 
 from ..utils import get_default_responses
-from .shared import prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_last_routes",
@@ -27,6 +27,9 @@ def add_last_routes(
     else:
         is_list_model = False
         list_model = List[model]
+
+    # Get the fully qualified type name for the description
+    fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
 
@@ -67,6 +70,7 @@ def add_last_routes(
             responses=get_default_responses(),
             response_model=list_model,
             name="Get Last {} by key".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_last)
 
         api_router.get(
@@ -101,6 +105,7 @@ def add_last_routes(
             responses=get_default_responses(),
             response_model=list_model,  # type: ignore[valid-type]
             name="Get Last {}".format(field),
+            description=f"Response type: {fq_type_name}" if fq_type_name else None,
         )(get_last_basket)
 
         api_router.get(
@@ -141,6 +146,7 @@ def add_last_routes(
             responses=get_default_responses(),
             response_model=list_model,
             name="Get Last {}".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_last)
 
         api_router.get(

@@ -1,12 +1,41 @@
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union, get_args, get_origin
 
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 __all__ = (
     "prepare_response",
     "get_next_tick",
+    "get_fully_qualified_type_name",
 )
+
+
+def get_fully_qualified_type_name(model: Union[BaseModel, List[BaseModel], None]) -> str:
+    """
+    Get the fully qualified type name for a model.
+
+    For example, for ExampleData defined in csp_gateway.server.demo.simple,
+    this returns "csp_gateway.server.demo.simple.ExampleData".
+
+    If the model is a List[SomeModel], this returns the fully qualified name of SomeModel.
+    """
+    if model is None:
+        return ""
+
+    # If it's a List type, extract the inner type
+    if get_origin(model) is list:
+        args = get_args(model)
+        if args:
+            model = args[0]
+
+    # Get the module and class name
+    if hasattr(model, "__module__") and hasattr(model, "__name__"):
+        return f"{model.__module__}.{model.__name__}"
+    elif hasattr(model, "__module__") and hasattr(model, "__qualname__"):
+        return f"{model.__module__}.{model.__qualname__}"
+
+    return ""
 
 
 def prepare_response(

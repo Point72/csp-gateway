@@ -308,7 +308,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
                 self._modules_connections_graph[field]["getters"].append(name)
 
     def _validate_field_name(self, field: str) -> bool:
-        return field in self.model_fields
+        return field in self.fields()
 
     def keys_for_channel(self, field: str) -> Optional[Dict[Any, _NONE_TYPE]]:
         """Return the set of keys for the channel"""

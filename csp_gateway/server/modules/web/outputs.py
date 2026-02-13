@@ -45,7 +45,10 @@ class MountOutputsFolder(GatewayModule):
             if os.path.abspath(file_or_dir).startswith(self.dir) and os.path.exists(file_or_dir):
                 if os.path.isdir(file_or_dir):
                     files = os.listdir(file_or_dir)
-                    files_paths = sorted([f"{request.url._url}/{f}".replace("outputs//", "outputs/") for f in files])
+                    # Build file URLs using path only, then append query string if present
+                    base_path = str(request.url.path).rstrip("/")
+                    query_suffix = f"?{request.url.query}" if request.url.query else ""
+                    files_paths = sorted([f"{base_path}/{f}{query_suffix}".replace("outputs//", "outputs/") for f in files])
                     return app.templates.TemplateResponse(
                         "files.html.j2", {"request": request, "files": files_paths, "pid": os.getpid()}, media_type="text/html"
                     )

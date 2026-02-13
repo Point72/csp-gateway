@@ -28,9 +28,7 @@ log = logging.getLogger(__name__)
 
 
 class GatewayChannels(Channels):
-    @classmethod
-    def fields(cls) -> List[str]:
-        return list(cls.model_fields.keys())
+    pass
 
 
 class GatewayModule(Module[GatewayChannels]):

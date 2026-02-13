@@ -1,0 +1,44 @@
+# @package _global_
+defaults:
+  - /gateway: omnibus
+  - _self_
+
+logfire:
+  _target_: csp_gateway.server.modules.logging.Logfire
+  project_name: "csp-gateway-poc"
+  service_name: "CSP Gateway"
+  instrument_fastapi: True
+  capture_logging: True
+  log_level: DEBUG
+  
+publish_logfire:
+  _target_: csp_gateway.server.modules.logging.PublishLogfire
+  selection:
+    include:
+      - example
+  service_name: "CSP Gateway"
+  include_metadata: True
+  use_spans: True
+  log_level: DEBUG
+
+gateway:
+  _target_: csp_gateway.Gateway
+  settings:
+    PORT: ${port}
+    AUTHENTICATE: ${authenticate}
+    UI: True
+    API_KEY: "12345"
+  modules:
+    - /modules/example_module
+    - /modules/mount_outputs
+    - /modules/mount_perspective_tables
+    - /modules/mount_rest_routes
+    - /logfire
+    - /publish_logfire
+  channels:
+    _target_: csp_gateway.server.demo.ExampleGatewayChannels
+
+# csp-gateway-start --config-dir=csp_gateway/server/demo +config=logfire
+
+authenticate: False
+port: 8000

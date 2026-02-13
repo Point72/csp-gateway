@@ -25,7 +25,7 @@ from csp_gateway import (
     Query,
     __version__,
 )
-from csp_gateway.client import GatewayClient, GatewayClientConfig
+from csp_gateway.client import GatewayClient, GatewayClientConfig, ReturnType
 from csp_gateway.server.demo import (
     ExampleEnum,
     ExampleGatewayChannels,
@@ -86,6 +86,79 @@ class TestGatewayWebserver:
         assert json["info"]["title"] == "Gateway"
         assert json["info"]["version"] == __version__
 
+    def test_openapi_includes_fully_qualified_type_name(self, rest_client: TestClient):
+        """Test that the OpenAPI schema includes the fully qualified type name in openapi_extra type_ field."""
+        response = rest_client.get("/openapi.json?token=test")
+        assert response.status_code == 200
+        openapi_json = response.json()
+
+        # Check paths that should have the fully qualified type name in openapi_extra.type_
+        paths = openapi_json.get("paths", {})
+
+        # Test /api/v1/last/example route
+        last_example_path = paths.get("/api/v1/last/example", {})
+        last_example_get = last_example_path.get("get", {})
+        last_example_type = last_example_get.get("type_", "")
+        assert last_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/last/example type_, got: {last_example_type}"
+        )
+
+        # Test /api/v1/next/example route
+        next_example_path = paths.get("/api/v1/next/example", {})
+        next_example_get = next_example_path.get("get", {})
+        next_example_type = next_example_get.get("type_", "")
+        assert next_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/next/example type_, got: {next_example_type}"
+        )
+
+        # Test /api/v1/send/example route
+        send_example_path = paths.get("/api/v1/send/example", {})
+        send_example_post = send_example_path.get("post", {})
+        send_example_type = send_example_post.get("type_", "")
+        assert send_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/send/example type_, got: {send_example_type}"
+        )
+
+        # Test /api/v1/lookup/example/{id} route
+        lookup_example_path = paths.get("/api/v1/lookup/example/{id}", {})
+        lookup_example_get = lookup_example_path.get("get", {})
+        lookup_example_type = lookup_example_get.get("type_", "")
+        assert lookup_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/lookup/example/{{id}} type_, got: {lookup_example_type}"
+        )
+
+        # Test /api/v1/state/example route
+        state_example_path = paths.get("/api/v1/state/example", {})
+        state_example_get = state_example_path.get("get", {})
+        state_example_type = state_example_get.get("type_", "")
+        assert state_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
+            f"Expected fully qualified type name in /api/v1/state/example type_, got: {state_example_type}"
+        )
+
+        # Test /api/v1/controls/heartbeat route
+        heartbeat_path = paths.get("/api/v1/controls/heartbeat", {})
+        heartbeat_get = heartbeat_path.get("get", {})
+        heartbeat_type = heartbeat_get.get("type_", "")
+        assert heartbeat_type == "csp_gateway.utils.web.controls.Controls", (
+            f"Expected fully qualified type name in /api/v1/controls/heartbeat type_, got: {heartbeat_type}"
+        )
+
+        # Test /api/v1/controls/stats route
+        stats_path = paths.get("/api/v1/controls/stats", {})
+        stats_get = stats_path.get("get", {})
+        stats_type = stats_get.get("type_", "")
+        assert stats_type == "csp_gateway.utils.web.controls.Controls", (
+            f"Expected fully qualified type name in /api/v1/controls/stats type_, got: {stats_type}"
+        )
+
+        # Test /api/v1/controls/shutdown route
+        shutdown_path = paths.get("/api/v1/controls/shutdown", {})
+        shutdown_post = shutdown_path.get("post", {})
+        shutdown_type = shutdown_post.get("type_", "")
+        assert shutdown_type == "csp_gateway.utils.web.controls.Controls", (
+            f"Expected fully qualified type name in /api/v1/controls/shutdown type_, got: {shutdown_type}"
+        )
+
     def test_docs(self, rest_client: TestClient):
         response = rest_client.get("/docs?token=test")
         assert response.status_code == 200
@@ -122,6 +195,29 @@ class TestGatewayWebserver:
         response = rest_client.get("/outputs/testing/temp/tempfile.txt?token=test")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
+
+    def test_log_viewer_query_param_position(self, rest_client: TestClient):
+        """Test that API key query parameters are placed correctly in file URLs.
+
+        When browsing logs with a query parameter (e.g., ?token=test), the file links
+        should have the query parameter at the end of the URL, not embedded in the path.
+        e.g., /outputs/file.txt?token=test, NOT /outputs?token=test/file.txt
+        """
+        # Ensure directory and files exist
+        os.makedirs(os.path.join(os.getcwd(), "outputs", "testing", "temp"), exist_ok=True)
+        with open(os.path.join(os.getcwd(), "outputs", "testing", "temp", "tempfile.txt"), "w") as fp:
+            fp.write("test content")
+
+        # Request the directory listing with a query parameter
+        response = rest_client.get("/outputs/testing/temp?token=test")
+        assert response.status_code == 200
+
+        # Check that the HTML content has correct URL structure
+        html_content = response.text
+        # The link should be /outputs/testing/temp/tempfile.txt?token=test
+        # NOT /outputs/testing/temp?token=test/tempfile.txt
+        assert "tempfile.txt?token=test" in html_content
+        assert "?token=test/tempfile.txt" not in html_content
 
     def test_control_heartbeat(self, rest_client: TestClient):
         response = rest_client.get("/api/v1/controls/heartbeat?token=test")
@@ -383,6 +479,25 @@ class TestGatewayWebserver:
         response = rest_client.get(f"/api/v1/lookup/example_list/{id}?token=test")
         assert datum == response.json()[0]
 
+    def test_csp_global_lookup_by_id(self, rest_client: TestClient):
+        """Test the global lookup endpoint that looks up any GatewayStruct by its unique ID."""
+        # get an existing object to fetch its ID
+        data = self._wait_for_data(rest_client=rest_client)
+        datum = data[0]
+        assert "id" in datum
+        id = datum["id"]
+
+        # lookup by global ID endpoint
+        response = rest_client.get(f"/api/v1/lookup/id/{id}?token=test")
+        assert response.status_code == 200
+        assert response.json()[0]["id"] == id
+
+    def test_csp_global_lookup_not_found(self, rest_client: TestClient):
+        """Test that global lookup returns 404 for non-existent ID."""
+        response = rest_client.get("/api/v1/lookup/id/nonexistent_id_12345?token=test")
+        assert response.status_code == 404
+        assert "No GatewayStruct found" in response.json()["detail"]
+
     def test_csp_toplevel_last(self, rest_client: TestClient):
         self._wait_for_data(rest_client=rest_client)
 
@@ -457,7 +572,7 @@ class TestGatewayWebserver:
             assert isinstance(datum["data"], list)
             assert isinstance(datum["mapping"], dict)
 
-        data_response = gateway_client.last("example", return_raw_json_override=False)
+        data_response = gateway_client.last("example", return_type_override=ReturnType.Wrapper)
         expected_columns = {"id", "timestamp", "x", "y", "data", "dt", "d", "internal_csp_struct.z", "mapping"}
         data_pd = data_response.as_pandas_df()
         actual_columns_pd = set(data_pd.columns)

@@ -7,7 +7,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException, Query, query_json
 
 from ..utils import get_default_responses
-from .shared import prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_state_routes",
@@ -25,6 +25,9 @@ def add_state_routes(
         list_model = model
     else:
         list_model = List[model]
+
+    # Get the fully qualified type name for the description
+    fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
         # Prune s_ from start
@@ -85,6 +88,7 @@ def add_state_routes(
             responses=get_default_responses(),
             response_model=list_model,  # type: ignore[valid-type]
             name="Get State {} by key".format(name_without_state),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_state)
 
         api_router.get(
@@ -163,6 +167,7 @@ def add_state_routes(
             responses=get_default_responses(),
             response_model=list_model,  # type: ignore[valid-type]
             name="Get State {}".format(name_without_state),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_state)
 
         api_router.get(
