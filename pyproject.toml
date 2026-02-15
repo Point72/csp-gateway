@@ -57,6 +57,8 @@ develop = [
     "python-magic",
     "ruff>=0.9,<0.15",
     "twine",
+    "ty",
+    "uv",
     "wheel",
     # modules
     "arrow-odbc",
@@ -200,7 +202,7 @@ packages = [
 exclude = [
     "/docs",
     "/examples",
-    "/js"
+    "/js",
 ]
 
 [tool.hatch.build.hooks.hatch-js]
