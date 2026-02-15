@@ -2,10 +2,7 @@
 requires = [
     "hatchling",
     "hatch-js",
-<<<<<<< before updating
     "hatch-multi>=1",
-=======
->>>>>>> after updating
 ]
 build-backend="hatchling.build"
 
@@ -203,13 +200,9 @@ packages = [
     "csp_gateway",
 ]
 exclude = [
-<<<<<<< before updating
     "/docs",
     "/examples",
-    "/js"
-=======
     "/js",
->>>>>>> after updating
 ]
 
 [tool.hatch.build.hooks.hatch-js]
@@ -217,7 +210,6 @@ path = "js"
 build_cmd = "build"
 tool = "pnpm"
 targets = [
-<<<<<<< before updating
     "csp_gateway/server/build/index.css",
     "csp_gateway/server/build/index.html",
     "csp_gateway/server/build/main.js",
@@ -227,9 +219,6 @@ targets = [
 primary = [
     "server",
     "client",
-=======
-    "csp_gateway/extension/cdn/index.js",
->>>>>>> after updating
 ]
 
 [tool.pytest.ini_options]
@@ -266,7 +255,6 @@ section-order = [
     "F401",
     "F403",
 ]
-<<<<<<< before updating
 "conftest.py" = [
     "F401",
     "F403",
@@ -274,5 +262,3 @@ section-order = [
 "csp_gateway/tests/*" = [
     "D",
 ]
-=======
->>>>>>> after updating
