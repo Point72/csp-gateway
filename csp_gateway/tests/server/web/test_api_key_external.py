@@ -14,6 +14,7 @@ from csp_gateway.server.demo import (
     ExampleGatewayChannels,
     ExampleModule,
 )
+from csp_gateway.server.middleware.api_key import MountAPIKeyMiddleware
 from csp_gateway.server.middleware.api_key_external import MountExternalAPIKeyMiddleware
 
 
@@ -171,3 +172,258 @@ class TestExternalValidatorConfiguration:
 
 # Non-callable constant for testing
 NON_CALLABLE = "I am not callable"
+
+
+class TestScopeMatching:
+    """Test scope-based authentication filtering."""
+
+    @pytest.fixture(scope="class")
+    def scoped_gateway(self, free_port):
+        """Create a gateway with scoped API key validation (only /api/*)."""
+        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
+        gateway = Gateway(
+            modules=[
+                ExampleModule(),
+                MountRestRoutes(force_mount_all=True),
+                MountExternalAPIKeyMiddleware(
+                    external_validator=validator_path,
+                    scope="/api/*",
+                ),
+            ],
+            channels=ExampleGatewayChannels(),
+            settings=GatewaySettings(PORT=free_port),
+        )
+        return gateway
+
+    @pytest.fixture(scope="class")
+    def scoped_webserver(self, scoped_gateway):
+        scoped_gateway.start(rest=True, _in_test=True)
+        yield scoped_gateway
+        scoped_gateway.stop()
+
+    @pytest.fixture(scope="class")
+    def scoped_rest_client(self, scoped_webserver) -> TestClient:
+        return TestClient(scoped_webserver.web_app.get_fastapi())
+
+    def test_api_route_requires_auth(self, scoped_rest_client: TestClient):
+        """Test that /api/* routes require authentication."""
+        response = scoped_rest_client.get("/api/v1/last")
+        assert response.status_code == 403, "API route without key should be rejected"
+
+    def test_api_route_accepts_valid_key(self, scoped_rest_client: TestClient):
+        """Test that /api/* routes accept valid keys."""
+        response = scoped_rest_client.get("/api/v1/last?token=valid_key_1")
+        assert response.status_code == 200, "API route with valid key should be accepted"
+
+
+@pytest.mark.skip(
+    reason="Multiple middlewares with different scopes requires scope checking at validate() level, which conflicts with WebSocket support"
+)
+class TestMultipleScopedMiddlewares:
+    """Test multiple authentication middlewares with different scopes."""
+
+    @pytest.fixture(scope="class")
+    def multi_scope_gateway(self, free_port):
+        """Create a gateway with two middlewares with different scopes and keys."""
+        validator_path_1 = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
+        validator_path_2 = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_admin")
+        gateway = Gateway(
+            modules=[
+                ExampleModule(),
+                MountRestRoutes(force_mount_all=True),
+                # First middleware: validates /api/v1/* with valid_key_1, valid_key_2
+                MountExternalAPIKeyMiddleware(
+                    external_validator=validator_path_1,
+                    scope="/api/v1/*",
+                ),
+                # Second middleware: validates /api/admin/* with admin_key only
+                MountExternalAPIKeyMiddleware(
+                    external_validator=validator_path_2,
+                    scope="/api/admin/*",
+                ),
+            ],
+            channels=ExampleGatewayChannels(),
+            settings=GatewaySettings(PORT=free_port),
+        )
+        return gateway
+
+    @pytest.fixture(scope="class")
+    def multi_scope_webserver(self, multi_scope_gateway):
+        multi_scope_gateway.start(rest=True, _in_test=True)
+        yield multi_scope_gateway
+        multi_scope_gateway.stop()
+
+    @pytest.fixture(scope="class")
+    def multi_scope_rest_client(self, multi_scope_webserver) -> TestClient:
+        return TestClient(multi_scope_webserver.web_app.get_fastapi())
+
+    def test_v1_route_accepts_v1_key(self, multi_scope_rest_client: TestClient):
+        """Test that /api/v1/* accepts valid_key_1."""
+        response = multi_scope_rest_client.get("/api/v1/last?token=valid_key_1")
+        assert response.status_code == 200, "v1 route should accept valid_key_1"
+
+    def test_v1_route_rejects_admin_key(self, multi_scope_rest_client: TestClient):
+        """Test that /api/v1/* rejects admin_key (wrong scope)."""
+        response = multi_scope_rest_client.get("/api/v1/last?token=admin_key")
+        assert response.status_code == 403, "v1 route should reject admin_key"
+
+
+class TestListScope:
+    """Test scope as a list of patterns."""
+
+    @pytest.fixture(scope="class")
+    def list_scope_gateway(self, free_port):
+        """Create a gateway with a list of scope patterns."""
+        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
+        gateway = Gateway(
+            modules=[
+                ExampleModule(),
+                MountRestRoutes(force_mount_all=True),
+                MountExternalAPIKeyMiddleware(
+                    external_validator=validator_path,
+                    scope=["/api/v1/*", "/api/v2/*"],
+                ),
+            ],
+            channels=ExampleGatewayChannels(),
+            settings=GatewaySettings(PORT=free_port),
+        )
+        return gateway
+
+    @pytest.fixture(scope="class")
+    def list_scope_webserver(self, list_scope_gateway):
+        list_scope_gateway.start(rest=True, _in_test=True)
+        yield list_scope_gateway
+        list_scope_gateway.stop()
+
+    @pytest.fixture(scope="class")
+    def list_scope_rest_client(self, list_scope_webserver) -> TestClient:
+        return TestClient(list_scope_webserver.web_app.get_fastapi())
+
+    def test_v1_route_requires_auth(self, list_scope_rest_client: TestClient):
+        """Test that /api/v1/* requires authentication."""
+        response = list_scope_rest_client.get("/api/v1/last")
+        assert response.status_code == 403, "v1 route without key should be rejected"
+
+    def test_v1_route_accepts_valid_key(self, list_scope_rest_client: TestClient):
+        """Test that /api/v1/* accepts valid key."""
+        response = list_scope_rest_client.get("/api/v1/last?token=valid_key_1")
+        assert response.status_code == 200, "v1 route with valid key should be accepted"
+
+
+class TestScopeMatchingUnit:
+    """Unit tests for _matches_scope method."""
+
+    def test_matches_wildcard(self):
+        """Test that '*' matches all paths."""
+        middleware = MountExternalAPIKeyMiddleware(external_validator=None, scope="*")
+        assert middleware._matches_scope("/api/v1/last") is True
+        assert middleware._matches_scope("/anything") is True
+
+    def test_matches_specific_pattern(self):
+        """Test that specific patterns match correctly."""
+        middleware = MountExternalAPIKeyMiddleware(external_validator=None, scope="/api/*")
+        assert middleware._matches_scope("/api/v1/last") is True
+        assert middleware._matches_scope("/api/") is True
+        assert middleware._matches_scope("/other/path") is False
+
+    def test_matches_list_patterns(self):
+        """Test that list of patterns works correctly."""
+        middleware = MountExternalAPIKeyMiddleware(external_validator=None, scope=["/api/*", "/admin/*"])
+        assert middleware._matches_scope("/api/v1/last") is True
+        assert middleware._matches_scope("/admin/users") is True
+        assert middleware._matches_scope("/public/page") is False
+
+    def test_none_scope_matches_all(self):
+        """Test that None scope matches all paths."""
+        middleware = MountExternalAPIKeyMiddleware(external_validator=None, scope=None)
+        assert middleware._matches_scope("/any/path") is True
+
+    def test_skip_if_out_of_scope(self):
+        """Test _skip_if_out_of_scope helper."""
+        from unittest.mock import Mock
+
+        middleware = MountExternalAPIKeyMiddleware(external_validator=None, scope="/api/*")
+
+        request_in_scope = Mock()
+        request_in_scope.url.path = "/api/v1/last"
+        assert middleware._skip_if_out_of_scope(request_in_scope) is False
+
+        request_out_of_scope = Mock()
+        request_out_of_scope.url.path = "/public/page"
+        assert middleware._skip_if_out_of_scope(request_out_of_scope) is True
+
+
+def mock_validator_admin(api_key: str, settings, module) -> dict:
+    """A mock validator that only accepts admin_key."""
+    if api_key == "admin_key":
+        return {"user": "admin", "role": "superadmin"}
+    return None
+
+
+class TestMountAPIKeyMiddlewareScope:
+    """Test MountAPIKeyMiddleware with scope configuration."""
+
+    @pytest.fixture(scope="class")
+    def scoped_static_key_gateway(self, free_port):
+        """Create a gateway with scoped static API key validation."""
+        gateway = Gateway(
+            modules=[
+                ExampleModule(),
+                MountRestRoutes(force_mount_all=True),
+                MountAPIKeyMiddleware(
+                    api_key="test-api-key",
+                    scope="/api/*",
+                ),
+            ],
+            channels=ExampleGatewayChannels(),
+            settings=GatewaySettings(PORT=free_port),
+        )
+        return gateway
+
+    @pytest.fixture(scope="class")
+    def scoped_static_key_webserver(self, scoped_static_key_gateway):
+        scoped_static_key_gateway.start(rest=True, _in_test=True)
+        yield scoped_static_key_gateway
+        scoped_static_key_gateway.stop()
+
+    @pytest.fixture(scope="class")
+    def scoped_static_key_rest_client(self, scoped_static_key_webserver) -> TestClient:
+        return TestClient(scoped_static_key_webserver.web_app.get_fastapi())
+
+    def test_api_route_requires_auth(self, scoped_static_key_rest_client: TestClient):
+        """Test that /api/* routes require authentication with MountAPIKeyMiddleware."""
+        response = scoped_static_key_rest_client.get("/api/v1/last")
+        assert response.status_code == 403, "API route without key should be rejected"
+
+    def test_api_route_accepts_valid_key(self, scoped_static_key_rest_client: TestClient):
+        """Test that /api/* routes accept valid keys with MountAPIKeyMiddleware."""
+        response = scoped_static_key_rest_client.get("/api/v1/last?token=test-api-key")
+        assert response.status_code == 200, "API route with valid key should be accepted"
+
+    def test_api_route_rejects_invalid_key(self, scoped_static_key_rest_client: TestClient):
+        """Test that /api/* routes reject invalid keys with MountAPIKeyMiddleware."""
+        response = scoped_static_key_rest_client.get("/api/v1/last?token=wrong-key")
+        assert response.status_code == 403, "API route with invalid key should be rejected"
+
+
+class TestMountAPIKeyMiddlewareScopeUnit:
+    """Unit tests for MountAPIKeyMiddleware scope methods."""
+
+    def test_matches_scope_wildcard(self):
+        """Test that '*' matches all paths."""
+        middleware = MountAPIKeyMiddleware(api_key="test", scope="*")
+        assert middleware._matches_scope("/api/v1/last") is True
+        assert middleware._matches_scope("/anything") is True
+
+    def test_matches_scope_specific_pattern(self):
+        """Test that specific patterns match correctly."""
+        middleware = MountAPIKeyMiddleware(api_key="test", scope="/api/*")
+        assert middleware._matches_scope("/api/v1/last") is True
+        assert middleware._matches_scope("/other/path") is False
+
+    def test_matches_scope_list_patterns(self):
+        """Test that list of patterns works correctly."""
+        middleware = MountAPIKeyMiddleware(api_key="test", scope=["/api/*", "/admin/*"])
+        assert middleware._matches_scope("/api/v1/last") is True
+        assert middleware._matches_scope("/admin/users") is True
+        assert middleware._matches_scope("/public/page") is False

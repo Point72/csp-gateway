@@ -40,24 +40,24 @@ class MountExternalAPIKeyMiddleware(MountAPIKeyMiddleware):
             return None
         return self.external_validator.object(api_key, settings, module)
 
-    def _get_api_key_dependency(self, app: GatewayWebApp):
-        """Returns the get_api_key dependency for external validation."""
-        api_key_query = APIKeyQuery(name=self.api_key_name, auto_error=False)
-        api_key_header = APIKeyHeader(name=self.api_key_name, auto_error=False)
-        api_key_cookie = APIKeyCookie(name=self.api_key_name, auto_error=False)
+    def validate(self):
+        """Return a FastAPI dependency function for external API key validation."""
+        api_key_query_security = Security(APIKeyQuery(name=self.api_key_name, auto_error=False))
+        api_key_header_security = Security(APIKeyHeader(name=self.api_key_name, auto_error=False))
+        api_key_cookie_security = Security(APIKeyCookie(name=self.api_key_name, auto_error=False))
 
-        async def get_api_key(
-            api_key_query: str = Security(api_key_query),
-            api_key_header: str = Security(api_key_header),
-            api_key_cookie: str = Security(api_key_cookie),
-        ):
+        async def validate_credentials(
+            api_key_query: str = api_key_query_security,
+            api_key_header: str = api_key_header_security,
+            api_key_cookie: str = api_key_cookie_security,
+        ) -> str:
+            """Validate API key using external validator and return a session UUID."""
             try:
                 for provided_key in (api_key_query, api_key_header, api_key_cookie):
-                    identity = self._invoke_external(provided_key, app.settings, app)
+                    identity = self._invoke_external(provided_key, self._app_settings, self._app_module)
                     if identity and isinstance(identity, dict):
                         user_uuid = str(uuid4())
                         while user_uuid in self._identity_store:
-                            # Should never happen, but just in case of a uuid collision, generate a new one
                             user_uuid = str(uuid4())
                         self._identity_store[user_uuid] = identity
                         return user_uuid
@@ -66,20 +66,23 @@ class MountExternalAPIKeyMiddleware(MountAPIKeyMiddleware):
                     status_code=HTTP_403_FORBIDDEN,
                     detail=self.unauthorized_status_message,
                 ) from e
-            # No valid key found
             raise HTTPException(
                 status_code=HTTP_403_FORBIDDEN,
                 detail=self.unauthorized_status_message,
             )
 
-        return get_api_key
+        return validate_credentials
 
     def rest(self, app: GatewayWebApp) -> None:
+        # Store app references for use in check()
+        self._app_settings = app.settings
+        self._app_module = app
+
         auth_router: APIRouter = app.get_router("auth")
-        get_api_key = self._get_api_key_dependency(app)
+        check = self.get_check_dependency()
 
         @auth_router.get("/login")
-        async def route_login_and_add_cookie(api_key: str = Depends(get_api_key)):
+        async def route_login_and_add_cookie(api_key: str = Depends(check)):
             response = RedirectResponse(url="/")
             if api_key in self._identity_store:
                 response.set_cookie(
@@ -102,4 +105,4 @@ class MountExternalAPIKeyMiddleware(MountAPIKeyMiddleware):
             return response
 
         # Call parent to set up public routes, middleware, and exception handler
-        self._setup_public_routes(app, get_api_key)
+        self._setup_public_routes(app)

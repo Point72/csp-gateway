@@ -1,7 +1,6 @@
-import abc
-import typing
+from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, Generic, List, Optional, Set, Type, Union
+from typing import TYPE_CHECKING, Any, Dict, Generic, List, Optional, Set, Type, Union
 
 from ccflow import BaseModel
 from pydantic import Field, TypeAdapter, model_validator
@@ -11,11 +10,11 @@ from csp_gateway.utils import GatewayStruct
 
 from .channels import ChannelsType
 
-if typing.TYPE_CHECKING:
+if TYPE_CHECKING:
     from csp_gateway.server import GatewaySettings, GatewayWebApp
 
 
-class Module(BaseModel, Generic[ChannelsType], abc.ABC):
+class Module(BaseModel, Generic[ChannelsType], ABC):
     model_config = {"arbitrary_types_allowed": True}
 
     requires: Optional[ChannelSelection] = None
@@ -28,14 +27,14 @@ class Module(BaseModel, Generic[ChannelsType], abc.ABC):
         """,
     )
 
-    @abc.abstractmethod
+    @abstractmethod
     def connect(self, Channels: ChannelsType) -> None: ...
 
     def rest(self, app: "GatewayWebApp") -> None: ...
 
     def info(self, settings: "GatewaySettings") -> Optional[str]: ...
 
-    @abc.abstractmethod
+    @abstractmethod
     def shutdown(self) -> None: ...
 
     def dynamic_keys(self) -> Optional[Dict[str, List[Any]]]: ...

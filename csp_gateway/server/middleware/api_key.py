@@ -37,22 +37,18 @@ class MountAPIKeyMiddleware(AuthenticationMiddleware):
             return f"\tUI: {url}?token={self.api_key}"
         return f"\tAPI: {url}/openapi.json?token={self.api_key}"
 
-    def rest(self, app: GatewayWebApp) -> None:
-        # reinitialize header
-        api_key_query = APIKeyQuery(name=self.api_key_name, auto_error=False)
-        api_key_header = APIKeyHeader(name=self.api_key_name, auto_error=False)
-        api_key_cookie = APIKeyCookie(name=self.api_key_name, auto_error=False)
+    def validate(self):
+        """Return a FastAPI dependency function for API key validation."""
+        api_key_query_security = Security(APIKeyQuery(name=self.api_key_name, auto_error=False))
+        api_key_header_security = Security(APIKeyHeader(name=self.api_key_name, auto_error=False))
+        api_key_cookie_security = Security(APIKeyCookie(name=self.api_key_name, auto_error=False))
 
-        # routers
-        auth_router: APIRouter = app.get_router("auth")
-
-        # now mount middleware
-        async def get_api_key(
-            api_key_query: str = Security(api_key_query),
-            api_key_header: str = Security(api_key_header),
-            api_key_cookie: str = Security(api_key_cookie),
-        ):
-            # Support both single string and list of valid API keys
+        async def validate_credentials(
+            api_key_query: str = api_key_query_security,
+            api_key_header: str = api_key_header_security,
+            api_key_cookie: str = api_key_cookie_security,
+        ) -> str:
+            """Validate API key from query, header, or cookie."""
             valid_keys = self.api_key if isinstance(self.api_key, list) else [self.api_key]
             for provided_key in (api_key_query, api_key_header, api_key_cookie):
                 if provided_key in valid_keys:
@@ -62,8 +58,15 @@ class MountAPIKeyMiddleware(AuthenticationMiddleware):
                 detail=self.unauthorized_status_message,
             )
 
+        return validate_credentials
+
+    def rest(self, app: GatewayWebApp) -> None:
+        # routers
+        auth_router: APIRouter = app.get_router("auth")
+        check = self.get_check_dependency()
+
         @auth_router.get("/login")
-        async def route_login_and_add_cookie(api_key: str = Depends(get_api_key)):
+        async def route_login_and_add_cookie(api_key: str = Depends(check)):
             response = RedirectResponse(url="/")
             response.set_cookie(
                 self.api_key_name,
@@ -81,10 +84,10 @@ class MountAPIKeyMiddleware(AuthenticationMiddleware):
             response.delete_cookie(self.api_key_name, domain=self.domain)
             return response
 
-        self._setup_public_routes(app, get_api_key)
+        self._setup_public_routes(app)
 
-    def _setup_public_routes(self, app: GatewayWebApp, get_api_key) -> None:
-        """Setup public routes, middleware, and exception handler. Shared by subclasses."""
+    def _setup_public_routes(self, app: GatewayWebApp) -> None:
+        """Setup public routes, middleware, and exception handler. Shared by subclasses.""" ""
         public_router: APIRouter = app.get_router("public")
 
         @public_router.get("/login", response_class=HTMLResponse, include_in_schema=False)
@@ -102,7 +105,7 @@ class MountAPIKeyMiddleware(AuthenticationMiddleware):
             return app.templates.TemplateResponse("logout.html.j2", {"request": request})
 
         # add auth to all other routes
-        app.add_middleware(Depends(get_api_key))
+        app.add_middleware(Depends(self.get_check_dependency()))
 
         @app.app.exception_handler(403)
         async def custom_403_handler(request: Request = None, *args):
