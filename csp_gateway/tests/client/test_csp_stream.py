@@ -398,7 +398,7 @@ def _run_gateway_for_csp_stream(port_str):
     from csp_gateway.server.demo import ExampleGatewayChannels, ExampleModule
 
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=int(port_str)),
+        settings=GatewaySettings(PORT=int(port_str)),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),

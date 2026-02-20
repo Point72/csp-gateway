@@ -4,7 +4,7 @@ import asyncio
 from csp_gateway import AsyncGatewayClient, GatewayClient, GatewayClientConfig
 
 # Put your configuration here
-config = GatewayClientConfig(host="HOSTNAME", port=8000, authenticate=True, api_key="12345")
+config = GatewayClientConfig(host="HOSTNAME", port=8000, api_key="12345")
 
 
 if __name__ == "__main__":

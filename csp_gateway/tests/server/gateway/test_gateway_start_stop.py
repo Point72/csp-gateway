@@ -1,7 +1,6 @@
 import multiprocessing
 import os
 import signal
-import socket
 import sys
 import time
 from datetime import timedelta
@@ -24,7 +23,7 @@ def test_long_startup_die_cleanly(free_port):
     with patch("os._exit") as exit_mock, patch("os.kill") as kill_mock:
         # instantiate gateway
         gateway = Gateway(
-            settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
+            settings=GatewaySettings(PORT=free_port),
             modules=[
                 # NeverDieModule(),
                 # CspDieModule(),
@@ -50,7 +49,7 @@ def test_start_with_endtime(free_port):
 
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(PORT=free_port),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),
@@ -68,7 +67,7 @@ def test_start_with_endtime_usergraph_no_return(free_port):
 
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(PORT=free_port),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),
@@ -82,7 +81,7 @@ def test_start_with_endtime_usergraph_no_return(free_port):
 def test_start_and_then_die_with_error(free_port):
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(PORT=free_port),
         modules=[
             ExampleModule(),
             CspDieModule(),
@@ -100,7 +99,7 @@ def test_start_and_then_die_with_error(free_port):
 @pytest.mark.skipif(sys.platform == "darwin", reason="Flaky on MacOS GHA runners")
 def test_start_and_then_graph_start_error(caplog, free_port):
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(PORT=free_port),
         modules=[
             ExampleModule(),
             MyBuildFailureModule(),
@@ -119,7 +118,7 @@ def test_start_and_then_graph_start_error(caplog, free_port):
 def test_stop_with_shutdown(free_port):
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=free_port),
+        settings=GatewaySettings(PORT=free_port),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),
@@ -142,7 +141,7 @@ def run_gateway(port_str):
 
     # instantiate gateway
     gateway = Gateway(
-        settings=GatewaySettings(AUTHENTICATE=False, PORT=int(port_str)),
+        settings=GatewaySettings(PORT=int(port_str)),
         modules=[
             ExampleModule(),
             MountRestRoutes(force_mount_all=True),
@@ -207,8 +206,8 @@ def test_shutdown_with_big_red_button(free_port):
     NUM_TRIES = 30
     port_str = str(free_port)
     # URL to check if the server is up
-    state_url = f"http://{socket.gethostname()}:{port_str}/api/v1/state"
-    shutdown_url = f"http://{socket.gethostname()}:{port_str}/api/v1/controls/shutdown"
+    state_url = f"http://localhost:{port_str}/api/v1/state"
+    shutdown_url = f"http://localhost:{port_str}/api/v1/controls/shutdown"
 
     # Start the gateway in another process
     p = multiprocessing.Process(target=run_gateway, args=(port_str,))

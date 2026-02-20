@@ -12,7 +12,7 @@ from csp_gateway.utils import GatewayStruct
 from .channels import ChannelsType
 
 if typing.TYPE_CHECKING:
-    from csp_gateway.server import GatewayWebApp
+    from csp_gateway.server import GatewaySettings, GatewayWebApp
 
 
 class Module(BaseModel, Generic[ChannelsType], abc.ABC):
@@ -32,6 +32,8 @@ class Module(BaseModel, Generic[ChannelsType], abc.ABC):
     def connect(self, Channels: ChannelsType) -> None: ...
 
     def rest(self, app: "GatewayWebApp") -> None: ...
+
+    def info(self, settings: "GatewaySettings") -> Optional[str]: ...
 
     @abc.abstractmethod
     def shutdown(self) -> None: ...
