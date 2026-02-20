@@ -232,8 +232,8 @@ class GatewayClientConfig(BaseModel):
     host: str = "localhost"
     port: Optional[int] = Field(default=8000, ge=1, le=65535, description="Port number for the gateway server")
     api_route: str = "/api/v1"
-    authenticate: bool = False
     api_key: str = ""
+    bearer_token: Optional[str] = None
     return_type: ReturnType = Field(
         default=ReturnType.Raw,
         description="Determines how REST request responses should be returned. Options: 'raw' (JSON dict), 'pandas' (DataFrame), 'polars' (DataFrame), 'struct' (original type), 'wrapper' (ResponseWrapper object).",
@@ -251,13 +251,13 @@ class GatewayClientConfig(BaseModel):
     def validate_config(self):
         if self.port is not None and self.port < 1:
             raise ValueError("Port must be a positive integer")
-        if self.api_key and not self.authenticate:
-            raise ValueError("API key must be provided if authentication is enabled")
         if self.host.startswith("http"):
             # Switch protocol to host
             protocol, host = self.host.split("://")
             self.__dict__["protocol"] = protocol
             self.__dict__["host"] = host
+        if self.bearer_token and self.api_key:
+            raise ValueError("Cannot provide both bearer_token and api_key. Choose one authentication method.")
         return self
 
     def __hash__(self):
@@ -403,6 +403,15 @@ class BaseGatewayClient(BaseModel):
         default=dict(follow_redirects=True), description="Additional arguments to pass to httpx requests (e.g., headers, auth, etc.)"
     )
 
+    # Additional initialization for bearer_token
+    def __init__(self, config: GatewayClientConfig = None, **kwargs) -> None:
+        # Exists for compatibility with positional argument instantiation
+        if config is None:
+            config = GatewayClientConfig()
+        if kwargs:
+            config = GatewayClientConfig(**{**config.model_dump(exclude_unset=True), **kwargs})
+        super().__init__(config=config)
+
     # openapi configureation
     _initialized: bool = PrivateAttr(default=False)
     _openapi_spec: Dict[Any, Any] = PrivateAttr(default=None)
@@ -424,16 +433,14 @@ class BaseGatewayClient(BaseModel):
     _event_loop: Optional[AbstractEventLoop] = PrivateAttr(default=None)
     _event_loop_thread: Optional[Thread] = PrivateAttr(default=None)
 
-    def __init__(self, config: GatewayClientConfig = None, **kwargs) -> None:
-        # Exists for compatibility with positional argument instantiation
-        if config is None:
-            config = GatewayClientConfig()
-        if kwargs:
-            config = GatewayClientConfig(**{**config.model_dump(exclude_unset=True), **kwargs})
-        super().__init__(config=config)
-
     @model_validator(mode="after")
     def validate_client(self):
+        # Set Authorization header if bearer_token is provided
+        if self.config.bearer_token:
+            headers = self.http_args.get("headers", {}).copy()
+            headers["Authorization"] = f"Bearer {self.config.bearer_token}"
+            self.http_args["headers"] = headers
+
         if self._event_loop is None:
             self._event_loop = _get_or_new_event_loop()
 
@@ -461,10 +468,12 @@ class BaseGatewayClient(BaseModel):
     def _initialize(self) -> None:
         if not self._initialized:
             # grab openapi spec
+            openapi_url = f"{_host(self.config)}/openapi.json"
+            openapi_params = {"token": self.config.api_key} if self.config.api_key else None
             self._openapi_spec: Dict[Any, Any] = replace_refs(
                 cast(
                     Dict[Any, Any],
-                    GET(f"{_host(self.config)}/openapi.json", **self.http_args),
+                    GET(openapi_url, params=openapi_params, **self.http_args),
                 ).json(),
             )
 
@@ -504,9 +513,11 @@ class BaseGatewayClient(BaseModel):
 
     def _buildroute(self, route: str) -> str:
         url = f"{_host(self.config)}{self._buildpath(route)}"
-        if self.config.authenticate:
-            return url, {"token": self.config.api_key}
-        return url, {}
+        # If using api_key (not bearer_token), add as query param
+        extra_params = {}
+        if self.config.api_key:
+            extra_params["token"] = self.config.api_key
+        return url, extra_params
 
     def _api_path_and_route(self, route: str) -> str:
         return self.config.api_route + "/" + route
@@ -517,10 +528,11 @@ class BaseGatewayClient(BaseModel):
             host = host.replace("http://", "ws://")
         elif host.startswith("https://"):
             host = host.replace("https://", "wss://")
-        if self.config.authenticate:
-            auth = f"?token={self.config.api_key}"
-        else:
-            auth = ""
+        # If using api_key (not bearer_token), add as query param
+        auth = ""
+        if self.config.api_key:
+            sep = "&" if "?" in host else "?"
+            auth = f"{sep}token={self.config.api_key}"
         return f"{host}{self.config.api_route}/{route}{auth}"
 
     def _handle_response(self, resp: Response, route: str) -> ResponseType:

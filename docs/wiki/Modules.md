@@ -8,7 +8,7 @@
 - [Logfire](#logfire)
   - [Configuration](#configuration-2)
   - [Early Configuration](#early-configuration)
-- [PublishLogfire](#PublishLogfire)
+- [PublishLogfire](#publishlogfire)
   - [Configuration](#configuration-3)
 - [LogChannels](#logchannels)
   - [Configuration](#configuration-4)
@@ -20,6 +20,11 @@
     - [Server](#server)
     - [API](#api)
     - [Client](#client)
+- [MountExternalAPIKeyMiddleware](#mountexternalapikeymiddleware)
+  - [Configuration](#configuration-6a)
+  - [Usage](#usage-1)
+    - [External Validator Function](#external-validator-function)
+    - [Server](#server-1)
 - [MountChannelsGraph](#mountchannelsgraph)
   - [Configuration](#configuration-7)
 - [MountControls](#mountcontrols)
@@ -213,6 +218,12 @@ modules:
 modules:
   mount_api_key_middleware:
     _target_: csp_gateway.MountAPIKeyMiddleware
+    api_key: ${oc.env:API_KEY,null}  # Or set API_KEY env var
+    # Can also specify multiple API keys:
+    # api_key:
+    #   - key1
+    #   - key2
+    #   - key3
     api_key_timeout: 60:00:00 # Cookie timeout
     unauthorized_status_message: unauthorized
 ```
@@ -221,21 +232,17 @@ modules:
 
 #### Server
 
-When you instantiate your `Gateway`, ensure that the `GatewaySettings` instance has `authenticate=True`. By default, a unique token will be generated and displayed in the logging output, similar to how `Jupyter` works by default. To customize, change the `GatewaySettings` instance's `api_key` to whatever you like:
+When you instantiate your `Gateway`, it will mount all modules. Mounting the API Key middleware ensures
+that the rest api methods will require API key authentication.
 
-E.g. in configuration:
+You can configure a single API key or multiple valid API keys:
 
-```yaml
-gateway:
-  settings:
-    AUTHENTICATE: True
-    API_KEY: my-secret-api-key
-```
+```python
+# Single API key
+MountAPIKeyMiddleware(api_key="my-secret-api-key")
 
-Or from the CLI
-
-```bash
-csp-gateway-start <your arguments> ++gateway.settings.AUTHENTICATE=True ++gateway.settings.API_KEY=my-secret-api-key
+# Multiple API keys
+MountAPIKeyMiddleware(api_key=["key1", "key2", "key3"])
 ```
 
 #### API
@@ -250,13 +257,84 @@ When instantiating your Python client, pass in the same arguments as the server:
 config = GatewayClientConfig(
     host="localhost",
     port=8000,
-    authenticate=True,
     api_key="my-secret-api-key"
 )
 client = GatewayClient(config)
 ```
 
 The client will automatically include the API Key on all requests.
+
+## MountExternalAPIKeyMiddleware
+
+`MountExternalAPIKeyMiddleware` is a `GatewayModule` that extends `MountAPIKeyMiddleware` to support API key validation against an external service. Instead of validating against a static list of keys, it invokes a user-provided function (specified via `ccflow.PyObjectPath`) to validate API keys and retrieve user identity information.
+
+### Configuration
+
+```yaml
+modules:
+  mount_external_api_key_middleware:
+    _target_: csp_gateway.MountExternalAPIKeyMiddleware
+    external_validator: "my_module.validators:validate_api_key"
+    api_key_timeout: 12:00:00  # Cookie timeout
+    unauthorized_status_message: unauthorized
+```
+
+### Usage
+
+#### External Validator Function
+
+The `external_validator` must point to a callable function that accepts three arguments:
+
+- `api_key` (str): The API key provided by the user
+- `settings` (GatewaySettings): The gateway settings object
+- `module`: The gateway web app module
+
+The function should return a dictionary containing user identity information if the key is valid, or `None` if the key is invalid.
+
+```python
+# my_module/validators.py
+def validate_api_key(api_key: str, settings, module) -> dict | None:
+    """Validate an API key against an external service.
+
+    Args:
+        api_key: The API key to validate
+        settings: Gateway settings
+        module: The gateway web app module
+
+    Returns:
+        A dictionary with user identity info if valid, None otherwise
+    """
+    # Call your external validation service
+    response = my_auth_service.validate(api_key)
+    if response.is_valid:
+        return {
+            "user": response.username,
+            "role": response.role,
+            "permissions": response.permissions,
+        }
+    return None
+```
+
+#### Server
+
+When you instantiate your `Gateway`, the external validator will be called for each authentication attempt:
+
+```python
+from ccflow import PyObjectPath
+from csp_gateway import Gateway, MountExternalAPIKeyMiddleware
+
+MountExternalAPIKeyMiddleware(
+    external_validator=PyObjectPath("my_module.validators:validate_api_key")
+)
+```
+
+When a valid API key is provided:
+
+1. The external validator function is called with the API key
+1. If the validator returns a dictionary (user identity), a UUID session token is generated
+1. The user identity is stored in memory, keyed by the UUID
+1. The UUID is set as a cookie for subsequent requests
+1. On logout, the UUID is removed from the identity store
 
 ## MountChannelsGraph
 

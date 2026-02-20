@@ -2,7 +2,6 @@
 defaults:
   - _self_
 
-authenticate: ???
 port: ???
 
 modules:
@@ -32,16 +31,12 @@ modules:
     force_mount_all: True
   mount_websocket_routes:
     _target_: csp_gateway.MountWebSocketRoutes
-  mount_api_key_middleware:
-    _target_: csp_gateway.MountAPIKeyMiddleware
 
 gateway:
   _target_: csp_gateway.Gateway
   settings:
     PORT: ${port}
-    AUTHENTICATE: ${authenticate}
     UI: True
-    API_KEY: "12345"
   modules:
     - /modules/logfire
     - /modules/example_module

@@ -5,5 +5,4 @@ defaults:
 
 # csp-gateway-start --config-dir=csp_gateway/server/demo +config=omnibus
 
-authenticate: False
 port: 8000

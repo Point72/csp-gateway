@@ -54,10 +54,10 @@ def gateway(free_port):
             MountRestRoutes(force_mount_all=True),
             MountFieldRestRoutes(fields=[ExampleGatewayChannels.metadata]),
             MountWebSocketRoutes(),
-            MountAPIKeyMiddleware(),
+            MountAPIKeyMiddleware(api_key="test"),
         ],
         channels=ExampleGatewayChannels(),
-        settings=GatewaySettings(PORT=free_port, AUTHENTICATE=True, API_KEY="test"),
+        settings=GatewaySettings(PORT=free_port),
     )
     return gateway
 
@@ -551,7 +551,7 @@ class TestGatewayWebserver:
         mock_get.side_effect = rest_client.get
         mock_post.side_effect = rest_client.post
 
-        gateway_client = GatewayClient(GatewayClientConfig(port=gateway.settings.PORT, authenticate=True, api_key="test"))
+        gateway_client = GatewayClient(GatewayClientConfig(port=gateway.settings.PORT, api_key="test"))
         self._wait_for_data(rest_client=rest_client)
         response_state = gateway_client.state()
         assert sorted(list(gateway_client.openapi_spec.keys())) == ["components", "info", "openapi", "paths"]
@@ -855,3 +855,46 @@ def test_MountPerspectiveTables_pickleable():
     """Test that MountPerspectiveTables is pickleable"""
     mpt = MountPerspectiveTables()
     pickle.dumps(mpt)
+
+
+class TestMultipleAPIKeys:
+    """Test that multiple API keys can be used for authentication"""
+
+    @pytest.fixture(scope="class")
+    def multi_key_gateway(self, free_port):
+        gateway = Gateway(
+            modules=[
+                ExampleModule(),
+                MountRestRoutes(force_mount_all=True),
+                MountAPIKeyMiddleware(api_key=["key1", "key2", "key3"]),
+            ],
+            channels=ExampleGatewayChannels(),
+            settings=GatewaySettings(PORT=free_port),
+        )
+        return gateway
+
+    @pytest.fixture(scope="class")
+    def multi_key_webserver(self, multi_key_gateway):
+        multi_key_gateway.start(rest=True, _in_test=True)
+        yield multi_key_gateway
+        multi_key_gateway.stop()
+
+    @pytest.fixture(scope="class")
+    def multi_key_rest_client(self, multi_key_webserver) -> TestClient:
+        return TestClient(multi_key_webserver.web_app.get_fastapi())
+
+    def test_multiple_api_keys_all_valid(self, multi_key_rest_client: TestClient):
+        """Test that all configured API keys are accepted"""
+        for key in ["key1", "key2", "key3"]:
+            response = multi_key_rest_client.get(f"/api/v1/last?token={key}")
+            assert response.status_code == 200, f"API key '{key}' should be valid"
+
+    def test_multiple_api_keys_invalid_rejected(self, multi_key_rest_client: TestClient):
+        """Test that invalid API keys are rejected"""
+        response = multi_key_rest_client.get("/api/v1/last?token=invalid_key")
+        assert response.status_code == 403, "Invalid API key should be rejected"
+
+    def test_multiple_api_keys_no_key_rejected(self, multi_key_rest_client: TestClient):
+        """Test that requests without API key are rejected"""
+        response = multi_key_rest_client.get("/api/v1/last")
+        assert response.status_code == 403, "Request without API key should be rejected"
