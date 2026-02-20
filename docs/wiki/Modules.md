@@ -226,6 +226,8 @@ modules:
     #   - key3
     api_key_timeout: 60:00:00 # Cookie timeout
     unauthorized_status_message: unauthorized
+    # Scope: glob pattern(s) to restrict which routes require authentication
+    # scope: "*"  # Reserved for future use
 ```
 
 ### Usage
@@ -244,6 +246,10 @@ MountAPIKeyMiddleware(api_key="my-secret-api-key")
 # Multiple API keys
 MountAPIKeyMiddleware(api_key=["key1", "key2", "key3"])
 ```
+
+> **Note:** The `scope` parameter is available for configuration but scope-based filtering
+> is not automatically enforced due to WebSocket compatibility constraints. All configured
+> middlewares will validate credentials for all routes.
 
 #### API
 
@@ -277,6 +283,9 @@ modules:
     external_validator: "my_module.validators:validate_api_key"
     api_key_timeout: 12:00:00  # Cookie timeout
     unauthorized_status_message: unauthorized
+    # Scope: glob pattern(s) to restrict which routes require authentication
+    # scope: "*"  # Default: all routes
+    # scope: "/api/*"  # Only /api/* routes require auth
 ```
 
 ### Usage
