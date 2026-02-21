@@ -64,7 +64,10 @@ develop = [
     "arrow-odbc",
     "datadog",
     "opsgenie_sdk",
+    "pamela",
     "psutil",
+    "python-multipart",
+    "pywin32; platform_system == 'Windows'",
     "sqlalchemy",
     "watchdog",
     # client
@@ -88,6 +91,7 @@ server = [
     "duckdb>=1.4.1",
     "fastapi>=0.110",
     "fsspec",
+    "httpx",
     "hydra-core",
     "janus",
     "omegaconf",

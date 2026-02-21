@@ -1,15 +1,16 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from ccflow import PyObjectPath
 from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from fastapi.responses import RedirectResponse
-from pydantic import Field, field_validator
+from pydantic import Field, PrivateAttr, field_validator
 from starlette.status import HTTP_403_FORBIDDEN
 
 from ..settings import GatewaySettings
 from ..web import GatewayWebApp
 from .api_key import MountAPIKeyMiddleware
+from .base import IdentityAwareMiddlewareMixin
 from .hacks.api_key_middleware_websocket_fix.api_key import (
     APIKeyCookie,
     APIKeyHeader,
@@ -19,12 +20,25 @@ from .hacks.api_key_middleware_websocket_fix.api_key import (
 __all__ = ("MountExternalAPIKeyMiddleware",)
 
 
-class MountExternalAPIKeyMiddleware(MountAPIKeyMiddleware):
+class MountExternalAPIKeyMiddleware(MountAPIKeyMiddleware, IdentityAwareMiddlewareMixin):
+    """API Key middleware with external validation and identity tracking.
+
+    This middleware validates API keys using an external function and maintains
+    an identity store mapping session UUIDs to user identities.
+
+    Attributes:
+        external_validator: Path to external validation function.
+        identity_store: Maps session UUIDs to identity dicts (via IdentityAwareMiddlewareMixin).
+    """
+
     external_validator: Optional[PyObjectPath] = Field(
         default=None, description="Path to external API key validation function (ccflow.PyObjectPath as string)."
     )
 
-    _identity_store: dict = {}
+    # Identity store - maps session UUID to identity dict
+    _identity_store: Dict[str, Dict[str, Any]] = PrivateAttr(default_factory=dict)
+    _app_settings: Optional[GatewaySettings] = PrivateAttr(default=None)
+    _app_module: Any = PrivateAttr(default=None)
 
     @field_validator("external_validator")
     def validate_external_validator(cls, v):
@@ -39,6 +53,64 @@ class MountExternalAPIKeyMiddleware(MountAPIKeyMiddleware):
         if self.external_validator is None:
             return None
         return self.external_validator.object(api_key, settings, module)
+
+    async def get_identity_from_credentials(
+        self,
+        *,
+        cookies: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        query_params: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Extract and validate API key credentials.
+
+        Checks session cookie first, then query param, then header for API key.
+        Validates via external validator if found.
+
+        Args:
+            cookies: Dict of request cookies
+            headers: Dict of request headers
+            query_params: Dict of query parameters
+
+        Returns:
+            Identity dict if valid API key found, None otherwise.
+        """
+        cookies = cookies or {}
+        headers = headers or {}
+        query_params = query_params or {}
+
+        # Check session cookie first (via base implementation)
+        session_uuid = cookies.get(self.api_key_name)
+        if session_uuid:
+            identity = await self.get_identity(session_uuid)
+            if identity:
+                return identity
+
+        # Try query param
+        api_key = query_params.get(self.api_key_name)
+        if api_key:
+            try:
+                identity = self._invoke_external(api_key, self._app_settings, self._app_module)
+                if identity and isinstance(identity, dict):
+                    return identity
+            except Exception:
+                pass
+
+        # Try header
+        api_key = headers.get(self.api_key_name)
+        if api_key:
+            try:
+                identity = self._invoke_external(api_key, self._app_settings, self._app_module)
+                if identity and isinstance(identity, dict):
+                    return identity
+            except Exception:
+                pass
+
+        return None
+
+    @property
+    def cookie_name(self) -> str:
+        """Return the cookie/query param name for auth tokens."""
+        return self.api_key_name
 
     def validate(self):
         """Return a FastAPI dependency function for external API key validation."""
