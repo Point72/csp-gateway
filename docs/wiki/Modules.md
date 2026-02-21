@@ -5,17 +5,20 @@
   - [Configuration](#configuration)
 - [Initialize](#initialize)
   - [Configuration](#configuration-1)
-- [Logfire](#logfire)
+- [Logging](#logging)
   - [Configuration](#configuration-2)
   - [Early Configuration](#early-configuration)
-- [PublishLogfire](#publishlogfire)
-  - [Configuration](#configuration-3)
 - [LogChannels](#logchannels)
+  - [Configuration](#configuration-5)
+- [Logfire](#logfire)
+  - [Configuration](#configuration-3)
+  - [Early Configuration](#early-configuration-1)
+- [PublishLogfire](#PublishLogfire)
   - [Configuration](#configuration-4)
 - [Mirror](#mirror)
-  - [Configuration](#configuration-5)
-- [MountAPIKeyMiddleware](#mountapikeymiddleware)
   - [Configuration](#configuration-6)
+- [MountAPIKeyMiddleware](#mountapikeymiddleware)
+  - [Configuration](#configuration-7)
   - [Usage](#usage)
     - [Server](#server)
     - [API](#api)
@@ -26,34 +29,34 @@
     - [External Validator Function](#external-validator-function)
     - [Server](#server-1)
 - [MountChannelsGraph](#mountchannelsgraph)
-  - [Configuration](#configuration-7)
-- [MountControls](#mountcontrols)
   - [Configuration](#configuration-8)
+- [MountControls](#mountcontrols)
+  - [Configuration](#configuration-9)
   - [Functionality](#functionality)
 - [MountFieldRestRoutes](#mountfieldrestroutes)
-  - [Configuration](#configuration-9)
-- [MountOutputsFolder](#mountoutputsfolder)
   - [Configuration](#configuration-10)
-- [MountPerspectiveTables](#mountperspectivetables)
+- [MountOutputsFolder](#mountoutputsfolder)
   - [Configuration](#configuration-11)
-- [MountRestRoutes](#mountrestroutes)
+- [MountPerspectiveTables](#mountperspectivetables)
   - [Configuration](#configuration-12)
-- [MountWebSocketRoutes](#mountwebsocketroutes)
+- [MountRestRoutes](#mountrestroutes)
   - [Configuration](#configuration-13)
-- [PrintChannels](#printchannels)
+- [MountWebSocketRoutes](#mountwebsocketroutes)
   - [Configuration](#configuration-14)
-- [PublishDatadog](#publishdatadog)
+- [PrintChannels](#printchannels)
   - [Configuration](#configuration-15)
-- [PublishOpsGenie](#publishopsgenie)
+- [PublishDatadog](#publishdatadog)
   - [Configuration](#configuration-16)
-- [PublishSQLA](#publishsqla)
+- [PublishOpsGenie](#publishopsgenie)
   - [Configuration](#configuration-17)
-- [PublishSymphony](#publishsymphony)
+- [PublishSQLA](#publishsqla)
   - [Configuration](#configuration-18)
-- [ReplayEngineJSON](#replayenginejson)
+- [PublishSymphony](#publishsymphony)
   - [Configuration](#configuration-19)
-- [ReplayEngineKafka](#replayenginekafka)
+- [ReplayEngineJSON](#replayenginejson)
   - [Configuration](#configuration-20)
+- [ReplayEngineKafka](#replayenginekafka)
+  - [Configuration](#configuration-21)
 
 ## AddChannelsToGraphOutput
 
@@ -87,6 +90,68 @@ modules:
       my_channel:
         field1: value1
         field2: value2
+```
+
+## Logging
+
+`Logging` is a `GatewayModule` that configures Python's standard library logging. It provides:
+
+- **Early Configuration**: Configures logging at module instantiation time (during hydra config loading), capturing logs from the entire application lifecycle
+- **Console and File Handlers**: Flexible configuration of console and file logging outputs
+- **Colored Output**: Optional colorlog integration for colored console output
+- **Per-Logger Configuration**: Fine-grained control over individual logger levels
+
+This module replaces the previous approach of configuring logging via hydra's `job_logging` configuration (custom.yaml), providing a more consistent pattern with other observability modules like `Logfire`.
+
+### Configuration
+
+```yaml
+modules:
+  logging:
+    _target_: csp_gateway.server.modules.logging.Logging
+    console_level: INFO
+    file_level: DEBUG
+    root_level: DEBUG
+    console_formatter: colorlog  # 'simple', 'colorlog', or 'whenAndWhere'
+    file_formatter: whenAndWhere
+    log_file: null  # Or explicit path like "/tmp/app.log"
+    use_hydra_output_dir: true  # Log to hydra output directory
+    use_colors: true
+    logger_levels:
+      uvicorn.error: CRITICAL
+```
+
+Configuration options:
+
+- **console_level** (`int | str = logging.INFO`): Log level for console output
+- **file_level** (`int | str = logging.DEBUG`): Log level for file output
+- **root_level** (`int | str = logging.DEBUG`): Root logger level
+- **console_formatter** (`str = "colorlog"`): Formatter for console output (`simple`, `colorlog`, `whenAndWhere`)
+- **file_formatter** (`str = "whenAndWhere"`): Formatter for file output
+- **log_file** (`Optional[str] = None`): Explicit path to log file
+- **use_hydra_output_dir** (`bool = True`): If True and log_file is None, log to hydra's output directory
+- **use_colors** (`bool = True`): Whether to use colorlog for colored console output
+- **logger_levels** (`Dict[str, int | str]`): Per-logger level configuration
+
+### Early Configuration
+
+The `Logging` module automatically configures logging during its instantiation, which happens when hydra loads the configuration. This ensures logging is configured before the CSP graph is built.
+
+For even earlier configuration (before hydra runs), you can use the helper function:
+
+```python
+from csp_gateway.server.modules.logging.stdlib import configure_stdlib_logging
+
+# Call before hydra.main()
+configure_stdlib_logging(
+    console_level="INFO",
+    log_file="/tmp/app.log",
+    logger_levels={"uvicorn.error": "CRITICAL"},
+)
+
+# Then run your application
+from csp_gateway.server.cli import main
+main()
 ```
 
 ## Logfire
