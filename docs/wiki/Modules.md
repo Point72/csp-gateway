@@ -8,13 +8,13 @@
 - [Logging](#logging)
   - [Configuration](#configuration-2)
   - [Early Configuration](#early-configuration)
-- [LogChannels](#logchannels)
-  - [Configuration](#configuration-5)
 - [Logfire](#logfire)
   - [Configuration](#configuration-3)
   - [Early Configuration](#early-configuration-1)
-- [PublishLogfire](#PublishLogfire)
+- [PublishLogfire](#publishlogfire)
   - [Configuration](#configuration-4)
+- [LogChannels](#logchannels)
+  - [Configuration](#configuration-5)
 - [Mirror](#mirror)
   - [Configuration](#configuration-6)
 - [MountAPIKeyMiddleware](#mountapikeymiddleware)
@@ -24,39 +24,64 @@
     - [API](#api)
     - [Client](#client)
 - [MountExternalAPIKeyMiddleware](#mountexternalapikeymiddleware)
-  - [Configuration](#configuration-6a)
+  - [Configuration](#configuration-8)
   - [Usage](#usage-1)
     - [External Validator Function](#external-validator-function)
     - [Server](#server-1)
-- [MountChannelsGraph](#mountchannelsgraph)
-  - [Configuration](#configuration-8)
-- [MountControls](#mountcontrols)
+  - [Credential Sources](#credential-sources)
+  - [Authentication Flow](#authentication-flow)
+- [AuthFilterMiddleware](#authfiltermiddleware)
+  - [Multiple Authentication Middlewares](#multiple-authentication-middlewares)
   - [Configuration](#configuration-9)
+  - [Usage](#usage-2)
+    - [Example Scenario](#example-scenario)
+    - [Server Configuration](#server-configuration)
+  - [Multiple Filter Fields](#multiple-filter-fields)
+  - [How It Works](#how-it-works)
+  - [Per-Identity Cache for `/last` Endpoints](#per-identity-cache-for-last-endpoints)
+  - [Send Validation](#send-validation)
+  - [Next Filtering](#next-filtering)
+- [MountOAuth2Middleware](#mountoauth2middleware)
+  - [Configuration](#configuration-10)
+  - [Attributes](#attributes)
+  - [Example](#example)
+  - [Credential Sources](#credential-sources-1)
+- [MountSimpleAuthMiddleware](#mountsimpleauthmiddleware)
+  - [Configuration](#configuration-11)
+  - [Attributes](#attributes-1)
+  - [Host/System Authentication](#hostsystem-authentication)
+  - [Validator Function](#validator-function)
+  - [Example](#example-1)
+  - [Credential Sources](#credential-sources-2)
+- [MountChannelsGraph](#mountchannelsgraph)
+  - [Configuration](#configuration-12)
+- [MountControls](#mountcontrols)
+  - [Configuration](#configuration-13)
   - [Functionality](#functionality)
 - [MountFieldRestRoutes](#mountfieldrestroutes)
-  - [Configuration](#configuration-10)
-- [MountOutputsFolder](#mountoutputsfolder)
-  - [Configuration](#configuration-11)
-- [MountPerspectiveTables](#mountperspectivetables)
-  - [Configuration](#configuration-12)
-- [MountRestRoutes](#mountrestroutes)
-  - [Configuration](#configuration-13)
-- [MountWebSocketRoutes](#mountwebsocketroutes)
   - [Configuration](#configuration-14)
-- [PrintChannels](#printchannels)
+- [MountOutputsFolder](#mountoutputsfolder)
   - [Configuration](#configuration-15)
-- [PublishDatadog](#publishdatadog)
+- [MountPerspectiveTables](#mountperspectivetables)
   - [Configuration](#configuration-16)
-- [PublishOpsGenie](#publishopsgenie)
+- [MountRestRoutes](#mountrestroutes)
   - [Configuration](#configuration-17)
-- [PublishSQLA](#publishsqla)
+- [MountWebSocketRoutes](#mountwebsocketroutes)
   - [Configuration](#configuration-18)
-- [PublishSymphony](#publishsymphony)
+- [PrintChannels](#printchannels)
   - [Configuration](#configuration-19)
-- [ReplayEngineJSON](#replayenginejson)
+- [PublishDatadog](#publishdatadog)
   - [Configuration](#configuration-20)
-- [ReplayEngineKafka](#replayenginekafka)
+- [PublishOpsGenie](#publishopsgenie)
   - [Configuration](#configuration-21)
+- [PublishSQLA](#publishsqla)
+  - [Configuration](#configuration-22)
+- [PublishSymphony](#publishsymphony)
+  - [Configuration](#configuration-23)
+- [ReplayEngineJSON](#replayenginejson)
+  - [Configuration](#configuration-24)
+- [ReplayEngineKafka](#replayenginekafka)
+  - [Configuration](#configuration-25)
 
 ## AddChannelsToGraphOutput
 
@@ -402,6 +427,16 @@ MountExternalAPIKeyMiddleware(
 )
 ```
 
+### Credential Sources
+
+API keys can be provided via (in order of precedence):
+
+1. **Cookie**: Session cookie set after initial login (default name: `token`)
+1. **Query parameter**: `?token=your-api-key`
+1. **Header**: `X-API-Key: your-api-key`
+
+### Authentication Flow
+
 When a valid API key is provided:
 
 1. The external validator function is called with the API key
@@ -409,6 +444,398 @@ When a valid API key is provided:
 1. The user identity is stored in memory, keyed by the UUID
 1. The UUID is set as a cookie for subsequent requests
 1. On logout, the UUID is removed from the identity store
+
+## AuthFilterMiddleware
+
+`AuthFilterMiddleware` is a `GatewayModule` that filters REST API and WebSocket responses based on the authenticated user's identity. When a struct has an attribute matching an identity field (e.g., "user"), only records where that attribute matches the authenticated user's value are returned.
+
+This middleware is designed to work with any authentication middleware that implements the `IdentityAwareMiddlewareMixin` interface:
+
+- `MountExternalAPIKeyMiddleware`
+- `MountOAuth2Middleware`
+- `MountSimpleAuthMiddleware`
+
+### Multiple Authentication Middlewares
+
+`AuthFilterMiddleware` supports multiple authentication middlewares. When configured, it will try each middleware in registration order until one returns a valid identity:
+
+```python
+gateway = Gateway(
+    modules=[
+        MountRestRoutes(force_mount_all=True),
+        # Both auth middlewares implement IdentityAwareMiddlewareMixin
+        MountExternalAPIKeyMiddleware(
+            external_validator=PyObjectPath("my_module:validate_api_key")
+        ),
+        MountOAuth2Middleware(
+            issuer="https://auth.example.com",
+            client_id="my-client-id",
+            client_secret="my-client-secret",
+        ),
+        AuthFilterMiddleware(
+            filter_fields=["user"],
+        ),
+    ],
+)
+```
+
+With this configuration, requests can authenticate via either API key or OAuth2 token.
+
+### Configuration
+
+```yaml
+modules:
+  auth_filter:
+    _target_: csp_gateway.AuthFilterMiddleware
+    filter_fields:
+      - user  # Filter structs by "user" field
+    cookie_name: token  # Should match auth middleware's api_key_name
+```
+
+### Usage
+
+#### Example Scenario
+
+Suppose you have a struct with a `user` field:
+
+```python
+class TradeData(GatewayStruct):
+    user: str
+    symbol: str
+    price: float
+```
+
+And your external validator returns identity like:
+
+```python
+def validate_api_key(api_key: str, settings, module) -> dict | None:
+    if api_key == "alice_key":
+        return {"user": "alice", "role": "trader"}
+    return None
+```
+
+When Alice authenticates with `alice_key`, the `AuthFilterMiddleware` will:
+
+1. Extract her identity `{"user": "alice", ...}` from the auth middleware's store
+1. Filter all REST responses to only include `TradeData` records where `user == "alice"`
+1. Filter all WebSocket messages similarly
+
+#### Server Configuration
+
+```python
+from ccflow import PyObjectPath
+from csp_gateway import (
+    Gateway,
+    MountRestRoutes,
+    MountExternalAPIKeyMiddleware,
+    AuthFilterMiddleware,
+)
+
+gateway = Gateway(
+    modules=[
+        # ... your data modules ...
+        MountRestRoutes(force_mount_all=True),
+        MountExternalAPIKeyMiddleware(
+            external_validator=PyObjectPath("my_module:validate_api_key")
+        ),
+        AuthFilterMiddleware(
+            filter_fields=["user"],  # Filter on user field
+            cookie_name="token",      # Match auth middleware
+        ),
+    ],
+    # ...
+)
+```
+
+### Multiple Filter Fields
+
+You can specify multiple fields to filter on. All specified fields must match for a record to be included:
+
+```yaml
+modules:
+  auth_filter:
+    _target_: csp_gateway.AuthFilterMiddleware
+    filter_fields:
+      - user
+      - tenant
+```
+
+With this configuration, if identity is `{"user": "alice", "tenant": "acme"}`, only records where both `user == "alice"` AND `tenant == "acme"` will be returned.
+
+### How It Works
+
+1. **REST Responses**: The middleware installs a Starlette middleware that intercepts JSON responses, parses them, filters records based on identity, and returns filtered results.
+
+1. **WebSocket Responses**: The middleware integrates with `MountWebSocketRoutes` to filter messages before they are sent to clients.
+
+1. **Identity Extraction**: Identity is retrieved via the `IdentityAwareMiddlewareMixin` interface. Each auth middleware implements async `get_identity_from_credentials()` which extracts credentials from cookies, headers, or query params and returns the user identity. This supports both local identity stores and external validation services.
+
+### Per-Identity Cache for `/last` Endpoints
+
+By default, `/last` returns the most recent record on a channel, then filters it. This can result in empty responses if the last record doesn't match the user's identity.
+
+For channels where you need per-identity "last" values, use `identity_cache_channels`:
+
+```yaml
+modules:
+  auth_filter:
+    _target_: csp_gateway.AuthFilterMiddleware
+    filter_fields:
+      - user
+    identity_cache_channels:
+      include:
+        - user_data
+        - trades
+```
+
+When enabled, the middleware:
+
+1. Subscribes to the specified channels via CSP
+1. Maintains a per-identity cache: `{channel: {identity_value: last_record}}`
+1. Intercepts `/last` requests for cached channels and serves from cache
+
+This ensures Alice always gets her most recent `user_data` record, even if Bob's record arrived more recently.
+
+```python
+AuthFilterMiddleware(
+    filter_fields=["user"],
+    identity_cache_channels=ChannelSelection(include=["user_data", "trades"]),
+)
+```
+
+### Send Validation
+
+For channels where you want to ensure users can only send data with their own identity, use `send_validation_channels`:
+
+```yaml
+modules:
+  auth_filter:
+    _target_: csp_gateway.AuthFilterMiddleware
+    filter_fields:
+      - user
+    send_validation_channels:
+      include:
+        - user_data
+```
+
+When enabled for a channel, the middleware validates that the identity field in the POST body matches the authenticated user. If Alice tries to send data with `user: "bob"`, the request is rejected with a 403 Forbidden response.
+
+```python
+AuthFilterMiddleware(
+    filter_fields=["user"],
+    send_validation_channels=ChannelSelection(include=["user_data"]),
+)
+```
+
+### Next Filtering
+
+For channels where you want `/next` to wait for a matching record (rather than just filtering), use `next_filter_channels`:
+
+```yaml
+modules:
+  auth_filter:
+    _target_: csp_gateway.AuthFilterMiddleware
+    filter_fields:
+      - user
+    next_filter_channels:
+      include:
+        - user_events
+    next_filter_timeout: 30.0  # Timeout in seconds
+```
+
+When enabled, `/next` requests will loop internally until a record matching the user's identity arrives, or until the timeout is reached (returning 408 Request Timeout).
+
+```python
+AuthFilterMiddleware(
+    filter_fields=["user"],
+    next_filter_channels=ChannelSelection(include=["user_events"]),
+    next_filter_timeout=30.0,  # Default is 30 seconds
+)
+```
+
+## MountOAuth2Middleware
+
+`MountOAuth2Middleware` provides OAuth2/OIDC authentication for the Gateway REST API, WebSocket API, and UI. It supports authorization code flow with OIDC discovery and token introspection/validation.
+
+### Configuration
+
+```yaml
+modules:
+  oauth:
+    _target_: csp_gateway.MountOAuth2Middleware
+    issuer: "https://auth.example.com"
+    client_id: "my-client-id"
+    client_secret: "my-client-secret"
+    scopes:
+      - openid
+      - profile
+      - email
+```
+
+### Attributes
+
+| Attribute           | Type        | Description                                                 |
+| ------------------- | ----------- | ----------------------------------------------------------- |
+| `issuer`            | `str`       | The OAuth2/OIDC issuer URL (e.g., https://auth.example.com) |
+| `client_id`         | `str`       | OAuth2 client identifier                                    |
+| `client_secret`     | `str`       | OAuth2 client secret (required for confidential clients)    |
+| `scopes`            | `List[str]` | OAuth2 scopes to request (default: openid, profile, email)  |
+| `token_url`         | `str`       | Token endpoint URL (auto-discovered from issuer if not set) |
+| `authorize_url`     | `str`       | Authorization endpoint URL (auto-discovered if not set)     |
+| `userinfo_url`      | `str`       | Userinfo endpoint URL (auto-discovered if not set)          |
+| `introspection_url` | `str`       | Token introspection endpoint (optional)                     |
+| `audience`          | `str`       | Expected audience claim for JWT validation                  |
+| `verify_ssl`        | `bool`      | Whether to verify SSL certificates (default: True)          |
+
+### Example
+
+```python
+from csp_gateway import Gateway, MountRestRoutes, MountOAuth2Middleware
+
+gateway = Gateway(
+    modules=[
+        MountRestRoutes(),
+        MountOAuth2Middleware(
+            issuer="https://auth.example.com",
+            client_id="my-client-id",
+            client_secret="my-client-secret",
+        ),
+    ],
+    # ...
+)
+```
+
+### Credential Sources
+
+OAuth2 tokens can be provided via:
+
+1. **Cookie**: Session cookie set after authorization code flow (default name: `token`)
+1. **Authorization header**: `Authorization: Bearer <access_token>`
+
+When using Bearer token authentication, the middleware validates the token against the introspection or userinfo endpoint and returns the user identity.
+
+## MountSimpleAuthMiddleware
+
+`MountSimpleAuthMiddleware` provides simple username/password or custom credential-based authentication using an external validation function. It supports both HTTP Basic Auth and form-based login.
+
+### Configuration
+
+```yaml
+modules:
+  simple_auth:
+    _target_: csp_gateway.MountSimpleAuthMiddleware
+    external_validator: "myapp.auth:my_validator"
+    enable_basic_auth: true
+    enable_form_login: true
+```
+
+### Attributes
+
+| Attribute            | Type           | Description                                          |
+| -------------------- | -------------- | ---------------------------------------------------- |
+| `external_validator` | `PyObjectPath` | Path to external validation function                 |
+| `use_host_auth`      | `bool`         | Use host/system authentication (default: False)      |
+| `domain`             | `str`          | Cookie domain for session cookies                    |
+| `cookie_name`        | `str`          | Cookie name for session storage (default: "session") |
+| `session_timeout`    | `timedelta`    | Session timeout duration (default: 12 hours)         |
+| `enable_basic_auth`  | `bool`         | Whether to enable HTTP Basic Auth (default: True)    |
+| `enable_form_login`  | `bool`         | Whether to enable form-based login (default: True)   |
+
+> **Note:** At least one of `external_validator` or `use_host_auth` must be configured.
+
+### Host/System Authentication
+
+For system user authentication, enable `use_host_auth`:
+
+```yaml
+modules:
+  simple_auth:
+    _target_: csp_gateway.MountSimpleAuthMiddleware
+    use_host_auth: true
+```
+
+This allows users to authenticate with their system username and password. The authentication method is platform-specific:
+
+**Unix/Linux/macOS (PAM)**
+
+Requires `pamela` or `python-pam` package:
+
+```bash
+pip install pamela  # or: pip install python-pam
+```
+
+The identity dict includes Unix user information:
+
+```python
+{
+    "user": "alice",
+    "uid": 1001,
+    "gid": 1001,
+    "home": "/home/alice",
+    "shell": "/bin/bash",
+    "gecos": "Alice Smith",
+}
+```
+
+**Windows**
+
+Requires `pywin32` package:
+
+```bash
+pip install pywin32
+```
+
+The identity dict includes Windows user information:
+
+```python
+{
+    "user": "alice",
+    "full_name": "Alice Smith",
+    "home": "C:\\Users\\alice",
+    "comment": "",
+}
+```
+
+> **Note:** Host authentication requires appropriate system permissions. The process running the gateway must have access to authenticate users.
+
+### Validator Function
+
+The external validator function should have the following signature:
+
+```python
+def my_validator(username: str, password: str, settings: GatewaySettings, module) -> dict | None:
+    """Validate credentials and return identity dict or None."""
+    if username == "admin" and password == "secret":
+        return {"user": username, "role": "admin"}
+    return None
+```
+
+### Example
+
+```python
+from ccflow import PyObjectPath
+from csp_gateway import Gateway, MountRestRoutes, MountSimpleAuthMiddleware
+
+gateway = Gateway(
+    modules=[
+        MountRestRoutes(),
+        MountSimpleAuthMiddleware(
+            external_validator=PyObjectPath("myapp.auth:my_validator"),
+        ),
+    ],
+    # ...
+)
+```
+
+### Credential Sources
+
+Credentials can be provided via:
+
+1. **Cookie**: Session cookie set after form login (default name: `session`)
+1. **HTTP Basic Auth header**: `Authorization: Basic <base64(username:password)>`
+1. **Form POST**: Submit credentials to the login endpoint
+
+When using Basic Auth, the middleware decodes the credentials and validates them against the external validator on each request.
 
 ## MountChannelsGraph
 
