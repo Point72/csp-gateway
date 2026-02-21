@@ -23,9 +23,11 @@ handlers:
     stream: ext://sys.stdout
   file:
     level: DEBUG
-    class: logging.FileHandler
+    class: csp_gateway.server.shared.symlink_file_handler.SymlinkFileHandler
     formatter: whenAndWhere
     filename: ${hydra.runtime.output_dir}/csp-gateway.log
+    log_links_dir: ${hydra.runtime.cwd}/${hydra.job.name}_log_links
+    symlink_filename: ${hydra.job.name}_${now:%Y%m%d_%H%M%S}.log
 root:
   handlers: [console, file]
   level: DEBUG
