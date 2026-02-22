@@ -141,14 +141,12 @@ js/node_modules
 js/test-results
 js/playwright-report
 js/*.tgz
-csp_gateway/extension
 
 # Jupyter
 .ipynb_checkpoints
 .autoversion
 Untitled*.ipynb
-!csp_gateway/extension/csp_gateway.json
-!csp_gateway/extension/install.json
+csp_gateway/extension
 csp_gateway/nbextension
 csp_gateway/labextension
 
@@ -158,5 +156,11 @@ csp_gateway/labextension
 # Rust
 target
 
+<<<<<<< before updating
 # Outputs
 outputs
+=======
+# Hydra
+outputs/
+multirun/
+>>>>>>> after updating
