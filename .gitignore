@@ -156,11 +156,6 @@ csp_gateway/labextension
 # Rust
 target
 
-<<<<<<< before updating
-# Outputs
-outputs
-=======
 # Hydra
 outputs/
 multirun/
->>>>>>> after updating
