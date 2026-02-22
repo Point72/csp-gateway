@@ -54,12 +54,8 @@ develop = [
     "pytest-aiohttp",
     "pytest-asyncio",
     "pytest-cov",
-<<<<<<< before updating
     "python-magic",
-    "ruff>=0.9,<0.15",
-=======
     "ruff",
->>>>>>> after updating
     "twine",
     "ty",
     "uv",
@@ -143,28 +139,11 @@ filename = "js/package.json"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
 
-<<<<<<< before updating
 [[tool.bumpversion.files]]
 filename = "examples/Client.ipynb"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
 
-[tool.check-manifest]
-ignore = [
-    ".copier-answers.yaml",
-    "js/pnpm-lock.yaml",
-    "Makefile",
-    ".vscode/*",
-    "csp_gateway/server/build/*",
-    "docs/**/*",
-    "examples/**/*",
-    "js/dist/**/*",
-    "js/lib/**/*",
-    "js/node_modules/**/*",
-]
-
-=======
->>>>>>> after updating
 [tool.coverage.run]
 branch = true
 omit = [
@@ -195,16 +174,11 @@ packages = [
     "js",
 ]
 exclude = [
-<<<<<<< before updating
-    "/docs",
-    "/examples",
-    "/js/dist",
-    "/js/lib",
-    "/js/node_modules",
-=======
+    "docs",
+    "examples",
     "js/dist",
+    "js/lib",
     "js/node_modules",
->>>>>>> after updating
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -212,13 +186,9 @@ packages = [
     "csp_gateway",
 ]
 exclude = [
-<<<<<<< before updating
-    "/docs",
-    "/examples",
-    "/js",
-=======
+    "docs",
+    "examples",
     "js",
->>>>>>> after updating
 ]
 
 [tool.hatch.build.hooks.hatch-js]
