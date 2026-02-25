@@ -44,6 +44,10 @@ Notes for editors:
   - [MountControls](Modules#MountControls)
   - [MountChannelsGraph](Modules#MountChannelsGraph)
   - [MountAPIKeyMiddleware](Modules#MountAPIKeyMiddleware)
+  - [MountExternalAPIKeyMiddleware](Modules#MountExternalAPIKeyMiddleware)
+  - [AuthFilterMiddleware](Modules#AuthFilterMiddleware)
+  - [MountOAuth2Middleware](Modules#MountOAuth2Middleware)
+  - [MountSimpleAuthMiddleware](Modules#MountSimpleAuthMiddleware)
 - Logging Modules
   - [PrintChannels](Modules#PrintChannels)
   - [LogChannels](Modules#LogChannels)

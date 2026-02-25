@@ -47,6 +47,7 @@ class MountWebSocketRoutes(GatewayModule):
     _subscriptions: Dict[str, Set[Tuple[str, Any]]] = PrivateAttr(default_factory=dict)
     _queue: Optional[janus.Queue] = PrivateAttr(None)
     _task: Optional[asyncio.Task] = PrivateAttr(None)
+    _app: Any = PrivateAttr(None)
 
     def connect(self, channels: GatewayChannels) -> None:
         self._channels = channels
@@ -127,10 +128,16 @@ class MountWebSocketRoutes(GatewayModule):
                 uuid, websocket, message = await asyncio.wait_for(self._queue.async_q.get(), timeout=3.0)
                 if uuid in self._subscriptions:
                     try:
+                        # Apply auth filtering if configured
+                        filtered_message = await self._apply_auth_filter(message, websocket)
+                        if filtered_message is None:
+                            # All data filtered out, skip sending
+                            continue
+
                         if self.debug:
-                            await websocket.send_text(message)
+                            await websocket.send_text(filtered_message)
                         else:
-                            await self.try_send_text(websocket, message)
+                            await self.try_send_text(websocket, filtered_message)
                     except (ClientDisconnected, WebSocketDisconnect, asyncio.CancelledError) as e:
                         log.debug(f"Writing to client with {uuid = } disconnected with error {e = }")
                         self.disconnect_websocket(websocket, uuid)
@@ -138,6 +145,18 @@ class MountWebSocketRoutes(GatewayModule):
                 log.debug("No data to submit via websockets, retrying...")
             except Exception:
                 log.exception("Something bad happened during queue processing")
+
+    async def _apply_auth_filter(self, message: str, websocket) -> Optional[str]:
+        """Apply auth filter middleware if configured."""
+        if self._app is None:
+            return message
+
+        # Check if auth filter middleware is installed
+        auth_filter = getattr(self._app.app.state, "auth_filter_middleware", None)
+        if auth_filter is None:
+            return message
+
+        return await auth_filter.filter_websocket_data(message, websocket)
 
     @csp.node
     def handle_heartbeat_connection(self, connect: ts["T"], disconnect: ts["T"]):
@@ -360,6 +379,9 @@ class MountWebSocketRoutes(GatewayModule):
             self.disconnect_websocket(websocket, uuid)
 
     def rest(self, app: GatewayWebApp) -> None:
+        # Store app reference for auth filtering
+        self._app = app
+
         api_router = app.get_router("api")
 
         # add websocket handler

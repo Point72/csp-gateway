@@ -10,7 +10,7 @@ logfire:
   instrument_fastapi: True
   capture_logging: True
   log_level: DEBUG
-  
+
 publish_logfire:
   _target_: csp_gateway.server.modules.logging.PublishLogfire
   selection:
@@ -25,9 +25,7 @@ gateway:
   _target_: csp_gateway.Gateway
   settings:
     PORT: ${port}
-    AUTHENTICATE: ${authenticate}
     UI: True
-    API_KEY: "12345"
   modules:
     - /modules/example_module
     - /modules/mount_outputs
@@ -40,5 +38,4 @@ gateway:
 
 # csp-gateway-start --config-dir=csp_gateway/server/demo +config=logfire
 
-authenticate: False
 port: 8000

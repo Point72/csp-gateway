@@ -281,11 +281,11 @@ class Gateway(ChannelsFactory[GatewayChannels]):
                 log.info("Launching web server on:")
                 url = f"http://{gethostname()}:{self.settings.PORT}"
 
-                if ui:
-                    if self.settings.AUTHENTICATE:
-                        log.info(f"\tUI: {url}?token={self.settings.API_KEY}")
-                    else:
-                        log.info(f"\tUI: {url}")
+                # Allow module sto log information at statup
+                for module in self.modules:
+                    _info = module.info(self.settings)
+                    if _info:
+                        log.info(_info)
 
                 log.info(f"\tDocs: {url}/docs")
                 log.info(f"\tDocs: {url}/redoc")
