@@ -99,7 +99,7 @@ server = [
     "perspective-python>=4,<4.1",
     "pyarrow",
     "pydantic>=2",
-    "uvicorn>=0.28.1,<0.41",
+    "uvicorn>=0.28.1,<0.42",
     "uvloop",
     "websockets",
 ]
