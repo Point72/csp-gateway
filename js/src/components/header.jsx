@@ -72,7 +72,18 @@ export function Header(props) {
       {/* Left */}
       <div className="row">
         {headerLogo}
-        <h1 className="header-title">{openapi?.info.title}</h1>
+        <a
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            const url = new URL(window.location);
+            url.searchParams.delete("layout");
+            window.history.replaceState(null, "", url);
+            window.location.reload();
+          }}
+        >
+          <h1 className="header-title">{openapi?.info.title}</h1>
+        </a>
         <p className="header-version">{openapi?.info.version}</p>
       </div>
 

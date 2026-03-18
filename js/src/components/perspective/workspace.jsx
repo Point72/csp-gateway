@@ -37,6 +37,7 @@ export const Workspace = forwardRef(function Workspace(
   const wsRef = useRef(null);
   const [layouts, setLayouts] = useState({});
   const [activeLayoutName, setActiveLayoutName] = useState(null);
+  const [restoreCount, setRestoreCount] = useState(0);
   const initializedRef = useRef(false);
 
   // ── Imperative handle for Header and other consumers ──────────────
@@ -46,7 +47,10 @@ export const Workspace = forwardRef(function Workspace(
       getLayouts: () => layouts,
       getActiveLayout: () => activeLayoutName,
       setActiveLayout: (name) => {
-        if (layouts[name]) setActiveLayoutName(name);
+        if (layouts[name]) {
+          setActiveLayoutName(name);
+          setRestoreCount((c) => c + 1);
+        }
       },
       saveLayout: async () => {
         const ws = wsRef.current;
@@ -166,7 +170,7 @@ export const Workspace = forwardRef(function Workspace(
     if (!ws) return;
 
     ws.restore(applyThemeToLayout(layouts[activeLayoutName]));
-  }, [activeLayoutName]);
+  }, [activeLayoutName, restoreCount]);
 
   // ── Apply theme to newly added viewers (right-click → add table) ──
   // Only fires AFTER initial restore is complete (guarded by initializedRef)

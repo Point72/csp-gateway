@@ -16,6 +16,11 @@
   border-bottom: 1px solid var(--border);
 }
 
+.header a {
+  color: unset;
+  text-decoration: none;
+}
+
 .header-title {
   margin-left: 10px;
 }
