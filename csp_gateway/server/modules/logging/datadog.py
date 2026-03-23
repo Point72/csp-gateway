@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Union
 
 import csp
 from csp import ts
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from csp_gateway.server import ChannelSelection, GatewayModule
 from csp_gateway.server.modules.logging.util import (
@@ -14,6 +14,12 @@ from csp_gateway.server.modules.logging.util import (
     MonitoringMetric,
 )
 from csp_gateway.utils import get_thread
+
+try:
+    from datadog import api
+except ImportError:
+    # Hold and raise in model validator
+    api = None
 
 log = logging.getLogger(__name__)
 logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
@@ -54,8 +60,6 @@ def _log_result(
 
 
 def _send_to_datadog(queue: Queue, dd_latency_log_threshold_seconds: int) -> None:
-    from datadog import api
-
     while True:
         data = queue.get()
         if data is None:
@@ -97,6 +101,12 @@ class PublishDatadog(GatewayModule):
     )
 
     dd_tags: Optional[Dict[str, str]] = Field(default=None, description="Tags to be included with Datadog submissions.")
+
+    @model_validator(mode="before")
+    def check_import(cls, values):
+        if api is None:
+            raise ImportError("datadog is required for PublishDatadog. Install it with: pip install datadog")
+        return values
 
     def connect(self, channels):
         """

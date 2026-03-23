@@ -7,7 +7,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException
 
 from ..utils import get_default_responses
-from .shared import get_next_tick, prepare_response
+from .shared import get_fully_qualified_type_name, get_next_tick, prepare_response
 
 __all__ = (
     "add_next_routes",
@@ -27,6 +27,9 @@ def add_next_routes(
     else:
         is_list_model = False
         list_model = List[model]
+
+    # Get the fully qualified type name for the description
+    fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
 
@@ -71,6 +74,7 @@ def add_next_routes(
             responses=get_default_responses(),
             response_model=list_model,
             name="Get Next {} by key".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_next)
 
         api_router.get(
@@ -108,6 +112,7 @@ def add_next_routes(
             responses=get_default_responses(),
             response_model=list_model,  # type: ignore[valid-type]
             name="Get Next {}".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_next_basket)
 
         api_router.get(
@@ -151,6 +156,7 @@ def add_next_routes(
             responses=get_default_responses(),
             response_model=list_model,
             name="Get Next {}".format(field),
+            openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_next)
 
         api_router.get(

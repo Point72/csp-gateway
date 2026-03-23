@@ -11,6 +11,7 @@ from typing import Any, Deque, Dict, List, Tuple, Union
 
 import csp
 import duckdb
+import duckdb.sqltypes
 import fsspec
 import numpy
 import orjson
@@ -429,9 +430,22 @@ class DuckDBState(object):
         return pformat(self.query())
 
 
+def _remove_optional(cls: Any) -> Tuple[Any, bool]:
+    if typing.get_origin(cls) is typing.Union:
+        args = typing.get_args(cls)
+        non_none_args = [arg for arg in args if arg is not type(None)]
+        if len(non_none_args) == 1:
+            return (non_none_args[0], True)
+    return (cls, False)
+
+
 def get_duckdb_schema_obj(parent: Any, key: Any, cls: Any) -> Tuple[Any, bool]:
     """Create a schema for the passed type object"""
 
+    annotation = parent.__full_metadata_typed__[key]
+    annotation, removed = _remove_optional(annotation)
+    if removed:
+        cls = annotation
     if not isinstance(cls, type):
         if isinstance(cls, list):
             cls = list
@@ -488,7 +502,7 @@ def get_duckdb_schema_obj(parent: Any, key: Any, cls: Any) -> Tuple[Any, bool]:
 
     try:
         # Convert type to a duckdb type
-        return (str(duckdb.typing.DuckDBPyType(cls)), True)
+        return (str(duckdb.sqltypes.DuckDBPyType(cls)), True)
     except Exception:
         # TODO: Be more specific in the exception we need to handle here
         return (cls, False)

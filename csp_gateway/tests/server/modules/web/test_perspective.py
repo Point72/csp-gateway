@@ -196,15 +196,16 @@ def test_recursive_perspective_flattening():
 
     # List with 1 element
     o = MyTestStruct(sub=MyTestSubStruct(y=[1], timestamp=now), timestamp=now)
-    sub_id = MyTestSubStruct.id_generator.current()
-    id = MyTestStruct.id_generator.current()
+    # Use the actual id from the object, not the counter (which is now global)
+    sub_id = o.sub.id
+    id = o.id
 
     assert isinstance(o.sub.psp_flatten(), list)
     sub_flat = o.sub.psp_flatten()
     for d in sub_flat:
         d["timestamp"] = datetime.fromisoformat(d["timestamp"])
     assert sub_flat == [
-        {"id": str(sub_id), "y": 1, "x": 1, "timestamp": now},
+        {"id": sub_id, "y": 1, "x": 1, "timestamp": now},
     ]
 
     assert isinstance(o.psp_flatten(), list)
@@ -214,8 +215,8 @@ def test_recursive_perspective_flattening():
         d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
     assert o_flat == [
         {
-            "id": str(id),
-            "sub.id": str(sub_id),
+            "id": id,
+            "sub.id": sub_id,
             "sub.y": 1,
             "sub.x": 1,
             "sub.timestamp": now,
@@ -224,6 +225,8 @@ def test_recursive_perspective_flattening():
     ]
 
     o = MyTestStruct(sub=MyTestSubStruct(y=[], z=float("nan"), timestamp=now), timestamp=now)
+    o2_sub_id = o.sub.id
+    o2_id = o.id
     assert isinstance(o.psp_flatten(), list)
     o_flat = o.psp_flatten()
     for d in o_flat:
@@ -231,8 +234,8 @@ def test_recursive_perspective_flattening():
         d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
     assert o_flat == [
         {
-            "id": str(id + 1),
-            "sub.id": str(sub_id + 1),
+            "id": o2_id,
+            "sub.id": o2_sub_id,
             "sub.x": 1,
             "sub.z": None,
             "sub.timestamp": now,
@@ -241,6 +244,8 @@ def test_recursive_perspective_flattening():
     ]
 
     o = MyTestStruct(sub=MyTestSubStruct(y=[], z=float("inf"), timestamp=now), timestamp=now)
+    o3_sub_id = o.sub.id
+    o3_id = o.id
     assert isinstance(o.psp_flatten(), list)
     o_flat = o.psp_flatten()
     for d in o_flat:
@@ -248,8 +253,8 @@ def test_recursive_perspective_flattening():
         d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
     assert o_flat == [
         {
-            "id": str(id + 2),
-            "sub.id": str(sub_id + 2),
+            "id": o3_id,
+            "sub.id": o3_sub_id,
             "sub.x": 1,
             "sub.z": None,
             "sub.timestamp": now,
@@ -258,6 +263,8 @@ def test_recursive_perspective_flattening():
     ]
 
     o = MyTestStruct(sub=MyTestSubStruct(y=[], z=float("-inf"), timestamp=now), timestamp=now)
+    o4_sub_id = o.sub.id
+    o4_id = o.id
     assert isinstance(o.psp_flatten(), list)
     o_flat = o.psp_flatten()
     for d in o_flat:
@@ -265,8 +272,8 @@ def test_recursive_perspective_flattening():
         d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
     assert o_flat == [
         {
-            "id": str(id + 3),
-            "sub.id": str(sub_id + 3),
+            "id": o4_id,
+            "sub.id": o4_sub_id,
             "sub.x": 1,
             "sub.z": None,
             "sub.timestamp": now,
@@ -276,15 +283,17 @@ def test_recursive_perspective_flattening():
 
     # List with multiple elements
     o = MyTestStruct(sub=MyTestSubStruct(y=[1, 2, 3], timestamp=now), timestamp=now)
+    o5_sub_id = o.sub.id
+    o5_id = o.id
 
     assert isinstance(o.sub.psp_flatten(), list)
     sub_flat = o.sub.psp_flatten()
     for d in sub_flat:
         d["timestamp"] = datetime.fromisoformat(d["timestamp"])
     assert sub_flat == [
-        {"id": str(sub_id + 4), "y": 1, "x": 1, "timestamp": now},
-        {"id": str(sub_id + 4), "y": 2, "x": 1, "timestamp": now},
-        {"id": str(sub_id + 4), "y": 3, "x": 1, "timestamp": now},
+        {"id": o5_sub_id, "y": 1, "x": 1, "timestamp": now},
+        {"id": o5_sub_id, "y": 2, "x": 1, "timestamp": now},
+        {"id": o5_sub_id, "y": 3, "x": 1, "timestamp": now},
     ]
 
     assert isinstance(o.psp_flatten(), list)
@@ -294,24 +303,24 @@ def test_recursive_perspective_flattening():
         d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
     assert o_flat == [
         {
-            "id": str(id + 4),
-            "sub.id": str(sub_id + 4),
+            "id": o5_id,
+            "sub.id": o5_sub_id,
             "sub.y": 1,
             "sub.x": 1,
             "sub.timestamp": now,
             "timestamp": now,
         },
         {
-            "id": str(id + 4),
-            "sub.id": str(sub_id + 4),
+            "id": o5_id,
+            "sub.id": o5_sub_id,
             "sub.y": 2,
             "sub.x": 1,
             "sub.timestamp": now,
             "timestamp": now,
         },
         {
-            "id": str(id + 4),
-            "sub.id": str(sub_id + 4),
+            "id": o5_id,
+            "sub.id": o5_sub_id,
             "sub.y": 3,
             "sub.x": 1,
             "sub.timestamp": now,
@@ -321,12 +330,14 @@ def test_recursive_perspective_flattening():
 
     # Empty list removed
     o = MyTestStruct(sub=MyTestSubStruct(y=[], timestamp=now), timestamp=now)
+    o6_sub_id = o.sub.id
+    o6_id = o.id
     assert isinstance(o.sub.psp_flatten(), list)
     sub_flat = o.sub.psp_flatten()
     for d in sub_flat:
         d["timestamp"] = datetime.fromisoformat(d["timestamp"])
     assert sub_flat == [
-        {"id": str(sub_id + 5), "x": 1, "timestamp": now},
+        {"id": o6_sub_id, "x": 1, "timestamp": now},
     ]
 
     assert isinstance(o.psp_flatten(), list)
@@ -336,8 +347,8 @@ def test_recursive_perspective_flattening():
         d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
     assert o_flat == [
         {
-            "id": str(id + 5),
-            "sub.id": str(sub_id + 5),
+            "id": o6_id,
+            "sub.id": o6_sub_id,
             "sub.x": 1,
             "sub.timestamp": now,
             "timestamp": now,
@@ -346,13 +357,14 @@ def test_recursive_perspective_flattening():
 
     # Non json serializable object passed
     o = MyTestStruct(ncsp_sub=object(), timestamp=now)
+    o7_id = o.id
     assert isinstance(o.psp_flatten(), list)
     o_flat = o.psp_flatten()
     for d in o_flat:
         d["timestamp"] = datetime.fromisoformat(d["timestamp"])
     assert o_flat == [
         {
-            "id": str(id + 6),
+            "id": o7_id,
             "ncsp_sub": "",
             "timestamp": now,
         },

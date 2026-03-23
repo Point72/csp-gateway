@@ -414,7 +414,7 @@ def test_encode_filter_channels(by_key):
         my_list_data=csp.const([MyStruct(foo=1.0), MyStruct(foo=2.0)]),
         by_key=by_key,
     )
-    channels = list(MyGatewayChannels.model_fields.keys())
+    channels = MyGatewayChannels.fields()
     assert MyGatewayChannels.s_my_channel in channels
     assert MyGatewayChannels.my_array_channel in channels
     json_encoder = MyJsonEncoder(channels_list=channels)
@@ -429,7 +429,7 @@ def test_encode_filter_channels(by_key):
     assert snapshot_model.my_enum_basket[MyEnum.ONE].foo == 1.0
     assert snapshot_model.my_enum_basket[MyEnum.TWO].foo == 2.0
     assert snapshot_model.my_enum_basket_list[MyEnum.ONE] == snapshot_model.my_enum_basket_list[MyEnum.TWO]
-    assert MyGatewayChannels.s_my_channel not in snapshot_model.model_fields
+    assert MyGatewayChannels.s_my_channel not in type(snapshot_model).model_fields
     assert getattr(snapshot_model, _CSP_ENGINE_CYCLE_TIMESTAMP_FIELD) == datetime(2020, 1, 1)
 
 

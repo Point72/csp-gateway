@@ -918,3 +918,25 @@ def test_harness_ordering(harness_first):
             channels=MyGatewayChannels(),
         )
     csp.run(gateway.graph, starttime=datetime(2020, 1, 1), endtime=timedelta(1))
+
+
+def test_gateway_channels_fields_classmethod():
+    assert set(MyGatewayChannels().fields()) == set(MyGatewayChannels.fields())
+    assert set(MyGatewayChannels.fields()) == {
+        "my_channel_final",
+        "my_channel_mid",
+        "my_channel_dup",
+        "my_keys",
+        "my_static",
+        "my_static_dict",
+        "my_static_list",
+        "my_static_dict_of_objects",
+        "my_channel",
+        "s_my_channel",
+        "my_list_channel",
+        "s_my_list_channel",
+        "my_enum_basket",
+        "my_str_basket",
+        "my_enum_basket_list",
+        "my_array_channel",
+    }

@@ -1,12 +1,13 @@
-from typing import List, Optional, Set, Union, get_args, get_origin
+from typing import Any, List, Optional, Set, Union, get_args, get_origin
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from csp_gateway.server import ChannelSelection
+from csp_gateway.utils.struct import global_lookup
 
 from ..utils import get_default_responses
-from .shared import prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_lookup_routes",
@@ -21,6 +22,9 @@ def add_lookup_routes(
 ) -> None:
     if model and get_origin(model) is list:
         model = get_args(model)[0]
+
+    # Get the fully qualified type name for the description
+    fq_type_name = get_fully_qualified_type_name(model)
 
     async def lookup(id: str, request: Request) -> List[model]:  # type: ignore[misc, valid-type]
         """
@@ -40,6 +44,7 @@ def add_lookup_routes(
         responses=get_default_responses(),
         response_model=List[model],
         name="Lookup {}".format(field),
+        openapi_extra={"type_": fq_type_name} if fq_type_name else None,
     )(lookup)
 
     api_router.get(
@@ -61,3 +66,17 @@ def add_lookup_available_channels(api_router: APIRouter, fields: Optional[Set[st
         This endpoint will return a list of string values of all available channels under the `/lookup` route.
         """
         return sorted(ChannelSelection().select_from(request.app.gateway.channels) if fields is None else fields)
+
+    @api_router.get(
+        "/id/{id:path}",
+        responses=get_default_responses(),
+    )
+    async def get_lookup_by_id(id: str, request: Request) -> Any:
+        """
+        This endpoint lets you lookup any GatewayStruct by its globally unique `id`.
+        Returns the GatewayStruct instance if found, otherwise returns 404.
+        """
+        result = global_lookup(id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="No GatewayStruct found with id: {}".format(id))
+        return prepare_response(result, is_list_model=False)

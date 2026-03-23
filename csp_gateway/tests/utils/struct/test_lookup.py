@@ -6,6 +6,7 @@ from csp_gateway import GatewayStruct as Base
 from csp_gateway.utils.struct import (
     GatewayLookupMixin,
     GatewayPydanticMixin,
+    global_lookup,
 )
 
 
@@ -21,45 +22,42 @@ NoLookupModel.omit_from_lookup(True)
 
 
 def test_automatic_id_generation():
+    """Test that IDs are auto-generated and unique across all classes (global generator)."""
     for Model in [LookupModel, NoLookupModel]:
         o1 = Model()
-        value1 = str(Model.id_generator.current())
-        assert o1.id == value1
+        # IDs should be strings
+        assert isinstance(o1.id, str)
 
         o2 = Model()
-        value2 = str(Model.id_generator.current())
-        assert o2.id == value2
-        assert o2.id == str(int(o1.id) + 1)
+        # Each new instance gets a unique ID
+        assert o2.id != o1.id
+        # IDs are sequential (global counter)
+        assert int(o2.id) > int(o1.id)
 
         if Model == LookupModel:
-            assert Model.lookup(value1) == o1
-            assert Model.lookup(value2) == o2
+            assert Model.lookup(o1.id) == o1
+            assert Model.lookup(o2.id) == o2
 
 
 def test_lookup_fails():
     o1 = LookupModel()
-    value1 = str(LookupModel.id_generator.current())
-    assert o1.id == value1
+    assert isinstance(o1.id, str)
 
     o2 = LookupModel()
-    value2 = str(LookupModel.id_generator.current())
-    assert o2.id == value2
-    assert o2.id == str(int(o1.id) + 1)
+    assert o2.id != o1.id
 
-    assert LookupModel.lookup(value1) == o1
-    assert LookupModel.lookup(value2) == o2
+    assert LookupModel.lookup(o1.id) == o1
+    assert LookupModel.lookup(o2.id) == o2
 
     o1 = NoLookupModel()
-    value1 = str(NoLookupModel.id_generator.current())
-    assert o1.id == value1
+    assert isinstance(o1.id, str)
 
     o2 = NoLookupModel()
-    value2 = str(NoLookupModel.id_generator.current())
-    assert o2.id == value2
-    assert o2.id == str(int(o1.id) + 1)
+    assert o2.id != o1.id
 
-    assert NoLookupModel.lookup(value1) is None
-    assert NoLookupModel.lookup(value2) is None
+    # NoLookupModel has lookup disabled
+    assert NoLookupModel.lookup(o1.id) is None
+    assert NoLookupModel.lookup(o2.id) is None
 
 
 def test_add_lookup_mixin_in_subclass():
@@ -148,6 +146,8 @@ def test_lookup_only_mixin_without_fields_mixin():
 
 
 def test_separate_lookup_registries():
+    """Test that class-scoped lookup is isolated between classes."""
+
     class StructA(Struct):
         a: int
         id: str
@@ -167,19 +167,103 @@ def test_separate_lookup_registries():
     a1 = LookupA(a=1)
     b1 = LookupB(b=1)
 
+    # Class-scoped lookup finds own instances
     assert LookupA.lookup(a1.id) == a1
     assert LookupB.lookup(b1.id) == b1
 
-    # Cross-lookups must be isolated
+    # Cross-lookups via class method are still isolated
     assert LookupA.lookup(b1.id) is None
     assert LookupB.lookup(a1.id) is None
 
-    # Generators are per-class
+    # But global_lookup can find both without class filter
+    assert global_lookup(a1.id) == a1
+    assert global_lookup(b1.id) == b1
+
+    # global_lookup with class filter works too
+    assert global_lookup(a1.id, LookupA) == a1
+    assert global_lookup(b1.id, LookupB) == b1
+    assert global_lookup(a1.id, LookupB) is None
+    assert global_lookup(b1.id, LookupA) is None
+
+    # Global generator means all IDs are unique
     a_id1 = LookupA.generate_id()
     a_id2 = LookupA.generate_id()
     b_id1 = LookupB.generate_id()
     b_id2 = LookupB.generate_id()
-    assert a_id1 != a_id2
-    assert b_id1 != b_id2
-    # Not guaranteed, but overwhelmingly likely that sequences don't collide
-    assert a_id1 != b_id1
+    # All IDs are unique (global counter)
+    assert len({a_id1, a_id2, b_id1, b_id2}) == 4
+
+
+def test_global_lookup_function():
+    """Test the global_lookup function for looking up instances by ID."""
+
+    class TestStructA(Struct):
+        a: int
+        id: str
+        timestamp: datetime
+
+    class TestStructB(Struct):
+        b: int
+        id: str
+        timestamp: datetime
+
+    class GlobalLookupA(GatewayLookupMixin, TestStructA):
+        pass
+
+    class GlobalLookupB(GatewayLookupMixin, TestStructB):
+        pass
+
+    a1 = GlobalLookupA(a=100)
+    b1 = GlobalLookupB(b=200)
+
+    # Global lookup without class filter finds any instance
+    assert global_lookup(a1.id) == a1
+    assert global_lookup(b1.id) == b1
+
+    # Global lookup with class filter only finds instances of that class
+    assert global_lookup(a1.id, GlobalLookupA) == a1
+    assert global_lookup(a1.id, GlobalLookupB) is None
+    assert global_lookup(b1.id, GlobalLookupB) == b1
+    assert global_lookup(b1.id, GlobalLookupA) is None
+
+    # Non-existent ID returns None
+    assert global_lookup("nonexistent") is None
+    assert global_lookup("nonexistent", GlobalLookupA) is None
+
+
+def test_global_id_generator_shared():
+    """Test that all classes share the same global ID generator."""
+
+    class SharedGenA(Struct):
+        a: int
+        id: str
+        timestamp: datetime
+
+    class SharedGenB(Struct):
+        b: int
+        id: str
+        timestamp: datetime
+
+    class LookupSharedA(GatewayLookupMixin, SharedGenA):
+        pass
+
+    class LookupSharedB(GatewayLookupMixin, SharedGenB):
+        pass
+
+    # Both classes use the same generator
+    assert LookupSharedA.id_generator is LookupSharedB.id_generator
+
+    # Generate IDs from different classes - they should be strictly increasing
+    id1 = LookupSharedA.generate_id()
+    id2 = LookupSharedB.generate_id()
+    id3 = LookupSharedA.generate_id()
+    id4 = LookupSharedB.generate_id()
+
+    assert int(id1) < int(id2) < int(id3) < int(id4)
+
+    # Instance creation also uses the global generator
+    a1 = LookupSharedA(a=1)
+    b1 = LookupSharedB(b=1)
+    a2 = LookupSharedA(a=2)
+
+    assert int(a1.id) < int(b1.id) < int(a2.id)

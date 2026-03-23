@@ -24,7 +24,7 @@ class ExampleModule(GatewayModule):
         ...
 ```
 
-`GatewayModule` is a subclass of Pydantic `BaseModel`, and so has type validation ands Hydra-driven configuration.
+`GatewayModule` is a subclass of Pydantic `BaseModel`, and so has type validation and Hydra-driven configuration.
 
 ## Extending the API
 
@@ -172,3 +172,185 @@ modules:
 ### Block Setting Channels
 
 Documentation coming soon!
+
+## Testing Gateway Applications
+
+Testing CSP-based applications requires a different approach than traditional unit testing. Because CSP operates on time-series data with sequenced events, tests need to simulate the passage of time and verify that the correct values are produced at the correct times. Simply checking inputs and outputs at a single point in time is insufficient—you need to ensure that your modules respond correctly to events as they unfold over time.
+
+### Why Time-Sequenced Testing Matters
+
+In a CSP graph:
+
+- Events arrive at specific times
+- Modules react to events and may produce outputs at the same or later times
+- The order and timing of events affects the behavior of the system
+- State accumulates over time
+
+Traditional unit tests that call a function and check its return value cannot capture this temporal behavior. The `GatewayTestHarness` solves this by allowing you to:
+
+1. **Send data at specific times** - Simulate events arriving at your module
+1. **Advance time** - Move forward in simulated time to trigger time-based logic
+1. **Assert on values** - Verify that channels contain expected values
+1. **Assert on tick counts** - Verify that channels ticked the expected number of times
+
+### GatewayTestHarness
+
+The `GatewayTestHarness` is a special `GatewayModule` that you include in your test gateway. It allows you to script a sequence of events and assertions that will be executed during the CSP graph's runtime.
+
+#### Key Methods
+
+| Method                                       | Description                                                           |
+| -------------------------------------------- | --------------------------------------------------------------------- |
+| `send(channel, value)`                       | Send a value to a channel                                             |
+| `delay(timedelta\|datetime)`                 | Move forward in time                                                  |
+| `advance(delay, msg, pre_msg)`               | Reset state and advance time (combines `reset`, `print`, and `delay`) |
+| `reset()`                                    | Reset tick counts and tracked values                                  |
+| `assert_ticked(channel, count)`              | Assert a channel ticked a specific number of times                    |
+| `assert_equal(channel, value)`               | Assert the last value on a channel equals expected                    |
+| `assert_attr_equal(channel, attr, value)`    | Assert an attribute of the last value equals expected                 |
+| `assert_attrs_equal(channel, values)`        | Assert multiple attributes equal expected values (dict)               |
+| `assert_type(channel, type)`                 | Assert the last value is of a specific type                           |
+| `assert_len(channel, length)`                | Assert the length of a list channel                                   |
+| `assert_ticked_values(channel, assert_func)` | Apply a custom assertion function to all ticked values                |
+| `assert_value(channel, assert_func)`         | Apply a custom assertion function to the current value                |
+| `print(msg)`                                 | Print a message during test execution                                 |
+| `print_ticked()`                             | Print all ticked values (useful for debugging)                        |
+| `print_tick_counts()`                        | Print tick counts for all channels                                    |
+
+### Basic Example
+
+Here's a simple example testing a custom module that doubles input values:
+
+```python
+from datetime import datetime, timedelta
+from typing import Type
+
+import csp
+from csp import ts
+
+from csp_gateway import Gateway, GatewayChannels, GatewayModule, GatewayStruct
+from csp_gateway.testing import GatewayTestHarness
+
+
+# Define your struct
+class MyData(GatewayStruct):
+    value: float
+
+
+# Define your channels
+class MyChannels(GatewayChannels):
+    input_data: ts[MyData] = None
+    output_data: ts[MyData] = None
+
+
+# Define your module under test
+class DoublerModule(GatewayModule):
+    def connect(self, channels: MyChannels):
+        input_channel = channels.get_channel(MyChannels.input_data)
+
+        @csp.node
+        def double_value(data: ts[MyData]) -> ts[MyData]:
+            if csp.ticked(data):
+                return MyData(value=data.value * 2)
+
+        channels.set_channel(MyChannels.output_data, double_value(input_channel))
+
+
+# Define your gateway
+class MyGateway(Gateway):
+    channels_model: Type[MyChannels] = MyChannels
+
+
+# Write the test
+def test_doubler_module():
+    # Create harness watching both input and output channels
+    h = GatewayTestHarness(test_channels=["input_data", "output_data"])
+
+    # Send a value and assert on the output
+    h.send(MyChannels.input_data, MyData(value=5.0))
+    h.assert_attr_equal(MyChannels.output_data, "value", 10.0)
+    h.assert_ticked(MyChannels.output_data, 1)
+
+    # Advance time and send another value
+    h.advance(delay=timedelta(seconds=1))
+    h.send(MyChannels.input_data, MyData(value=7.5))
+    h.assert_attr_equal(MyChannels.output_data, "value", 15.0)
+    h.assert_ticked(MyChannels.output_data, 1)  # Count reset after advance
+
+    # Create and run the gateway
+    gateway = MyGateway(
+        modules=[h, DoublerModule()],
+        channels=MyChannels(),
+    )
+    csp.run(gateway.graph, starttime=datetime(2024, 1, 1), endtime=timedelta(hours=1))
+```
+
+### Using Custom Assertion Functions
+
+For more complex assertions, use `assert_ticked_values` or `assert_value`:
+
+```python
+def test_with_custom_assertions():
+    h = GatewayTestHarness(test_channels=["output_data"])
+
+    h.send(MyChannels.input_data, MyData(value=5.0))
+    h.delay(timedelta(seconds=1))
+    h.send(MyChannels.input_data, MyData(value=10.0))
+
+    # Custom assertion on all ticked values
+    def check_all_values(ticked_values):
+        # ticked_values is a list of (datetime, value) tuples
+        assert len(ticked_values) == 2
+        assert ticked_values[0][1].value == 10.0  # First output (5 * 2)
+        assert ticked_values[1][1].value == 20.0  # Second output (10 * 2)
+
+    h.assert_ticked_values(MyChannels.output_data, check_all_values)
+
+    # Or assert on just the current value
+    def check_current(value):
+        assert value.value == 20.0
+
+    h.assert_value(MyChannels.output_data, check_current)
+
+    gateway = MyGateway(modules=[h, DoublerModule()], channels=MyChannels())
+    csp.run(gateway.graph, starttime=datetime(2024, 1, 1), endtime=timedelta(hours=1))
+```
+
+### Testing with Dictionary Baskets
+
+For channels that are dictionary baskets, use a tuple of `(channel, key)` to reference specific basket entries:
+
+```python
+from csp import Enum
+
+
+class Side(Enum):
+    BUY = 1
+    SELL = 2
+
+
+class OrderChannels(GatewayChannels):
+    orders: Dict[Side, ts[MyData]] = None
+
+
+def test_basket_channel():
+    h = GatewayTestHarness(test_channels=["orders"])
+
+    # Send to specific basket keys
+    h.send(OrderChannels.orders, {Side.BUY: MyData(value=100.0)})
+    h.assert_attr_equal((OrderChannels.orders, Side.BUY), "value", 100.0)
+
+    h.delay(timedelta(seconds=1))
+    h.send(OrderChannels.orders, {Side.SELL: MyData(value=50.0)})
+    h.assert_attr_equal((OrderChannels.orders, Side.SELL), "value", 50.0)
+
+    # ... run gateway
+```
+
+### Testing Tips
+
+1. **Use `advance()` between test sections** - This resets tick counts and makes assertions clearer
+1. **Use `verbose=True`** for debugging - `GatewayTestHarness(test_channels=[...], verbose=True)` prints all channel updates
+1. **Use `print_ticked()` and `print_tick_counts()`** - Helpful for debugging test failures
+1. **Test edge cases with timing** - Use `delay()` to test time-dependent behavior
+1. **Keep tests focused** - Test one behavior per test function

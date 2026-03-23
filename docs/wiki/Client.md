@@ -8,7 +8,17 @@ This class is a convenience wrapper around the various `HTTP` requests used to i
 
 A `GatewayClient` is configured via a `GatewayClientConfig`, a minimal [pydantic](https://docs.pydantic.dev/) model to specify details such as protocol (`http`/`https`), host, port, etc. By default, we should provide `host` and `port`.
 
-We can also specify in the config `return_raw_json`, which specifies whether we would like to return the raw json response, or a `ResponseWrapper` object for `REST` requests. The `ResponseWrapper` object can provide both the raw json message, as well as a pandas dataframe. The `ResponseWrapper` contains additional type information which will create column names and utilize the correct data type for the constructed pandas dataframe.
+We can also specify in the config `return_type`, which specifies how the response should be returned for `REST` requests. The available options are:
+
+- `ReturnType.Raw`: Return the raw JSON response as a list of dictionaries
+- `ReturnType.Wrapper`: Return a `ResponseWrapper` object that provides access to the raw JSON, pandas dataframe, polars dataframe, or struct conversion
+- `ReturnType.Pandas`: Return a pandas DataFrame directly
+- `ReturnType.Polars`: Return a polars DataFrame directly
+- `ReturnType.Struct`: Return the response converted to the original struct type (or list of structs)
+
+You can also pass string values (e.g., `return_type="wrapper"`) which will be automatically promoted to the enum.
+
+The `ResponseWrapper` object contains additional type information which will create column names and utilize the correct data type for the constructed dataframes. It also provides an `as_struct()` method to convert JSON back to the original struct types.
 
 ## Client Methods
 
@@ -23,9 +33,15 @@ A client as a small number of general-purpose methods. In alphabetical order:
 
 Additionally, a client has some streaming methods available when websockets are configured:
 
-- `stream`: call a callback when a channel ticks
-- `subscribe`: subscribe to data on a channel
-- `unsubscribe`: unsubscribe to data on a channel
+- `stream`: stream data from channels (callback-based for sync client, async generator for async client)
+- `subscribe`: subscribe to data on a channel (for use with manual streaming control)
+- `unsubscribe`: unsubscribe from data on a channel
+- `publish`: send data to a channel via websocket
+
+> [!NOTE]
+>
+> For dict basket channels, streaming methods accept an optional `key` parameter to target specific basket keys.
+> In `stream()`, you can pass tuples of `(channel, key)` to subscribe to specific keys.
 
 Let's explore some of the functionality of the basic demo server. To start, we should run the demo server in another process:
 
@@ -40,11 +56,11 @@ By default, this will run the server on `localhost:8000`.
 All the important objects are hoisted to the top level `csp_gateway`. Lets import and setup our client.
 
 ```python
-from csp_gateway import GatewayClient, GatewayClientConfig
+from csp_gateway import GatewayClient, GatewayClientConfig, ReturnType
 ```
 
 ```python
-config = GatewayClientConfig(host="localhost", port=8000, return_raw_json=False)
+config = GatewayClientConfig(host="localhost", port=8000, return_type=ReturnType.Wrapper)
 client = GatewayClient(config)
 ```
 

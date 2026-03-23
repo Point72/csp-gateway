@@ -5,7 +5,6 @@ from datetime import timedelta
 from typing import Dict, List, Literal, Optional
 
 import csp
-import opsgenie_sdk
 from csp import ts
 from pydantic import Field, PrivateAttr, model_validator
 
@@ -16,6 +15,12 @@ from csp_gateway.server.modules.logging.util import (
     MonitoringMetric,
     OpsGenieLevel,
 )
+
+try:
+    import opsgenie_sdk
+except ImportError:
+    # Hold and raise in model validator
+    opsgenie_sdk = None
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +53,7 @@ class PublishOpsGenie(GatewayModule):
     requires: Optional[ChannelSelection] = Field(default=[], description="List of required channels.")
     events_channel: Optional[str] = Field(default=None, description="Channel for events.")
     metrics_channel: Optional[str] = Field(default=None, description="Channel for metrics.")
-    _api_client: opsgenie_sdk.api_client.ApiClient = PrivateAttr()
+    _api_client: "opsgenie_sdk.api_client.ApiClient" = PrivateAttr()
 
     ops_tags: Optional[Dict[str, str]] = Field(default=None, description="Tags to be included with OpsGenie alerts.")
     ops_async_delay_sec: Optional[float] = Field(default=5.0, description="Delay in seconds for asynchronous operations.")
@@ -69,6 +74,12 @@ class PublishOpsGenie(GatewayModule):
     ops_alias_tags: Dict[str, List[str]] = Field(default={}, description="Tags to be used as OpsGenie alis for event_agregation")
     ops_alias_separator: str = Field(default=":", description="Separator to build OpsGenie alias.")
     ops_category_tag: str = Field(default="event_group", description="Tag that identifies event type.")
+
+    @model_validator(mode="before")
+    def check_import(cls, values):
+        if opsgenie_sdk is None:
+            raise ImportError("opsgenie_sdk is required for PublishOpsGenie. Install it with: pip install opsgenie-sdk")
+        return values
 
     @model_validator(mode="before")
     def check_metrics_channel_and_heartbeat(cls, values):

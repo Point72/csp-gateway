@@ -1,6 +1,5 @@
 defaults:
     - modules@modules
-    - override hydra/job_logging: custom
     - _self_
 
 start:

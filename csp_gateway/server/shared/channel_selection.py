@@ -65,10 +65,10 @@ class ChannelSelection(BaseModel):
         names = {}
 
         if all_fields:
-            fields = channels.model_fields if self.include is None else self.include
+            fields = channels.fields() if self.include is None else self.include
             return list(dict.fromkeys([field for field in fields if field not in self.exclude]))
 
-        for idx, field in enumerate(channels.model_fields):
+        for idx, field in enumerate(channels.fields()):
             # avoid duplicates
             if field in names:
                 continue

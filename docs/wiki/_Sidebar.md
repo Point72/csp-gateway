@@ -31,6 +31,7 @@ Notes for editors:
 - [Extending the API](Develop#Extending-the-API)
 - [Extending the UI](Develop#Extending-the-UI)
 - [Advanced Usage](Develop#Advanced-Usage)
+- [Testing Gateway Applications](Develop#Testing-Gateway-Applications)
 
 **Modules**
 
@@ -43,6 +44,10 @@ Notes for editors:
   - [MountControls](Modules#MountControls)
   - [MountChannelsGraph](Modules#MountChannelsGraph)
   - [MountAPIKeyMiddleware](Modules#MountAPIKeyMiddleware)
+  - [MountExternalAPIKeyMiddleware](Modules#MountExternalAPIKeyMiddleware)
+  - [AuthFilterMiddleware](Modules#AuthFilterMiddleware)
+  - [MountOAuth2Middleware](Modules#MountOAuth2Middleware)
+  - [MountSimpleAuthMiddleware](Modules#MountSimpleAuthMiddleware)
 - Logging Modules
   - [PrintChannels](Modules#PrintChannels)
   - [LogChannels](Modules#LogChannels)

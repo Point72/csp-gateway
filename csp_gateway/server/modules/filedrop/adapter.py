@@ -5,15 +5,23 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
-import csp
 import orjson
 import pyarrow.parquet as pq
 from csp.impl.pushadapter import PushInputAdapter
 from csp.impl.types.container_type_normalizer import ContainerTypeNormalizer
 from csp.impl.wiring import py_push_adapter_def
 from pydantic import TypeAdapter
-from watchdog.events import FileSystemEvent, FileSystemEventHandler
-from watchdog.observers import Observer
+
+try:
+    from watchdog.events import FileSystemEvent, FileSystemEventHandler
+    from watchdog.observers import Observer
+except ImportError:
+    # Hold and raise in model validator
+    FileSystemEvent = object
+    FileSystemEventHandler = object
+    Observer = None
+
+import csp
 
 __all__ = (
     "FileDropType",
