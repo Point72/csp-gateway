@@ -1,32 +1,4 @@
-"""CSP integration for streaming data from the Gateway client over websockets.
-
-This module provides the adapter infrastructure for streaming data from a GatewayServer
-via websockets in CSP graphs. The main entry point is the `stream_csp` method on
-`GatewayClient`.
-
-Example:
-    >>> import csp
-    >>> from csp_gateway.client import GatewayClient
-    >>>
-    >>> @csp.graph
-    >>> def my_graph():
-    ...     client = GatewayClient(host="localhost", port=8000)
-    ...
-    ...     # Subscribe to channels dynamically
-    ...     subscribe = csp.curve(str, [(timedelta(seconds=0), "channel1"), (timedelta(seconds=1), "channel2")])
-    ...     unsubscribe = csp.curve(str, [(timedelta(seconds=5), "channel1")])
-    ...
-    ...     # Returns a DynamicBasket where each key is a channel name
-    ...     basket = client.stream_csp(subscribe=subscribe, unsubscribe=unsubscribe)
-    ...
-    ...     # Access data for specific channels
-    ...     csp.print("basket", basket)
-    ...
-    ...     # Bidirectional: send data back to the server
-    ...     outgoing = csp.const({"action": "send", "channel": "my_channel", "data": {"value": 42}})
-    ...     basket = client.stream_csp(subscribe=subscribe, data=outgoing)
-"""
-
+import asyncio
 import logging
 import threading
 import time
@@ -234,8 +206,6 @@ class _GatewayStreamAdapterManagerImpl(AdapterManagerImpl):
 
     def _run(self):
         """Main streaming thread."""
-        import asyncio
-
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
@@ -250,8 +220,6 @@ class _GatewayStreamAdapterManagerImpl(AdapterManagerImpl):
 
     async def _connect_and_stream(self):
         """Async method to connect and stream data with retry logic."""
-        import asyncio
-
         try:
             from aiohttp import ClientConnectorError, ClientSession
         except ImportError:
@@ -348,8 +316,6 @@ class _GatewayStreamAdapterManagerImpl(AdapterManagerImpl):
 
     async def _send_subscriptions(self, ws):
         """Send subscription/unsubscription requests and outgoing data from the pending queues."""
-        import asyncio
-
         while self._running:
             try:
                 # Check for pending subscribe requests

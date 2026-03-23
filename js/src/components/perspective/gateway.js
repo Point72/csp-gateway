@@ -4,8 +4,11 @@ export const getDefaultViewerConfig = (tableName, schema, theme = "light") => {
   const viewer_config = {
     title: tableName,
     table: tableName,
-    sort: [["timestamp", "desc"]],
+    sort: Object.keys(schema).includes("timestamp")
+      ? [["timestamp", "desc"]]
+      : [],
     theme: theme === "dark" ? "Pro Dark" : "Pro Light",
+    plugin_config: { edit_mode: "SELECT_REGION" },
     version,
   };
 

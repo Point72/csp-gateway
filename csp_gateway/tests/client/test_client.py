@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import logging
 from unittest.mock import patch
 
@@ -357,8 +358,6 @@ async def test_async_client_stream_no_timeout_waits_indefinitely():
 
 def test_stream_method_signature_has_timeout():
     """Test that stream() method accepts timeout parameter."""
-    import inspect
-
     # Check AsyncClient.stream signature
     sig = inspect.signature(AsyncClient.stream)
     params = list(sig.parameters.keys())

@@ -1,7 +1,6 @@
 """Tests for MountExternalAPIKeyMiddleware."""
 
 import pytest
-from ccflow import PyObjectPath
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -16,22 +15,11 @@ from csp_gateway.server.demo import (
 )
 from csp_gateway.server.middleware.api_key import MountAPIKeyMiddleware
 from csp_gateway.server.middleware.api_key_external import MountExternalAPIKeyMiddleware
-
-
-def mock_validator_valid(api_key: str, settings, module) -> dict:
-    """A mock validator that accepts specific API keys and returns an identity dict."""
-    valid_keys = {"valid_key_1": {"user": "alice", "role": "admin"}, "valid_key_2": {"user": "bob", "role": "viewer"}}
-    return valid_keys.get(api_key)
-
-
-def mock_validator_invalid(api_key: str, settings, module) -> dict:
-    """A mock validator that always returns None (invalid key)."""
-    return None
-
-
-def mock_validator_raises(api_key: str, settings, module) -> dict:
-    """A mock validator that raises an exception."""
-    raise ValueError("External validation service error")
+from csp_gateway.testing.mock_validators import (
+    mock_api_key_validator_admin,
+    mock_api_key_validator_invalid,
+    mock_api_key_validator_valid,
+)
 
 
 class TestMountExternalAPIKeyMiddleware:
@@ -40,13 +28,11 @@ class TestMountExternalAPIKeyMiddleware:
     @pytest.fixture(scope="class")
     def external_key_gateway(self, free_port):
         """Create a gateway with external API key validation."""
-        # Use a PyObjectPath pointing to our mock validator
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
         gateway = Gateway(
             modules=[
                 ExampleModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountExternalAPIKeyMiddleware(external_validator=validator_path),
+                MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_valid),
             ],
             channels=ExampleGatewayChannels(),
             settings=GatewaySettings(PORT=free_port),
@@ -90,12 +76,11 @@ class TestExternalAPIKeyLogin:
     @pytest.fixture(scope="class")
     def login_gateway(self, free_port):
         """Create a gateway for login testing."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
         gateway = Gateway(
             modules=[
                 ExampleModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountExternalAPIKeyMiddleware(external_validator=validator_path),
+                MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_valid),
             ],
             channels=ExampleGatewayChannels(),
             settings=GatewaySettings(PORT=free_port),
@@ -131,8 +116,7 @@ class TestExternalAPIKeyIdentityStore:
 
     def test_identity_stored_on_login(self):
         """Test that identity is stored in _identity_store after validation."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
-        middleware = MountExternalAPIKeyMiddleware(external_validator=validator_path)
+        middleware = MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_valid)
 
         # Clear any existing identity store
         middleware._identity_store = {}
@@ -143,8 +127,7 @@ class TestExternalAPIKeyIdentityStore:
 
     def test_invalid_key_returns_none(self):
         """Test that invalid key returns None from validator."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_invalid")
-        middleware = MountExternalAPIKeyMiddleware(external_validator=validator_path)
+        middleware = MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_invalid)
 
         identity = middleware._invoke_external("any_key", None, None)
         assert identity is None
@@ -155,23 +138,19 @@ class TestExternalValidatorConfiguration:
 
     def test_invalid_python_path_raises(self):
         """Test that invalid python path raises ValidationError."""
-        with pytest.raises(ValidationError, match="Invalid python path"):
+        with pytest.raises(ValidationError, match="ensure this value contains valid import path or importable object|Invalid python path"):
             MountExternalAPIKeyMiddleware(external_validator="not_a_valid_path")
 
     def test_validator_must_be_callable(self):
         """Test that external_validator must point to a callable object."""
         # This path points to a non-callable (a string constant)
         with pytest.raises(ValueError, match="external_validator must point to a callable object"):
-            MountExternalAPIKeyMiddleware(external_validator=PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:NON_CALLABLE"))
+            MountExternalAPIKeyMiddleware(external_validator="csp_gateway.testing.mock_validators.NON_CALLABLE")
 
     def test_none_validator_allowed(self):
         """Test that None is allowed for external_validator."""
         middleware = MountExternalAPIKeyMiddleware(external_validator=None)
         assert middleware.external_validator is None
-
-
-# Non-callable constant for testing
-NON_CALLABLE = "I am not callable"
 
 
 class TestScopeMatching:
@@ -180,13 +159,12 @@ class TestScopeMatching:
     @pytest.fixture(scope="class")
     def scoped_gateway(self, free_port):
         """Create a gateway with scoped API key validation (only /api/*)."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
         gateway = Gateway(
             modules=[
                 ExampleModule(),
                 MountRestRoutes(force_mount_all=True),
                 MountExternalAPIKeyMiddleware(
-                    external_validator=validator_path,
+                    external_validator=mock_api_key_validator_valid,
                     scope="/api/*",
                 ),
             ],
@@ -225,8 +203,8 @@ class TestMultipleScopedMiddlewares:
     @pytest.fixture(scope="class")
     def multi_scope_gateway(self, free_port):
         """Create a gateway with two middlewares with different scopes and keys."""
-        validator_path_1 = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
-        validator_path_2 = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_admin")
+        validator_path_1 = mock_api_key_validator_valid
+        validator_path_2 = mock_api_key_validator_admin
         gateway = Gateway(
             modules=[
                 ExampleModule(),
@@ -274,13 +252,12 @@ class TestListScope:
     @pytest.fixture(scope="class")
     def list_scope_gateway(self, free_port):
         """Create a gateway with a list of scope patterns."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_api_key_external:mock_validator_valid")
         gateway = Gateway(
             modules=[
                 ExampleModule(),
                 MountRestRoutes(force_mount_all=True),
                 MountExternalAPIKeyMiddleware(
-                    external_validator=validator_path,
+                    external_validator=mock_api_key_validator_valid,
                     scope=["/api/v1/*", "/api/v2/*"],
                 ),
             ],
@@ -351,13 +328,6 @@ class TestScopeMatchingUnit:
         request_out_of_scope = Mock()
         request_out_of_scope.url.path = "/public/page"
         assert middleware._skip_if_out_of_scope(request_out_of_scope) is True
-
-
-def mock_validator_admin(api_key: str, settings, module) -> dict:
-    """A mock validator that only accepts admin_key."""
-    if api_key == "admin_key":
-        return {"user": "admin", "role": "superadmin"}
-    return None
 
 
 class TestMountAPIKeyMiddlewareScope:

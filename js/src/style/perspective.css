@@ -1,9 +1,3 @@
-/* Allow selection of cells */
-regular-table table td,
-regular-table table th {
-  user-select: text !important;
-}
-
 /* Dark */
 [data-theme="dark"] perspective-workspace[theme="Pro Dark"],
 [data-theme="dark"] perspective-indicator[theme="Pro Dark"] {
@@ -222,8 +216,4 @@ perspective-viewer.workspace-master-widget[theme="Pro Light"] {
   font-family: "Roboto Mono";
   font-weight: 300;
   color: #161616;
-}
-
-perspective-viewer perspective-viewer-datagrid regular-table table td {
-  user-select: text;
 }

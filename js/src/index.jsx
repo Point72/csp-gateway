@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { getOpenApi, hideLoader as hideDefaultLoader } from "./common";
 import {
   Header,
@@ -7,12 +7,7 @@ import {
   Settings,
   Workspace,
 } from "./components";
-import {
-  toggleTheme,
-  setupStoredOrDefaultTheme,
-  getCustomLayout,
-  getServerDefinedLayouts,
-} from "./components/perspective";
+import { getInitialTheme, applyTheme } from "./components/perspective";
 
 /* exports */
 export * from "./common";
@@ -29,56 +24,38 @@ export default function App(props) {
     hideLoader,
   } = props;
 
-  /**
-   * OpenAPI
-   */
+  // ── OpenAPI ──
   const [openapi, setOpenApi] = useState(null);
-  useEffect(async () => setOpenApi(await getOpenApi()), []);
-
-  /**
-   * Layout
-   */
-  const [layouts, changeLayouts] = useState({});
   useEffect(() => {
-    // fetch server defined layouts and merge with
-    // default layout derived from tables.
-    // Then set the active to be default
-    if (layouts.Default) {
-      getServerDefinedLayouts().then((serverLayouts) => {
-        const newLayouts = {
-          active: "Default",
-          ...layouts,
-          ...serverLayouts,
-          ...getCustomLayout(),
-        };
-        if (JSON.stringify(newLayouts) !== JSON.stringify(layouts)) {
-          changeLayouts(newLayouts);
-        }
-      });
-    }
-  }, [layouts]);
+    getOpenApi().then(setOpenApi);
+  }, []);
 
-  /**
-   * Theme
-   */
-  const storedOrDefaultTheme = setupStoredOrDefaultTheme();
-  const [theme, changeTheme] = useState(storedOrDefaultTheme);
-  const toggleThemeAndChangeState = toggleTheme(changeTheme);
-  useEffect(() => toggleThemeAndChangeState(storedOrDefaultTheme), []);
+  // ── Theme ──
+  const [theme, setTheme] = useState(getInitialTheme);
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => {
+      const next = prev === "dark" ? "light" : "dark";
+      applyTheme(next);
+      return next;
+    });
+  }, []);
 
-  /**
-   * Settings
-   */
-  const [settingsOpen, setLeftDrawerOpen] = useState(false);
-  const toggleSettings = () => {
-    setLeftDrawerOpen((prevState) => !prevState);
-  };
+  // ── Workspace ref (for layout operations from header) ──
+  const workspaceRef = useRef(null);
 
-  let Loader = props.loader || DefaultLoader;
+  // ── Loader ──
+  const doHideLoader = hideLoader || hideDefaultLoader;
+  const onWorkspaceReady = useCallback(() => doHideLoader(), [doHideLoader]);
 
-  /**
-   * Return nodes
-   */
+  // ── Settings ──
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const toggleSettings = useCallback(
+    () => setSettingsOpen((prev) => !prev),
+    [],
+  );
+
+  const Loader = props.loader || DefaultLoader;
+
   return (
     <div id="main" className="container">
       <div id="loader">
@@ -87,19 +64,15 @@ export default function App(props) {
       <Header
         headerLogo={headerLogo}
         openapi={openapi}
-        layouts={layouts}
-        changeLayouts={changeLayouts}
         theme={theme}
-        toggleTheme={toggleThemeAndChangeState}
+        toggleTheme={toggleTheme}
         toggleSettings={toggleSettings}
+        workspaceRef={workspaceRef}
       />
       <Workspace
-        openapi={openapi}
-        layouts={layouts}
-        changeLayouts={changeLayouts}
+        ref={workspaceRef}
         processTables={processTables}
-        theme={theme}
-        hideLoader={hideLoader || hideDefaultLoader}
+        onReady={onWorkspaceReady}
       />
       <Settings
         openapi={openapi}

@@ -49,8 +49,11 @@ Notes for editors:
   - [MountOAuth2Middleware](Modules#MountOAuth2Middleware)
   - [MountSimpleAuthMiddleware](Modules#MountSimpleAuthMiddleware)
 - Logging Modules
+  - [Logging](Modules#Logging)
+  - [Logfire](Modules#Logfire)
   - [PrintChannels](Modules#PrintChannels)
   - [LogChannels](Modules#LogChannels)
+  - [PublishLogfire](Modules#PublishLogfire)
   - [PublishSQLA](Modules#PublishSQLA)
   - [PublishDatadog](Modules#PublishDatadog)
   - [PublishOpsGenie](Modules#PublishOpsGenie)

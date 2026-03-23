@@ -399,13 +399,13 @@ def test_pyarrow_conversion():
     datetime_key_set.add("timestamp")
 
     o = MyPyArrowStruct(timestamp=now, d=now_date)
-    table = create_pyarrow_table(None, [o], arrow_schema, date_key_set)
+    table = create_pyarrow_table(None, [o], None, arrow_schema, date_key_set)
     df = pl.from_arrow(table)
     assert df.head()["d"][0] == now_date
 
     #  Check nones are handled correctly
     o = MyPyArrowStruct(timestamp=None, d=None)
-    table = create_pyarrow_table(None, [o], arrow_schema, date_key_set)
+    table = create_pyarrow_table(None, [o], None, arrow_schema, date_key_set)
     df = pl.from_arrow(table)
     assert df.head()["d"][0] is None
     assert df.head()["timestamp"][0] is None
@@ -565,4 +565,4 @@ def test_exclude_unused_tables():
     gateway._build_web(ui=True, timeout=1, _in_test=True)
 
     # Assert that tables were pruned
-    assert psp_module._unused_tables == ["b", "d", "f"]
+    assert sorted(psp_module._unused_tables) == sorted(["b", "d", "f"])

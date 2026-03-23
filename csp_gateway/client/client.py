@@ -14,6 +14,7 @@ from asyncio import (
 from copy import deepcopy
 from enum import Enum
 from functools import lru_cache
+from importlib import import_module
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
@@ -305,9 +306,7 @@ class ResponseWrapper(BaseModel):
         # Import the class dynamically
         try:
             module_path, class_name = self.type_name.rsplit(".", 1)
-            import importlib
-
-            module = importlib.import_module(module_path)
+            module = import_module(module_path)
             struct_class = getattr(module, class_name)
         except (ValueError, ImportError, AttributeError) as e:
             raise ValueError(f"Cannot import type '{self.type_name}': {e}") from e

@@ -1,4 +1,4 @@
-__version__ = "2.4.4"
+__version__ = "2.6.0"
 
 try:
     from .client import *

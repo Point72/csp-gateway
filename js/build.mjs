@@ -4,6 +4,18 @@ import { BuildCss } from "@prospective.co/procss/target/cjs/procss.js";
 import cpy from "cpy";
 import fs from "fs";
 import { createRequire } from "node:module";
+import path from "node:path";
+
+const require = createRequire(import.meta.url);
+
+// Force all react imports to resolve to the same copy to avoid
+// duplicate-React errors when dependencies (e.g. @perspective-dev/react)
+// list a different React version.
+const REACT_ALIAS = {
+  react: path.dirname(require.resolve("react/package.json")),
+  "react-dom": path.dirname(require.resolve("react-dom/package.json")),
+  "react/jsx-runtime": require.resolve("react/jsx-runtime"),
+};
 
 const BUILD = [
   {
@@ -31,6 +43,7 @@ const BUILD = [
     bundle: true,
     plugins: [],
     format: "esm",
+    alias: REACT_ALIAS,
     loader: {
       ".css": "text",
       ".html": "text",
@@ -44,7 +57,6 @@ const BUILD = [
   },
 ];
 
-const require = createRequire(import.meta.url);
 function add(builder, path, path2) {
   builder.add(path, fs.readFileSync(require.resolve(path2 || path)).toString());
 }

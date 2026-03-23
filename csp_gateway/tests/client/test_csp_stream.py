@@ -1,5 +1,6 @@
 """Tests for the CSP streaming client module."""
 
+import inspect
 import multiprocessing
 import os
 import signal
@@ -64,7 +65,6 @@ def test_create_stream_csp_graph():
 
     # The wrapped function has the original parameters
     assert hasattr(stream_csp, "__wrapped__")
-    import inspect
 
     sig = inspect.signature(stream_csp.__wrapped__)
     params = list(sig.parameters.keys())
@@ -110,8 +110,6 @@ def test_gateway_client_has_stream_csp_method():
 def test_gateway_client_stream_csp_signature():
     """Test that stream_csp method has the expected signature."""
     client = GatewayClient(host="localhost", port=8000)
-
-    import inspect
 
     sig = inspect.signature(client.stream_csp)
     params = list(sig.parameters.keys())
@@ -412,15 +410,15 @@ def _run_gateway_for_csp_stream(port_str):
 
 def _wait_for_server(url: str, timeout: int = 30):
     """Wait for the server to be ready."""
-    import requests
+    import httpx
 
     start = time.time()
     while time.time() - start < timeout:
         try:
-            resp = requests.get(url, timeout=1)
+            resp = httpx.get(url, timeout=1, follow_redirects=True)
             resp.raise_for_status()
             return True
-        except (requests.HTTPError, requests.Timeout, requests.ConnectionError):
+        except (httpx.HTTPStatusError, httpx.TransportError):
             time.sleep(0.5)
     return False
 
@@ -483,10 +481,10 @@ def test_stream_csp_integration_subscribe_and_receive(csp_stream_free_port):
 
     finally:
         # Shutdown the gateway
-        import requests
+        import httpx
 
         try:
-            requests.post(shutdown_url, timeout=1)
+            httpx.post(shutdown_url, timeout=1, follow_redirects=True)
         except Exception:
             pass
         p.join(timeout=10)
@@ -559,10 +557,10 @@ def test_stream_csp_integration_dynamic_subscribe_unsubscribe(csp_stream_free_po
 
     finally:
         # Shutdown the gateway
-        import requests
+        import httpx
 
         try:
-            requests.post(shutdown_url, timeout=1)
+            httpx.post(shutdown_url, timeout=1, follow_redirects=True)
         except Exception:
             pass
         p.join(timeout=10)

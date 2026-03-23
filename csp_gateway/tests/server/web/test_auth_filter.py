@@ -1,10 +1,12 @@
 """Tests for AuthFilterMiddleware."""
 
+import json
+import socket
+import time
 from datetime import timedelta
 
 import csp
 import pytest
-from ccflow import PyObjectPath
 from csp import ts
 from fastapi.testclient import TestClient
 
@@ -19,6 +21,7 @@ from csp_gateway import (
 )
 from csp_gateway.server.middleware.api_key_external import MountExternalAPIKeyMiddleware
 from csp_gateway.server.middleware.auth_filter import AuthFilterMiddleware
+from csp_gateway.testing.mock_validators import mock_api_key_validator_by_user
 
 
 # Test struct with a "user" field for filtering
@@ -47,16 +50,6 @@ class UserDataModule(GatewayModule):
     def connect(self, channels: UserDataChannels):
         data = self.produce_data(csp.timer(interval=timedelta(seconds=0.1), value=True))
         channels.set_channel("user_data", data)
-
-
-def mock_validator(api_key: str, settings, module) -> dict:
-    """Mock validator that returns identity with user field."""
-    users = {
-        "alice_key": {"user": "alice", "role": "admin"},
-        "bob_key": {"user": "bob", "role": "viewer"},
-        "charlie_key": {"user": "charlie", "role": "viewer"},
-    }
-    return users.get(api_key)
 
 
 class TestAuthFilterMiddleware:
@@ -140,12 +133,11 @@ class TestAuthFilterMiddlewareIntegration:
     @pytest.fixture(scope="class")
     def filter_gateway(self, free_port):
         """Create a gateway with auth filtering enabled."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_auth_filter:mock_validator")
         gateway = Gateway(
             modules=[
                 UserDataModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountExternalAPIKeyMiddleware(external_validator=validator_path),
+                MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_by_user),
                 AuthFilterMiddleware(filter_fields=["user"]),
             ],
             channels=UserDataChannels(),
@@ -269,8 +261,6 @@ class TestWebSocketFiltering:
         # Test filtering
         message = '{"channel": "test", "data": [{"user": "alice", "data": "visible"}, {"user": "bob", "data": "hidden"}]}'
         filtered = await middleware.filter_websocket_data(message, ws)
-
-        import json
 
         parsed = json.loads(filtered)
         assert len(parsed["data"]) == 1
@@ -442,12 +432,11 @@ class TestIdentityCacheIntegration:
     @pytest.fixture(scope="class")
     def cached_gateway(self, free_port):
         """Create a gateway with identity cache enabled."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_auth_filter:mock_validator")
         gateway = Gateway(
             modules=[
                 UserDataModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountExternalAPIKeyMiddleware(external_validator=validator_path),
+                MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_by_user),
                 AuthFilterMiddleware(
                     filter_fields=["user"],
                     identity_cache_channels=ChannelSelection(include=["user_data"]),
@@ -475,8 +464,6 @@ class TestIdentityCacheIntegration:
 
     def test_cached_last_returns_user_data(self, cached_client: TestClient):
         """Test that /last returns only data for the authenticated user."""
-        import time
-
         # Wait for some data to be generated
         time.sleep(0.5)
 
@@ -567,20 +554,17 @@ class TestSendValidationIntegration:
 
     @pytest.fixture(scope="class")
     def free_port(self):
-        import socket
-
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
             return s.getsockname()[1]
 
     @pytest.fixture(scope="class")
     def send_validated_gateway(self, free_port):
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_auth_filter:mock_validator")
         gateway = Gateway(
             modules=[
                 UserDataModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountExternalAPIKeyMiddleware(external_validator=validator_path),
+                MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_by_user),
                 AuthFilterMiddleware(
                     filter_fields=["user"],
                     send_validation_channels=ChannelSelection(include=["user_data"]),
@@ -678,20 +662,17 @@ class TestNextFilteringIntegration:
 
     @pytest.fixture(scope="class")
     def free_port(self):
-        import socket
-
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("", 0))
             return s.getsockname()[1]
 
     @pytest.fixture(scope="class")
     def next_filtered_gateway(self, free_port):
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_auth_filter:mock_validator")
         gateway = Gateway(
             modules=[
                 UserDataModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountExternalAPIKeyMiddleware(external_validator=validator_path),
+                MountExternalAPIKeyMiddleware(external_validator=mock_api_key_validator_by_user),
                 AuthFilterMiddleware(
                     filter_fields=["user"],
                     next_filter_channels=ChannelSelection(include=["user_data"]),

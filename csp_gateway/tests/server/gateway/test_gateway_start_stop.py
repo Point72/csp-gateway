@@ -7,8 +7,8 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import csp.impl.error_handling
+import httpx
 import pytest
-import requests
 from fastapi.testclient import TestClient
 
 from csp_gateway import Gateway, GatewaySettings, MountControls, MountRestRoutes
@@ -179,10 +179,10 @@ def test_signal_with_shutdown(signal_val, free_port):
             assert p.exitcode == 0
         try:
             time.sleep(REQUEST_RETRY_TIMEOUT)
-            resp = requests.get(url, timeout=1)
+            resp = httpx.get(url, timeout=1, follow_redirects=True)
             resp.raise_for_status()
             break
-        except (requests.HTTPError, requests.Timeout, requests.ConnectionError):
+        except (httpx.HTTPStatusError, httpx.TransportError):
             pass
 
     print("Server is up")
@@ -225,16 +225,16 @@ def test_shutdown_with_big_red_button(free_port):
             assert p.exitcode == 0
         try:
             time.sleep(REQUEST_RETRY_TIMEOUT)
-            resp = requests.get(state_url, timeout=1)
+            resp = httpx.get(state_url, timeout=1, follow_redirects=True)
             resp.raise_for_status()
             break
-        except (requests.HTTPError, requests.Timeout, requests.ConnectionError):
+        except (httpx.HTTPStatusError, httpx.TransportError):
             print("Server not up yet")
             continue
     print("Server is up")
     # Send signal to invoke shutdown
     print("Sending Shutdown Request")
-    resp = requests.post(shutdown_url, timeout=1)
+    resp = httpx.post(shutdown_url, timeout=1, follow_redirects=True)
     # Wait for gateway to react to signal
     p.join(AFTER_SHUTDOWN_WAIT_TIME)
     # Check if gateway shutdown with proper exit status

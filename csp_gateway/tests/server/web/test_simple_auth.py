@@ -4,7 +4,6 @@ import base64
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ccflow import PyObjectPath
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -23,25 +22,7 @@ from csp_gateway.server.middleware.simple import (
     _validate_host_unix,
     _validate_host_windows,
 )
-
-
-def mock_validator_valid(username: str, password: str, settings, module) -> dict:
-    """A mock validator that accepts specific credentials."""
-    valid_users = {
-        ("alice", "alicepass"): {"user": "alice", "role": "admin"},
-        ("bob", "bobpass"): {"user": "bob", "role": "viewer"},
-    }
-    return valid_users.get((username, password))
-
-
-def mock_validator_invalid(username: str, password: str, settings, module) -> dict:
-    """A mock validator that always returns None (invalid credentials)."""
-    return None
-
-
-def mock_validator_raises(username: str, password: str, settings, module) -> dict:
-    """A mock validator that raises an exception."""
-    raise ValueError("External validation service error")
+from csp_gateway.testing.mock_validators import mock_simple_auth_validator_valid
 
 
 class TestMountSimpleAuthMiddlewareValidation:
@@ -54,8 +35,7 @@ class TestMountSimpleAuthMiddlewareValidation:
 
     def test_external_validator_alone_valid(self):
         """Test that external_validator alone is valid."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_simple_auth:mock_validator_valid")
-        middleware = MountSimpleAuthMiddleware(external_validator=validator_path)
+        middleware = MountSimpleAuthMiddleware(external_validator=mock_simple_auth_validator_valid)
         assert middleware.external_validator is not None
         assert middleware.use_host_auth is False
 
@@ -67,9 +47,8 @@ class TestMountSimpleAuthMiddlewareValidation:
 
     def test_both_auth_methods_valid(self):
         """Test that both auth methods can be configured."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_simple_auth:mock_validator_valid")
         middleware = MountSimpleAuthMiddleware(
-            external_validator=validator_path,
+            external_validator=mock_simple_auth_validator_valid,
             use_host_auth=True,
         )
         assert middleware.external_validator is not None
@@ -82,12 +61,11 @@ class TestSimpleAuthWithExternalValidator:
     @pytest.fixture(scope="class")
     def simple_auth_gateway(self, free_port):
         """Create a gateway with simple auth external validation."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_simple_auth:mock_validator_valid")
         gateway = Gateway(
             modules=[
                 ExampleModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountSimpleAuthMiddleware(external_validator=validator_path),
+                MountSimpleAuthMiddleware(external_validator=mock_simple_auth_validator_valid),
             ],
             channels=ExampleGatewayChannels(),
             settings=GatewaySettings(PORT=free_port),
@@ -155,12 +133,11 @@ class TestSimpleAuthFormLogin:
     @pytest.fixture(scope="class")
     def form_login_gateway(self, free_port):
         """Create a gateway for form login testing."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_simple_auth:mock_validator_valid")
         gateway = Gateway(
             modules=[
                 ExampleModule(),
                 MountRestRoutes(force_mount_all=True),
-                MountSimpleAuthMiddleware(external_validator=validator_path),
+                MountSimpleAuthMiddleware(external_validator=mock_simple_auth_validator_valid),
             ],
             channels=ExampleGatewayChannels(),
             settings=GatewaySettings(PORT=free_port),
@@ -312,8 +289,7 @@ class TestIdentityAwareMiddlewareMixin:
     @pytest.fixture
     def middleware_with_identity(self):
         """Create middleware with pre-populated identity store."""
-        validator_path = PyObjectPath("csp_gateway.tests.server.web.test_simple_auth:mock_validator_valid")
-        middleware = MountSimpleAuthMiddleware(external_validator=validator_path)
+        middleware = MountSimpleAuthMiddleware(external_validator=mock_simple_auth_validator_valid)
         # Pre-populate identity store
         middleware._identity_store["test-session-uuid"] = {"user": "alice", "role": "admin"}
         return middleware

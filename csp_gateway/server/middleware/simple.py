@@ -1,5 +1,6 @@
 """Simple Authentication Middleware."""
 
+import base64
 import logging
 import platform
 from datetime import timedelta
@@ -294,8 +295,6 @@ class MountSimpleAuthMiddleware(AuthenticationMiddleware, IdentityAwareMiddlewar
         Returns:
             Identity dict if valid credentials found, None otherwise.
         """
-        import base64
-
         cookies = cookies or {}
         headers = headers or {}
 
