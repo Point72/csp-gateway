@@ -50,7 +50,7 @@ class MountOutputsFolder(GatewayModule):
                     query_suffix = f"?{request.url.query}" if request.url.query else ""
                     files_paths = sorted([f"{base_path}/{f}{query_suffix}".replace("outputs//", "outputs/") for f in files])
                     return app.templates.TemplateResponse(
-                        "files.html.j2", {"request": request, "files": files_paths, "pid": os.getpid()}, media_type="text/html"
+                        request, "files.html.j2", context={"files": files_paths, "pid": os.getpid()}, media_type="text/html"
                     )
 
                 def iterfile():  #

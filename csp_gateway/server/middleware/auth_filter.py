@@ -425,7 +425,7 @@ class AuthFilterMiddleware(GatewayModule):
                     return Response(
                         content=json.dumps(filtered),
                         status_code=200,
-                        headers=dict(response.headers),
+                        headers=dict(response.headers.items()),
                         media_type="application/json",
                     )
 
@@ -437,7 +437,7 @@ class AuthFilterMiddleware(GatewayModule):
                 return Response(
                     content=body,
                     status_code=response.status_code,
-                    headers=dict(response.headers),
+                    headers=dict(response.headers.items()),
                 )
 
     def _find_auth_middlewares(self, app: GatewayWebApp) -> List[IdentityAwareMiddlewareMixin]:
@@ -636,7 +636,7 @@ class AuthFilterMiddleware(GatewayModule):
                         return Response(
                             content=filtered_body,
                             status_code=response.status_code,
-                            headers=dict(response.headers),
+                            headers=dict(response.headers.items()),
                             media_type="application/json",
                         )
                     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -644,7 +644,7 @@ class AuthFilterMiddleware(GatewayModule):
                         return Response(
                             content=body,
                             status_code=response.status_code,
-                            headers=dict(response.headers),
+                            headers=dict(response.headers.items()),
                         )
 
                 return response

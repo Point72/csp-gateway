@@ -53,6 +53,7 @@ class MountChannelsGraph(GatewayModule):
             """
             channels_graph = request.app.gateway.channels.graph()
             return app.templates.TemplateResponse(
+                request,
                 "channels_graph.html.j2",
-                {"request": request, "channels_graph": dumps(channels_graph)},
+                context={"channels_graph": dumps(channels_graph)},
             )

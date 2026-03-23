@@ -96,13 +96,14 @@ class MountAPIKeyMiddleware(AuthenticationMiddleware):
                 if token != "":
                     return RedirectResponse(url=f"{app.settings.API_STR}/auth/login?token={token}")
             return app.templates.TemplateResponse(
+                request,
                 "login.html.j2",
-                {"request": request, "api_key_name": self.api_key_name},
+                context={"api_key_name": self.api_key_name},
             )
 
         @public_router.get("/logout", response_class=HTMLResponse, include_in_schema=False)
         async def get_logout_page(request: Request = None):
-            return app.templates.TemplateResponse("logout.html.j2", {"request": request})
+            return app.templates.TemplateResponse(request, "logout.html.j2")
 
         # add auth to all other routes
         app.add_middleware(Depends(self.get_check_dependency()))
@@ -119,9 +120,9 @@ class MountAPIKeyMiddleware(AuthenticationMiddleware):
                     status_code=403,
                 )
             return app.templates.TemplateResponse(
+                request,
                 "login.html.j2",
-                {
-                    "request": request,
+                context={
                     "api_key_name": self.api_key_name,
                     "status_code": 403,
                     "detail": self.unauthorized_status_message,
