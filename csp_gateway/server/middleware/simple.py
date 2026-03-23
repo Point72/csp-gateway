@@ -367,9 +367,9 @@ class MountSimpleAuthMiddleware(AuthenticationMiddleware, IdentityAwareMiddlewar
             async def get_login_page(request: Request, error: str = ""):
                 """Render login form."""
                 return app.templates.TemplateResponse(
+                    request,
                     "login.html.j2",
-                    {
-                        "request": request,
+                    context={
                         "api_key_name": "credentials",
                         "error": error,
                     },
@@ -436,7 +436,7 @@ class MountSimpleAuthMiddleware(AuthenticationMiddleware, IdentityAwareMiddlewar
 
         @public_router.get("/logout", response_class=HTMLResponse, include_in_schema=False)
         async def get_logout_page(request: Request):
-            return app.templates.TemplateResponse("logout.html.j2", {"request": request})
+            return app.templates.TemplateResponse(request, "logout.html.j2")
 
         # Add auth middleware to all routes
         app.add_middleware(Depends(check))

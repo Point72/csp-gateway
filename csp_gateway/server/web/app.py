@@ -86,7 +86,6 @@ class GatewayWebApp(object):
         )
         self.templates = Jinja2Templates(
             directory=os.path.join(os.path.dirname(__file__), "templates"),
-            autoescape=True,
         )
 
         # Attach gateway
