@@ -146,8 +146,6 @@ def test_handler_logs_error_when_directory_creation_fails(tmp_path, caplog):
 
 
 def test_handler_logs_error_when_target_does_not_exist(tmp_path, caplog):
-    from pathlib import Path
-
     target = tmp_path / "nonexistent.log"
     symlink_path = tmp_path / "link.log"
 
