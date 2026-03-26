@@ -59,6 +59,7 @@ class BaseGatewayTestEvent(BaseModel):
     # Traceback info to help with debugging
     _lineno: int = None
     _filename: str = None
+    track_stack: bool = True
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -66,12 +67,13 @@ class BaseGatewayTestEvent(BaseModel):
         super().__init__(*args, **kwargs)
         # Try to go two levels up in the stack, from where the helper functions on
         # GatewayTestHarness are themselves called.
-        try:
-            caller = getframeinfo(stack()[2][0])
-            self._lineno = caller.lineno
-            self._filename = caller.filename
-        except Exception:
-            pass
+        if self.track_stack:
+            try:
+                caller = getframeinfo(stack()[2][0])
+                self._lineno = caller.lineno
+                self._filename = caller.filename
+            except Exception:
+                pass
 
     def apply(self, now, values, tick_counts, ticked_values, *args, **kwargs) -> Optional[bool]:
         """Function to run inside the csp graph during runtime.
@@ -450,7 +452,7 @@ class GatewayTestHarness(GatewayModule):
         self.print(msg)
 
     def reset(self):
-        self.events.append(GatewayResetEvent())
+        self.events.append(GatewayResetEvent(track_stack=not self.is_performance_test))
 
     def delay(self, delay: Union[timedelta, datetime]):
         """Move forward in time.
@@ -458,76 +460,84 @@ class GatewayTestHarness(GatewayModule):
         Args:
             delay: Time to move forward by or the time to move forward to.
         """
-        self.events.append(GatewayDelayEvent(delay=delay))
+        self.events.append(GatewayDelayEvent(delay=delay, track_stack=not self.is_performance_test))
 
     def print(self, msg):
-        self.events.append(GatewayPrintEvent(msg=msg))
+        self.events.append(GatewayPrintEvent(msg=msg, track_stack=not self.is_performance_test))
 
     def print_ticked(self):
-        self.events.append(GatewayPrintTickedEvent())
+        self.events.append(GatewayPrintTickedEvent(track_stack=not self.is_performance_test))
 
     def print_tick_counts(self):
-        self.events.append(GatewayPrintTickCountsEvent())
+        self.events.append(GatewayPrintTickCountsEvent(track_stack=not self.is_performance_test))
 
     def send(self, channel, value):
-        self.events.append(GatewayDataEvent(channel=channel, value=value))
+        self.events.append(GatewayDataEvent(channel=channel, value=value, track_stack=not self.is_performance_test))
 
     def assert_tick_counts(self, tick_counts):
-        self.events.append(GatewayAssertTickCountsEqualEvent(tick_counts=tick_counts))
+        self.events.append(GatewayAssertTickCountsEqualEvent(tick_counts=tick_counts, track_stack=not self.is_performance_test))
 
     def assert_ticked(self, channel, count=1):
-        self.events.append(GatewayAssertTickCountEvent(channel=channel, count=count))
+        self.events.append(GatewayAssertTickCountEvent(channel=channel, count=count, track_stack=not self.is_performance_test))
 
     def assert_equal(self, channel, value):
-        self.events.append(GatewayAssertEqualEvent(channel=channel, value=value))
+        self.events.append(GatewayAssertEqualEvent(channel=channel, value=value, track_stack=not self.is_performance_test))
 
     def assert_almost_equal(self, channel, value):
-        self.events.append(GatewayAssertEqualEvent(channel=channel, value=value, almost=True))
+        self.events.append(GatewayAssertEqualEvent(channel=channel, value=value, almost=True, track_stack=not self.is_performance_test))
 
     def assert_type(self, channel, value):
-        self.events.append(GatewayAssertTypeEvent(channel=channel, value=value))
+        self.events.append(GatewayAssertTypeEvent(channel=channel, value=value, track_stack=not self.is_performance_test))
 
     def assert_attr_equal(self, channel, attr, value):
-        self.events.append(GatewayAssertAttrEqualEvent(channel=channel, attr=attr, value=value))
+        self.events.append(GatewayAssertAttrEqualEvent(channel=channel, attr=attr, value=value, track_stack=not self.is_performance_test))
 
     def assert_attr_almost_equal(self, channel, attr, value):
-        self.events.append(GatewayAssertAttrEqualEvent(channel=channel, attr=attr, value=value, almost=True))
+        self.events.append(
+            GatewayAssertAttrEqualEvent(channel=channel, attr=attr, value=value, almost=True, track_stack=not self.is_performance_test)
+        )
 
     def assert_attrs_equal(self, channel, values):
-        self.events.append(GatewayAssertAttrsEqualEvent(channel=channel, values=values))
+        self.events.append(GatewayAssertAttrsEqualEvent(channel=channel, values=values, track_stack=not self.is_performance_test))
 
     def assert_attrs_almost_equal(self, channel, values):
-        self.events.append(GatewayAssertAttrsEqualEvent(channel=channel, values=values, almost=True))
+        self.events.append(GatewayAssertAttrsEqualEvent(channel=channel, values=values, almost=True, track_stack=not self.is_performance_test))
 
     def assert_attr_not_equal(self, channel, attr, value):
-        self.events.append(GatewayAssertAttrNotEqualEvent(channel=channel, attr=attr, value=value))
+        self.events.append(GatewayAssertAttrNotEqualEvent(channel=channel, attr=attr, value=value, track_stack=not self.is_performance_test))
 
     def assert_attr_unset(self, channel, attr, unset=True):
-        self.events.append(GatewayAssertAttrUnsetEvent(channel=channel, attr=attr, unset=unset))
+        self.events.append(GatewayAssertAttrUnsetEvent(channel=channel, attr=attr, unset=unset, track_stack=not self.is_performance_test))
 
     def assert_idx_type(self, channel, idx, value):
-        self.events.append(GatewayAssertIdxTypeEvent(channel=channel, idx=idx, value=value))
+        self.events.append(GatewayAssertIdxTypeEvent(channel=channel, idx=idx, value=value, track_stack=not self.is_performance_test))
 
     def assert_idx_attr_equal(self, channel, idx, attr, value):
-        self.events.append(GatewayAssertIdxAttrEqualEvent(channel=channel, idx=idx, attr=attr, value=value))
+        self.events.append(GatewayAssertIdxAttrEqualEvent(channel=channel, idx=idx, attr=attr, value=value, track_stack=not self.is_performance_test))
 
     def assert_idx_attr_almost_equal(self, channel, idx, attr, value):
-        self.events.append(GatewayAssertIdxAttrEqualEvent(channel=channel, idx=idx, attr=attr, value=value, almost=True))
+        self.events.append(
+            GatewayAssertIdxAttrEqualEvent(channel=channel, idx=idx, attr=attr, value=value, almost=True, track_stack=not self.is_performance_test)
+        )
 
     def assert_idx_attrs_equal(self, channel, idx, values):
-        self.events.append(GatewayAssertIdxAttrsEqualEvent(channel=channel, idx=idx, values=values))
+        self.events.append(GatewayAssertIdxAttrsEqualEvent(channel=channel, idx=idx, values=values, track_stack=not self.is_performance_test))
 
     def assert_idx_attrs_almost_equal(self, channel, idx, values):
-        self.events.append(GatewayAssertIdxAttrsEqualEvent(channel=channel, idx=idx, values=values, almost=True))
+        self.events.append(
+            GatewayAssertIdxAttrsEqualEvent(channel=channel, idx=idx, values=values, almost=True, track_stack=not self.is_performance_test)
+        )
 
     def assert_idx_attr_not_equal(self, channel, idx, attr, value):
-        self.events.append(GatewayAssertIdxAttrNotEqualEvent(channel=channel, idx=idx, attr=attr, value=value))
+        self.events.append(
+            GatewayAssertIdxAttrNotEqualEvent(channel=channel, idx=idx, attr=attr, value=value, track_stack=not self.is_performance_test)
+        )
 
     def assert_idx_attr_unset(self, channel, idx, attr, unset=True):
-        self.events.append(GatewayAssertIdxAttrUnsetEvent(channel=channel, idx=idx, attr=attr, unset=unset))
+        self.events.append(GatewayAssertIdxAttrUnsetEvent(channel=channel, idx=idx, attr=attr, unset=unset, track_stack=not self.is_performance_test))
 
     def assert_len(self, channel, value):
-        self.events.append(GatewayAssertLenEvent(channel=channel, value=value))
+        self.events.append(GatewayAssertLenEvent(channel=channel, value=value, track_stack=not self.is_performance_test))
 
     def assert_ticked_values(self, channel, assert_func: Callable[[Sequence[Tuple[datetime, Any]]], None]):
         """Apply an assert_func to the ticked values on a particular channel.
@@ -537,7 +547,7 @@ class GatewayTestHarness(GatewayModule):
             of tuples where the first item is the engine time of the tick and the second item is the ticked value.
             This function should raise an AssertionError if the ticked values is not what is expected.
         """
-        self.events.append(GatewayAssertTickedEvents(channel=channel, assert_func=assert_func))
+        self.events.append(GatewayAssertTickedEvents(channel=channel, assert_func=assert_func, track_stack=not self.is_performance_test))
 
     def assert_value(self, channel, assert_func: Callable[[Any], None]):
         """Apply an assert_func to the current value on a particular channel.
@@ -556,4 +566,4 @@ class GatewayTestHarness(GatewayModule):
     def eval(self, f: Callable[[], None]):
         """Evaluate a function whilst the circuit is running. Useful for things like starting and stopping a profiler
         whilst the circuit is running."""
-        self.events.append(GatewayEvaluateCallableEvent(f=f))
+        self.events.append(GatewayEvaluateCallableEvent(f=f, track_stack=not self.is_performance_test))
