@@ -9,6 +9,7 @@
   "main": "./lib/index.js",
   "scripts": {
     "build": "node build.mjs",
+<<<<<<< before updating
     "clean": "rimraf dist",
     "lint": "prettier --check \"src/**/*.js\" \"src/**/*.jsx\" \"src/style/*.css\" \"src/html/*.html\" \"*.mjs\" \"*.json\"",
     "fix": "prettier --write  \"src/**/*.js\" \"src/**/*.jsx\" \"src/style/*.css\" \"src/html/*.html\" \"*.mjs\" \"*.json\"",
@@ -29,13 +30,38 @@
     "react-dom": "^19.2.4",
     "react-icons": "^5.6.0",
     "react-modern-drawer": "^1.4.0"
+=======
+    "clean": "rm -rf dist playwright-report ../csp_gateway/extension",
+    "dev": "npm-run-all -p start watch",
+    "lint": "prettier --check \"src/**/*.{js,ts,jsx,tsx,css}\" \"tests/**/*.{js,ts,jsx,tsx}\" \"*.mjs\" \"*.json\"",
+    "fix": "prettier  --write \"src/**/*.{js,ts,jsx,tsx,css}\" \"tests/**/*.{js,ts,jsx,tsx}\" \"*.mjs\" \"*.json\"",
+    "preinstall": "npx only-allow pnpm",
+    "prepack": "npm run build",
+    "start": "http-server -p 3000 -o examples/",
+    "start:tests": "http-server -p 3000 ",
+    "test": "TZ=UTC playwright test",
+    "watch": "nodemon --watch src -e ts,css,html --exec \"pnpm build:debug\""
+>>>>>>> after updating
   },
   "devDependencies": {
+<<<<<<< before updating
     "@finos/perspective-esbuild-plugin": "3.2.1",
     "@prospective.co/procss": "^0.1.18",
     "cpy": "^13.2.1",
     "esbuild": "^0.27.3",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.8.1"
+=======
+    "@finos/perspective-esbuild-plugin": "^3.2.1",
+    "@playwright/test": "^1.59.0",
+    "cpy": "^13.2.1",
+    "esbuild": "^0.27.2",
+    "lightningcss": "^1.29.3",
+    "http-server": "^14.1.1",
+    "nodemon": "^3.1.10",
+    "npm-run-all": "^4.1.5",
+    "prettier": "^3.8.1",
+    "typescript": "^6.0.2"
+>>>>>>> after updating
   }
 }

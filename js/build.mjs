@@ -1,10 +1,17 @@
 import { NodeModulesExternal } from "@finos/perspective-esbuild-plugin/external.js";
 import { build } from "@finos/perspective-esbuild-plugin/build.js";
+<<<<<<< before updating
 import { BuildCss } from "@prospective.co/procss/target/cjs/procss.js";
 import cpy from "cpy";
 import fs from "fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+=======
+import { transform } from "lightningcss";
+import { getarg } from "./tools/getarg.mjs";
+import fs from "fs";
+import cpy from "cpy";
+>>>>>>> after updating
 
 const require = createRequire(import.meta.url);
 
@@ -57,8 +64,36 @@ const BUILD = [
   },
 ];
 
+<<<<<<< before updating
 function add(builder, path, path2) {
   builder.add(path, fs.readFileSync(require.resolve(path2 || path)).toString());
+=======
+async function compile_css() {
+  const process_path = (path) => {
+    const outpath = path.replace("src/css", "dist/css");
+    fs.mkdirSync(outpath, { recursive: true });
+
+    fs.readdirSync(path, { withFileTypes: true }).forEach((entry) => {
+      const input = `${path}/${entry.name}`;
+      const output = `${outpath}/${entry.name}`;
+
+      if (entry.isDirectory()) {
+        process_path(input);
+      } else if (entry.isFile() && entry.name.endsWith(".css")) {
+        const source = fs.readFileSync(input);
+        const { code } = transform({
+          filename: entry.name,
+          code: source,
+          minify: !DEBUG,
+          sourceMap: false,
+        });
+        fs.writeFileSync(output, code);
+      }
+    });
+  };
+
+  process_path("src/css");
+>>>>>>> after updating
 }
 
 async function compile_css() {
