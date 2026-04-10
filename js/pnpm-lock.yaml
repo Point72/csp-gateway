@@ -1063,8 +1063,8 @@ packages:
     resolution: {integrity: sha512-Kx8hMakjX03tiGTLAIdJ+lL0htKnXjEZN6hk/tozf/WOuYGdZBJrZ+rCJRbVCugsjB3jMLn9746NsQIf5VjBMw==}
     engines: {node: '>=4'}
 
-  lodash@4.17.23:
-    resolution: {integrity: sha512-LgVTMpQtIopCi79SJeDiP0TfWi5CNEc/L/aRdTh3yIvmZXTnheWpKjSZhnvMl8iXbC1tFg9gdHHDMLoV7CnG+w==}
+  lodash@4.18.1:
+    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
 
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
@@ -1924,7 +1924,7 @@ snapshots:
       '@lumino/virtualdom': 2.0.4
       '@lumino/widgets': 2.7.5
       '@perspective-dev/client': 4.3.0
-      lodash: 4.17.23
+      lodash: 4.18.1
     transitivePeerDependencies:
       - bufferutil
       - debug
@@ -2765,7 +2765,7 @@ snapshots:
       pify: 3.0.0
       strip-bom: 3.0.0
 
-  lodash@4.17.23: {}
+  lodash@4.18.1: {}
 
   math-intrinsics@1.1.0: {}
 
