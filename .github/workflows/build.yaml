@@ -123,8 +123,30 @@ jobs:
       matrix:
         wheel: ["", "client"]
 
+<<<<<<< before updating
     steps:
     - uses: actions/checkout@v6
+=======
+    - name: Test wheel install
+      run: |
+        python -m venv /tmp/test-wheel
+        /tmp/test-wheel/bin/pip install dist/*.whl
+        /tmp/test-wheel/bin/python -c "import csp_gateway"
+      if: matrix.os == 'ubuntu-latest'
+
+    - name: Test sdist install
+      run: |
+        python -m venv /tmp/test-sdist
+        /tmp/test-sdist/bin/pip install dist/*.tar.gz
+        /tmp/test-sdist/bin/python -c "import csp_gateway"
+      if: matrix.os == 'ubuntu-latest'
+
+    - uses: actions/upload-artifact@v7
+      with:
+        name: dist-${{matrix.os}}
+        path: dist
+      if: matrix.os == 'ubuntu-latest'
+>>>>>>> after updating
 
     - name: Set up Python
       uses: actions-ext/python/setup@main

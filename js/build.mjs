@@ -1,3 +1,4 @@
+<<<<<<< before updating
 import { NodeModulesExternal } from "@finos/perspective-esbuild-plugin/external.js";
 import { build } from "@finos/perspective-esbuild-plugin/build.js";
 import { BuildCss } from "@prospective.co/procss/target/cjs/procss.js";
@@ -16,9 +17,20 @@ const REACT_ALIAS = {
   "react-dom": path.dirname(require.resolve("react-dom/package.json")),
   "react/jsx-runtime": require.resolve("react/jsx-runtime"),
 };
+=======
+import { bundle } from "./tools/bundle.mjs";
+import { bundle_css } from "./tools/css.mjs";
+import { node_modules_external } from "./tools/externals.mjs";
+import { getarg } from "./tools/getarg.mjs";
 
-const BUILD = [
+import { transform } from "lightningcss";
+import fs from "fs";
+import cpy from "cpy";
+>>>>>>> after updating
+
+const BUNDLES = [
   {
+<<<<<<< before updating
     define: {
       global: "window",
     },
@@ -151,3 +163,36 @@ async function build_all() {
 }
 
 build_all();
+=======
+    entryPoints: ["src/ts/index.ts"],
+    plugins: [node_modules_external()],
+    outfile: "dist/esm/index.js",
+  },
+  {
+    entryPoints: ["src/ts/index.ts"],
+    outfile: "dist/cdn/index.js",
+  },
+];
+
+async function build() {
+  // Bundle css
+  await bundle_css();
+
+  // Copy HTML
+  fs.mkdirSync("dist/html", { recursive: true });
+  cpy("src/html/*", "dist/html");
+  cpy("src/html/*", "dist/");
+
+  // Copy images
+  fs.mkdirSync("dist/img", { recursive: true });
+  cpy("src/img/*", "dist/img");
+
+  await Promise.all(BUNDLES.map(bundle)).catch(() => process.exit(1));
+
+  // Copy from dist to python
+  fs.mkdirSync("../csp_gateway/extension", { recursive: true });
+  cpy("dist/**/*", "../csp_gateway/extension");
+}
+
+build();
+>>>>>>> after updating
