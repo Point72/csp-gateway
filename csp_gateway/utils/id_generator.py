@@ -11,7 +11,7 @@ def _get_global_counter() -> Counter:
     global _global_counter
     if _global_counter is None:
         nowish = datetime.now(timezone.utc)
-        base = datetime(nowish.year, nowish.month, nowish.day)
+        base = datetime(nowish.year, nowish.month, nowish.day, tzinfo=timezone.utc)
         _global_counter = Counter(int(base.timestamp()) * 1_000_000_000)
     return _global_counter
 
