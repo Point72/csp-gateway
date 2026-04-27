@@ -193,7 +193,11 @@ packages = [
 exclude = [
     "docs",
     "examples",
-    "js",
+    # Leading slash anchors to build root — without it, `js` matches any
+    # directory named `js` at any depth, including `csp_gateway/server/web/
+    # templates/js/` where `common.js` lives and is referenced from
+    # `login.html.j2` / `logout.html.j2`.
+    "/js",
 ]
 
 [tool.hatch.build.hooks.hatch-js]
