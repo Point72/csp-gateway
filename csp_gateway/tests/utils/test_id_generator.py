@@ -20,9 +20,15 @@ def test_base_uses_utc_midnight():
     _reset_global_counter()
     try:
         # Simulate a time where UTC hour < local-timezone UTC offset would
-        # have caused underflow with the old naive-datetime code.
-        # 2026-04-15 01:00 UTC  (9 PM EDT the previous evening)
-        fake_now = datetime(2026, 4, 15, 1, 0, 0, tzinfo=timezone.utc)
+        # have caused underflow with the old naive-datetime code
+        # (01:00 UTC = 9 PM EDT the previous evening).
+        #
+        # Derive from today's real UTC date rather than hardcoding one:
+        # Rust's `Utc::now()` can't be mocked from Python, so
+        # `counter.current() == real_now_ns - mocked_base_ns`. A hardcoded
+        # date makes that delta grow without bound as the real clock walks
+        # forward, blowing past the upper-bound assertion below.
+        fake_now = datetime.now(timezone.utc).replace(hour=1, minute=0, second=0, microsecond=0)
 
         with patch.object(_id_gen_mod, "datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
