@@ -100,7 +100,7 @@ server = [
     "psutil",
     "pyarrow",
     "pydantic>=2",
-    "uvicorn>=0.28.1,<0.43",
+    "uvicorn>=0.28.1,<0.47",
     "uvloop",
     "websockets",
 ]
