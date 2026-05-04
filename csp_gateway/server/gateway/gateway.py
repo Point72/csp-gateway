@@ -2,6 +2,7 @@ import logging
 import multiprocessing.pool
 import os
 import signal
+import warnings
 from datetime import datetime, timedelta
 from socket import gethostname
 from time import sleep
@@ -238,6 +239,11 @@ class Gateway(ChannelsFactory[GatewayChannels]):
         self._in_test = _in_test
         self._module_shutdown_timeout = module_shutdown_timeout
 
+        # Back-compat: in csp-gateway <2.5 auth was configured via
+        # `Settings.AUTHENTICATE` / `Settings.API_KEY`. Apply those onto the
+        # `MountAPIKeyMiddleware` instance (if present) with a deprecation warning.
+        self._apply_legacy_auth_settings()
+
         try:
             if show:
                 # Show graph and return without running
@@ -315,6 +321,63 @@ class Gateway(ChannelsFactory[GatewayChannels]):
             # If we're here, we hit some form of error,
             # so re-raise it back to the caller
             raise
+
+    def _apply_legacy_auth_settings(self) -> None:
+        """Bridge old-style `Settings.AUTHENTICATE` / `Settings.API_KEY` onto the middleware.
+
+        These used to live on `Settings`; they now live on `MountAPIKeyMiddleware`.
+        Old configs still parse but do nothing, so we read them off `Settings`
+        here and apply them with a `DeprecationWarning`. `AUTHENTICATE=False`
+        drops the middleware. `API_KEY` gets copied onto the middleware's
+        `api_key`. `AUTHENTICATE=True` with no middleware configured is an
+        invalid configuration because startup would otherwise continue without
+        enforcing the requested auth.
+
+        Rip out when we stop supporting the old config shape.
+        """
+        authenticate = getattr(self.settings, "AUTHENTICATE", None)
+        api_key = getattr(self.settings, "API_KEY", None)
+
+        if authenticate is None and api_key is None:
+            # Nothing to migrate — user is on the new layout (or simply didn't
+            # set these), so don't nag them.
+            return
+
+        # Local import to avoid tightening coupling at module load.
+        from csp_gateway.server.middleware.api_key import MountAPIKeyMiddleware
+
+        middleware = next(
+            (module for module in self.modules if isinstance(module, MountAPIKeyMiddleware)),
+            None,
+        )
+
+        if authenticate is False:
+            warnings.warn(
+                "`Settings.AUTHENTICATE=False` is deprecated. To disable auth, omit `MountAPIKeyMiddleware` from your `modules` list instead.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            if middleware is not None:
+                self.modules = [module for module in self.modules if module is not middleware]
+            # authenticate=False wins — don't also try to set api_key.
+            return
+
+        if api_key is not None:
+            warnings.warn(
+                "`Settings.API_KEY` is deprecated. Set `api_key` on your `MountAPIKeyMiddleware` instance directly.",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            if middleware is not None:
+                middleware.api_key = api_key
+
+        if authenticate is True and middleware is None:
+            # User explicitly opted-in via Settings but didn't add the middleware
+            # -- do not silently start without the auth they asked for.
+            raise ValueError(
+                "`Settings.AUTHENTICATE=True` requires a `MountAPIKeyMiddleware` in `modules`. "
+                "Add one to enforce auth, or omit `Settings.AUTHENTICATE` to use the 2.5+ middleware config shape."
+            )
 
     def _get_web_app_class(self) -> Any:
         # FIXME ugly

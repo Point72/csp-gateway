@@ -920,6 +920,64 @@ def test_harness_ordering(harness_first):
     csp.run(gateway.graph, starttime=datetime(2020, 1, 1), endtime=timedelta(1))
 
 
+class TestLegacyAuthCompat:
+    """Regression tests for the back-compat shim that forwards
+    pre-2.5 `Settings.AUTHENTICATE` / `Settings.API_KEY` onto the
+    `MountAPIKeyMiddleware` instance at `Gateway.start()`.
+
+    See `Gateway._apply_legacy_auth_settings`. Remove these tests once
+    the deprecated fields are removed from `Settings`.
+    """
+
+    @staticmethod
+    def _make(modules, **settings_kwargs):
+        from csp_gateway.server.settings import Settings
+
+        return Gateway(modules=list(modules), settings=Settings(**settings_kwargs))
+
+    def test_no_legacy_settings_is_quiet_no_op(self):
+        import warnings
+
+        from csp_gateway.server.middleware.api_key import MountAPIKeyMiddleware
+
+        mw = MountAPIKeyMiddleware(api_key="untouched")
+        g = self._make([mw])
+        with warnings.catch_warnings(record=True) as record:
+            warnings.simplefilter("always")
+            g._apply_legacy_auth_settings()
+        assert not [w for w in record if issubclass(w.category, DeprecationWarning)]
+        assert mw in g.modules
+        assert mw.api_key == "untouched"
+
+    def test_authenticate_false_strips_middleware(self):
+        from csp_gateway.server.middleware.api_key import MountAPIKeyMiddleware
+
+        mw = MountAPIKeyMiddleware(api_key="x")
+        g = self._make([mw], AUTHENTICATE=False)
+        with pytest.warns(DeprecationWarning):
+            g._apply_legacy_auth_settings()
+        assert mw not in g.modules
+
+    def test_api_key_forwarded_onto_middleware(self):
+        from csp_gateway.server.middleware.api_key import MountAPIKeyMiddleware
+
+        mw = MountAPIKeyMiddleware(api_key="old")
+        g = self._make([mw], API_KEY="new")
+        with pytest.warns(DeprecationWarning):
+            g._apply_legacy_auth_settings()
+        assert mw.api_key == "new"
+
+    def test_authenticate_false_without_middleware_is_harmless(self):
+        g = self._make([], AUTHENTICATE=False)
+        with pytest.warns(DeprecationWarning):
+            g._apply_legacy_auth_settings()  # no error
+
+    def test_authenticate_true_without_middleware_raises(self):
+        g = self._make([], AUTHENTICATE=True)
+        with pytest.raises(ValueError, match="requires a `MountAPIKeyMiddleware`"):
+            g._apply_legacy_auth_settings()
+
+
 def test_gateway_channels_fields_classmethod():
     assert set(MyGatewayChannels().fields()) == set(MyGatewayChannels.fields())
     assert set(MyGatewayChannels.fields()) == {
