@@ -1,9 +1,11 @@
-<<<<<<< before updating
-import { NodeModulesExternal } from "@finos/perspective-esbuild-plugin/external.js";
-import { build } from "@finos/perspective-esbuild-plugin/build.js";
-import { BuildCss } from "@prospective.co/procss/target/cjs/procss.js";
-import cpy from "cpy";
+import { bundle } from "./tools/bundle.mjs";
+import { bundle_css } from "./tools/css.mjs";
+import { node_modules_external } from "./tools/externals.mjs";
+import { getarg } from "./tools/getarg.mjs";
+
+import { transform } from "lightningcss";
 import fs from "fs";
+import cpy from "cpy";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -17,54 +19,19 @@ const REACT_ALIAS = {
   "react-dom": path.dirname(require.resolve("react-dom/package.json")),
   "react/jsx-runtime": require.resolve("react/jsx-runtime"),
 };
-=======
-import { bundle } from "./tools/bundle.mjs";
-import { bundle_css } from "./tools/css.mjs";
-import { node_modules_external } from "./tools/externals.mjs";
-import { getarg } from "./tools/getarg.mjs";
-
-import { transform } from "lightningcss";
-import fs from "fs";
-import cpy from "cpy";
->>>>>>> after updating
 
 const BUNDLES = [
   {
-<<<<<<< before updating
-    define: {
-      global: "window",
-    },
     entryPoints: ["src/index.jsx"],
-    plugins: [NodeModulesExternal()],
-    format: "esm",
-    loader: {
-      ".css": "text",
-      ".html": "text",
-      ".jsx": "jsx",
-      ".png": "file",
-      ".ttf": "file",
-      ".wasm": "file",
-    },
-    outfile: "./lib/index.js",
+    plugins: [node_modules_external()],
+    outfile: "./dist/esm/index.js",
   },
   {
-    define: {
-      global: "window",
-    },
     entryPoints: ["src/main.jsx"],
     bundle: true,
     plugins: [],
-    format: "esm",
     alias: REACT_ALIAS,
-    loader: {
-      ".css": "text",
-      ".html": "text",
-      ".jsx": "jsx",
-      ".png": "file",
-      ".ttf": "file",
-      ".wasm": "file",
-    },
-    outfile: "../csp_gateway/server/build/main.js",
+    outfile: "./dist/main.js",
     publicPath: "/static/",
   },
 ];
@@ -161,19 +128,7 @@ async function build_all() {
   /* Compile and copy css */
   await compile_css();
 }
-
-build_all();
 =======
-    entryPoints: ["src/ts/index.ts"],
-    plugins: [node_modules_external()],
-    outfile: "dist/esm/index.js",
-  },
-  {
-    entryPoints: ["src/ts/index.ts"],
-    outfile: "dist/cdn/index.js",
-  },
-];
-
 async function build() {
   // Bundle css
   await bundle_css();
@@ -190,9 +145,8 @@ async function build() {
   await Promise.all(BUNDLES.map(bundle)).catch(() => process.exit(1));
 
   // Copy from dist to python
-  fs.mkdirSync("../csp_gateway/extension", { recursive: true });
-  cpy("dist/**/*", "../csp_gateway/extension");
+  fs.mkdirSync("../csp_gateway/server/build", { recursive: true });
+  cpy("dist/**/*", "../csp_gateway/server/build");
 }
 
 build();
->>>>>>> after updating

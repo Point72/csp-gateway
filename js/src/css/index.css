@@ -1,0 +1,19 @@
+@import url("https://fonts.googleapis.com/css2?family=Roboto&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Roboto+Mono&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Material%20Icons&display=swap");
+
+@import "./src/style/base.css";
+@import "./src/style/nord.css";
+@import "./src/style/header_footer.css";
+@import "./src/style/perspective.css";
+@import "./src/style/settings.css";
+
+@import "perspective-viewer-pro.css";
+@import "perspective-viewer-pro-dark.css";
+@import "perspective-viewer-monokai.css";
+@import "perspective-viewer-vaporwave.css";
+@import "perspective-viewer-solarized.css";
+@import "perspective-viewer-solarized-dark.css";
+@import "perspective-viewer-gruvbox.css";
+@import "perspective-viewer-gruvbox-dark.css";
+@import "react-modern-drawer.css";
