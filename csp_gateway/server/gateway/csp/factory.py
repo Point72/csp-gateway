@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Generic, List, Optional, Type
+from typing import Generic, List, Optional, Type, get_args, get_origin
 
 from ccflow import BaseModel
 from csp.impl.enum import Enum
@@ -56,6 +56,24 @@ class ChannelsFactory(BaseModel, Generic[ChannelsType]):
 
         if self.block_set_channels_until is not None:
             channels._block_set_channels_until = self.block_set_channels_until
+
+        # Pre-declare dynamically-created state channels so that modules calling get_state
+        # during connect() are independent of the order in which set_state is called by the
+        # owning module. The owning module includes the name in both dynamic_channels()
+        # (which provides the element type) and dynamic_state_channels().
+        for node in enabled_modules:
+            declared = node.dynamic_state_channels() if hasattr(node, "dynamic_state_channels") else None
+            if not declared:
+                continue
+            owned_channels = node.dynamic_channels() or {}
+            for name in declared:
+                if name not in owned_channels:
+                    raise ValueError(
+                        f"Module {type(node).__name__} declared '{name}' in dynamic_state_channels() but did not include it in dynamic_channels()"
+                    )
+                t = owned_channels[name]
+                element_type = get_args(t)[0] if get_origin(t) is list else t
+                channels._declare_dynamic_state(name, element_type)
 
         # Wire in each edge Provider.
         # The implementation of set_channel will handle multiplexing streams

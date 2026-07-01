@@ -165,8 +165,29 @@ Recall from above:
 
 `GatewayChannels` also have the ability to create and maintain state, which is particularly useful in the REST API. State is managed by an in-memory [DuckDB](https://duckdb.org/) instance.
 
-- `set_state(self, field: str, keyby: Union[str, Tuple[str, ...]], indexer: Union[str, int] = None) -> None`: Collect state of an edge by a certain attribute indexer
-- `get_state(self, field: str, indexer: Union[str, int] = None) -> Any`: Get the current state collected on an edge as a ticking object
+State can be declared two ways:
+
+1. **Annotation** (on the channel definition):
+
+   ```python
+   from typing import Annotated
+   from csp_gateway import State, GatewayChannels
+
+   class MyChannels(GatewayChannels):
+       example_with_state: Annotated[ts[ExampleData], State(("id", "x"))] = None
+       # multiple State() annotations are allowed; each may set an `alias`
+       example_multi: Annotated[
+           ts[ExampleData],
+           State(("id", "x")),
+           State(("id", "y"), alias="example_multi_alt"),
+       ] = None
+   ```
+
+1. **Imperative**, from a module's `connect` method via `set_state`:
+
+   - `set_state(self, edge: Edge, field: str, keyby: Union[str, Tuple[str, ...]], indexer: Union[str, int] = None) -> None`: Collect state of `edge` by a certain attribute, exposed under `field`
+
+- `get_state(self, field: str, indexer: Union[str, int] = None) -> Any`: Get the current state collected for a state `field` as a ticking object
 
 `GatewayChannels` can tell the REST API to allow a certain channel to be sent in via POST requests:
 
@@ -177,7 +198,7 @@ This is the primary API for both the [REST API](API) and the [integrated Python 
 
 - `last(self, field: str, indexer: Union[str, int] = None, *, timeout=None) -> None`: Get the last ticked value on a channel
 - `next(self, field: str, indexer: Union[str, int] = None, *, timeout=None) -> None`: Get (wait for) the next ticked value on a channel
-- `state(self, field: str, indexer: Union[str, int] = None, *, timeout=None) -> Any`: Get the state collected on a channel
+- `state(self, field: str, indexer: Union[str, int] = None, *, timeout=None) -> Any`: Get the state collected for a state `field`
 - `query(self, field: str, indexer: Union[str, int] = None, query: "Query" = None) -> Any`: Query the state on a channel (see [API](API) for more about `Query`)
 - `send(self, field: str, value: Any, indexer: Union[str, int] = None) -> None`: Send new data to a channel, from outside the `csp` graph
 

@@ -49,8 +49,13 @@ class Module(BaseModel, Generic[ChannelsType], ABC):
         ...
 
     def dynamic_state_channels(self) -> Optional[Set[str]]:
-        """
-        The set of dynamic channels that have state.
+        """The subset of :meth:`dynamic_channels` for which this module will also call
+        :meth:`GatewayChannels.set_state` from within :meth:`connect`.
+
+        Declaring a name here lets *other* modules call :meth:`GatewayChannels.get_state`
+        on the channel from their own ``connect`` regardless of the order in which modules
+        are connected; the returned state edge is bound to the real state node once the
+        owning module's ``connect`` calls ``set_state``.
         """
         ...
 

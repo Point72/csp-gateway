@@ -94,6 +94,22 @@ def test_state_keyby_unset():
         assert res == [ts]
 
 
+def test_state_keyby_dot_path():
+    for specialization, struct_type in zip(_STATES, _STRUCTS):
+        s = State[struct_type](keyby="g.suba")
+        assert s.state_type() == specialization
+        ts1 = struct_type(a=0, b="hello", g=CspSubStruct(suba=1))
+        ts2 = struct_type(a=1, b="world", g=CspSubStruct(suba=2))
+        s.insert(ts1)
+        s.insert(ts2)
+        assert sorted(s.query(), key=lambda r: r.g.suba) == [ts1, ts2]
+
+        # Overwriting with same nested key replaces the record.
+        ts3 = struct_type(a=2, b="again", g=CspSubStruct(suba=1))
+        s.insert(ts3)
+        assert sorted(s.query(), key=lambda r: r.g.suba) == [ts3, ts2]
+
+
 def test_state_keyby_two():
     for specialization, struct_type in zip(_STATES, _STRUCTS):
         s = State[struct_type](keyby=("a", "b"))

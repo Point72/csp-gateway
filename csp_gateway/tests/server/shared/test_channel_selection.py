@@ -18,8 +18,8 @@ def test_selection():
 
     assert selection.select_from(MyGatewayChannels) == channels
     assert selection.select_from(MyGatewayChannels, state_channels=True) == [
-        "s_my_channel",
-        "s_my_list_channel",
+        "my_channel",
+        "my_list_channel",
     ]
     assert selection.select_from(MyGatewayChannels, static_fields=True) == static
 
@@ -30,19 +30,18 @@ def test_selection_duplicates():
     selection = ChannelSelection(include=channels + channels + static)
 
     assert selection.select_from(MyGatewayChannels) == channels
-    assert selection.select_from(MyGatewayChannels, state_channels=True) == ["s_my_channel"]
+    assert selection.select_from(MyGatewayChannels, state_channels=True) == ["my_channel"]
     assert selection.select_from(MyGatewayChannels, static_fields=True) == static
 
 
 def test_selection_all_fields():
-    channels = ["my_enum_basket", "my_channel", "s_my_channel"]
+    channels = ["my_enum_basket", "my_channel"]
     static = ["my_static", "my_static_dict"]
     selection = ChannelSelection(include=channels + static)
 
     assert selection.select_from(MyGatewayChannels, all_fields=True) == [
         "my_enum_basket",
         "my_channel",
-        "s_my_channel",
         "my_static",
         "my_static_dict",
     ]
@@ -54,7 +53,7 @@ def test_selection_include():
     selection = ChannelSelection(include=channels + static)
 
     assert selection.select_from(MyGatewayChannels) == channels
-    assert selection.select_from(MyGatewayChannels, state_channels=True) == ["s_my_channel"]
+    assert selection.select_from(MyGatewayChannels, state_channels=True) == ["my_channel"]
     assert selection.select_from(MyGatewayChannels, static_fields=True) == static
     assert selection.select_from(MyGatewayChannels, all_fields=True) == [
         "my_channel",
@@ -75,7 +74,7 @@ def test_selection_exclude():
     static = ["my_static_dict", "my_static_list"]
 
     assert selection.select_from(MyGatewayChannels) == channels
-    assert selection.select_from(MyGatewayChannels, state_channels=True) == ["s_my_list_channel"]
+    assert selection.select_from(MyGatewayChannels, state_channels=True) == ["my_list_channel"]
     assert selection.select_from(MyGatewayChannels, static_fields=True) == static
 
 

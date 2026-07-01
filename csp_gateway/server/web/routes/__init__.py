@@ -4,4 +4,5 @@ from .lookup import *
 from .next import *
 from .send import *
 from .shared import *
+from .stage import *
 from .state import *

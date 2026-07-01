@@ -7,7 +7,7 @@ from collections import deque
 from enum import Enum as PyEnum
 from functools import lru_cache
 from pprint import pformat
-from typing import Any, Deque, Dict, List, Tuple, Union
+from typing import Any, Deque, Dict, List, Optional, Tuple, Union
 
 import csp
 import duckdb
@@ -73,6 +73,16 @@ def disable_duckdb_state() -> None:
 
     global _USE_DUCKDB_STATE
     _USE_DUCKDB_STATE = False
+
+
+def _resolve_keyby_attr(record: Any, path: str) -> Any:
+    """Resolve a (possibly dotted) attribute path on ``record``, returning ``None`` if any segment is missing."""
+    obj = record
+    for segment in path.split("."):
+        if obj is None:
+            return None
+        obj = getattr(obj, segment, None)
+    return obj
 
 
 class StateType(CoreEnum):
@@ -149,7 +159,7 @@ class DefaultState(BaseState):
 
         for subkey in self._keyby:
             # extract the key from the record
-            subkey_to_use = getattr(record, subkey, None)
+            subkey_to_use = _resolve_keyby_attr(record, subkey)
 
             if subkey == self._keyby[-1]:
                 # Put the element there if last
@@ -408,7 +418,7 @@ class DuckDBState(object):
             obj_id = None
             for subkey in self._keyby:
                 # extract the key from the record
-                subkey_to_use = getattr(record, subkey, None)
+                subkey_to_use = _resolve_keyby_attr(record, subkey)
 
                 if subkey == self._keyby[-1]:
                     if subkey_to_use not in place.keys():
@@ -527,23 +537,64 @@ def get_duckdb_schema_struct(cls: Struct) -> Tuple[Dict, bool]:
     return (new_type_info, use_duckdb)
 
 
-# NOTE: NEVER access State object directly, always access through the __class_getitem__ API
-class State(BaseState):
-    def __init__(self, keyby: Union[Tuple[str, ...], str] = ("id",)) -> None:
-        """Switch case between different state specializations based on the type of the records"""
+# NOTE: For runtime state instances, always use the _StateManager[<typ>] API.
+# State() called directly is the annotation marker form used in
+# `Annotated[ts[X], State(keyby=..., indexer=..., alias=...)]`.
+# State[T] is sugar that delegates to _StateManager[T] for backward compatibility.
+
+
+class State:
+    """Annotation marker for declaring state on a channel.
+
+    Usage::
+
+        class MyChannels(GatewayChannels):
+            orders: Annotated[ts[OrderStruct], State(keyby=("id", "x"))] = None
+
+    This is equivalent to calling ``channels.set_state("orders", ("id", "x"))``
+    in the module's ``connect`` method.
+
+    For backward compatibility, ``State[T]`` delegates to ``_StateManager[T]``
+    to create runtime state instances.
+    """
+
+    _meta_keyby: Union[Tuple[str, ...], str] = ("id",)
+    _meta_indexer: Optional[Union[str, int]] = None
+    _meta_alias: Optional[str] = None
+
+    def __init__(
+        self,
+        keyby: Union[Tuple[str, ...], str] = ("id",),
+        indexer: Optional[Union[str, int]] = None,
+        alias: Optional[str] = None,
+    ) -> None:
+        self._meta_keyby = keyby
+        self._meta_indexer = indexer
+        self._meta_alias = alias
+
+
+class _StateManager(BaseState, State):
+    """Runtime state container that dispatches to DefaultState or DuckDBState.
+
+    Use via ``_StateManager[T](keyby=...)`` to create a parameterized instance.
+    Inherits from State so that ``isinstance(mgr, State)`` is True.
+    """
+
+    def __init__(
+        self,
+        keyby: Union[Tuple[str, ...], str] = ("id",),
+    ) -> None:
+        typ = getattr(self, "_typ", None)
+        if typ is None:
+            raise TypeError("_StateManager must be parameterized with a type: _StateManager[MyStruct](keyby=...)")
 
         global _USE_DUCKDB_STATE
-        try:
-            typ = self._typ
-            if _USE_DUCKDB_STATE and isinstance(typ, type) and issubclass(typ, Struct):
-                schema, use_duckdb = get_duckdb_schema_struct(typ)
-                if use_duckdb:
-                    self._state_impl = DuckDBState(typ, keyby, schema)
-                    self._state_type = StateType.DUCKDB
-                    return
-        except AttributeError:
-            log.warning("Do not create object directly from State use the State[<typ>] API instead for performance reasons")
-            log.warning("Using DefaultStateClass")
+        if _USE_DUCKDB_STATE and isinstance(typ, type) and issubclass(typ, Struct):
+            schema, use_duckdb = get_duckdb_schema_struct(typ)
+            if use_duckdb:
+                self._state_impl = DuckDBState(typ, keyby, schema)
+                self._state_type = StateType.DUCKDB
+                return
         self._state_impl = DefaultState(keyby)
         self._state_type = StateType.DEFAULT
 
@@ -581,18 +632,22 @@ class State(BaseState):
     @classmethod
     @lru_cache()
     def __class_getitem__(cls: type, typ: type) -> Any:
-        new_cls = type("State[{}]".format(typ.__name__), (State,), {})
+        new_cls = type("_StateManager[{}]".format(typ.__name__), (_StateManager,), {})
         new_cls._typ = typ
         return new_cls
+
+
+# Attach __class_getitem__ to State for backward-compat: State[T] -> _StateManager[T]
+State.__class_getitem__ = classmethod(lru_cache()(lambda cls, typ: _StateManager[typ]))  # type: ignore[attr-defined]
 
 
 def build_track_state_node(edge: Any, keyby: Union[str, Tuple[str, ...]]) -> Any:
     @csp.node
     def _track_state_node(  # type: ignore[no-untyped-def]
         ts: ts[edge.tstype.typ], keyby: object
-    ) -> ts[State[edge.tstype.typ]]:
+    ) -> ts[_StateManager[edge.tstype.typ]]:
         with csp.state():
-            s_tracker = State[edge.tstype.typ](keyby)
+            s_tracker = _StateManager[edge.tstype.typ](keyby)
         if csp.ticked(ts):
             s_tracker.insert(ts)
             csp.output(s_tracker)

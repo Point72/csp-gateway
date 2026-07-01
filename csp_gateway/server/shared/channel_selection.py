@@ -68,20 +68,23 @@ class ChannelSelection(BaseModel):
             fields = channels.fields() if self.include is None else self.include
             return list(dict.fromkeys([field for field in fields if field not in self.exclude]))
 
+        # State aliases live in their own namespace alongside channel fields.
+        if state_channels:
+            if isinstance(channels, type):
+                # called with the Channels class (declared aliases only)
+                aliases = list(channels._declared_states.keys())
+            else:
+                aliases = channels.all_state_aliases()
+            if self.include is not None:
+                ordered = [a for a in self.include if a in aliases and a not in self.exclude]
+            else:
+                ordered = [a for a in aliases if a not in self.exclude]
+            return list(dict.fromkeys(ordered))
+
         for idx, field in enumerate(channels.fields()):
             # avoid duplicates
             if field in names:
                 continue
-
-            # TODO not this `s_` business...
-            # Return state channels or regular channels
-            if state_field := field.startswith("s_"):
-                if not state_channels:
-                    continue
-                field = field[2:]
-            else:
-                if state_channels:
-                    continue
 
             # Check whether static
             outer_type = channels.get_outer_type(field)
@@ -102,9 +105,6 @@ class ChannelSelection(BaseModel):
             # Check whether excluded
             if field in self.exclude:
                 continue
-
-            if state_field:
-                field = f"s_{field}"
 
             names[field] = idx
 

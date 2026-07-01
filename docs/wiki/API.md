@@ -17,6 +17,7 @@ As described in [Overview#Channels](Overview#Channels), the `csp-gateway` REST A
 - **last** (`GET`, `/api/v1/last/<channel>`): Get the last tick of data on a channel
 - **next** (`GET`, `/api/v1/next/<channel>`): Wait for the next tick of data on a channel: **WARNING**: blocks, and can often be misused into race conditions
 - **state** (`GET`, `/api/v1/state/<channel>`): Get the accumulated state for any channel
+- **stage** (`POST`/`DELETE`/`PATCH`/`GET`/`PUT`, `/api/v1/stage/<channel>`): Manage staged structs on a channel before releasing them into the graph
 - **send** (`POST`, `/api/v1/send/<channel>`): Send a new datum as a tick into the running csp graph
 - **lookup** (`POST`, `/api/v1/lookup/<channel>/<gateway struct ID>`): Lookup an individual GatewayStruct by its required `id` field
 
@@ -32,10 +33,39 @@ As described in [Overview#Channels](Overview#Channels), the `csp-gateway` REST A
 
 ## State
 
-A `GatewayModule` can call `set_state` in its `connect` method to allow for this API to be available.
+State in `csp-gateway` exposes the accumulated history of a channel via the REST API as `/api/v1/state/<alias>`.
 State is collected by one or more instance attributes into an in-memory [DuckDB](https://duckdb.org/) instance.
 
-For example, suppose I have the following type:
+There are two ways to declare state on a channel:
+
+1. **Annotation** on the channel definition, using `State(keyby, alias=...)`:
+
+   ```python
+   from typing import Annotated
+   from csp_gateway import State, GatewayChannels, ts
+
+   class MyChannels(GatewayChannels):
+       # implicit alias "example_with_state" (matches the field name)
+       example_with_state: Annotated[ts[ExampleData], State(("id", "x"))] = None
+
+       # multiple state views on a single channel, each addressable by alias
+       example_multi: Annotated[
+           ts[ExampleData],
+           State(("id", "x")),                          # alias = "example_multi"
+           State(("id", "y"), alias="example_multi_alt"),
+       ] = None
+   ```
+
+1. **Imperative** call from a `GatewayModule`'s `connect` method:
+
+   ```python
+   def connect(self, channels: MyChannels):
+       edge = ...  # produce a csp.ts edge
+       channels.set_channel(MyChannels.example, edge)
+       channels.set_state(edge, "example_from_connect", ("id", "x", "z"))
+   ```
+
+For example, given:
 
 ```python
 class ExampleData(GatewayStruct):
@@ -44,12 +74,7 @@ class ExampleData(GatewayStruct):
     z: str
 ```
 
-If my `GatewayModule` called `set_state("example", ("x",))`, state would be collected as the last tick of `ExampleData` per each unique value of `x`. If called with `set_state("example", ("x", "y"))`, it would be collected as the last tick per each unique pair `x,y`, etc.
-
-> [!IMPORTANT]
->
-> This code and API will likely change a bit as we allow for more granular collection of records,
-> and expose more DuckDB functionality.
+Declaring `State(("x",))` collects the last tick of `ExampleData` per each unique value of `x`. Declaring `State(("x", "y"))` collects the last tick per each unique pair `(x, y)`, etc.
 
 ## Query
 
@@ -59,24 +84,98 @@ Here are some examples from the autodocumentation illustrating the use of filter
 
 ```raw
 # Filter only records where `record.x` == 5
-api/v1/state/example?query={"filters":[{"attr":"x","by":{"value":5,"where":"=="}}]}
+api/v1/state/example_with_state?query={"filters":[{"attr":"x","by":{"value":5,"where":"=="}}]}
 
 # Filter only records where `record.x` < 10
-/api/v1/state/example?query={"filters":[{"attr":"x","by":{"value":10,"where":"<"}}]}
+/api/v1/state/example_with_state?query={"filters":[{"attr":"x","by":{"value":10,"where":"<"}}]}
 
 # Filter only records where `record.timestamp` < "2023-03-30T14:45:26.394000"
-/api/v1/state/example?query={"filters":[{"attr":"timestamp","by":{"when":"2023-03-30T14:45:26.394000","where":"<"}}]}
+/api/v1/state/example_with_state?query={"filters":[{"attr":"timestamp","by":{"when":"2023-03-30T14:45:26.394000","where":"<"}}]}
 
 # Filter only records where `record.id` < `record.y`
-/api/v1/state/example?query={"filters":[{"attr":"id","by":{"attr":"y","where":"<"}}]}
+/api/v1/state/example_with_state?query={"filters":[{"attr":"id","by":{"attr":"y","where":"<"}}]}
 
 # Filter only records where `record.x` < 50 and `record.x` >= 30
-/api/v1/state/example?query={"filters":[{"attr":"x","by":{"value":50,"where":"<"}},{"attr":"x","by":{"value":30,"where":">="}}]}
+/api/v1/state/example_with_state?query={"filters":[{"attr":"x","by":{"value":50,"where":"<"}},{"attr":"x","by":{"value":30,"where":">="}}]}
 ```
 
 > [!IMPORTANT]
 >
 > This code and API will likely change a bit as we expose more DuckDB functionality.
+
+## Staging
+
+Staging in `csp-gateway` allows you to accumulate structs into named "staging areas" on a channel before atomically releasing them into the graph. This is useful for batch preparation workflows where you want to assemble a group of items and then release them all at once.
+
+Staging is exposed via the REST API under `/api/v1/stage/<channel>`.
+
+There are two ways to enable staging on a channel:
+
+1. **Annotation** on the channel definition, using `Stage()`:
+
+   ```python
+   from typing import Annotated
+   from csp_gateway import Stage, GatewayChannels, ts
+
+   class MyChannels(GatewayChannels):
+       orders: Annotated[ts[OrderData], Stage()] = None
+   ```
+
+1. **Imperative** call from a `GatewayModule`'s `connect` method:
+
+   ```python
+   def connect(self, channels: MyChannels):
+       channels.set_channel(MyChannels.orders, edge)
+       channels.set_stage(MyChannels.orders)
+   ```
+
+### REST Endpoints
+
+| Method   | Endpoint                  | Description                                       |
+| -------- | ------------------------- | ------------------------------------------------- |
+| `GET`    | `/api/v1/stage/`          | List channels that have staging enabled           |
+| `POST`   | `/api/v1/stage/<channel>` | Add a struct to staging (or create empty staging) |
+| `DELETE` | `/api/v1/stage/<channel>` | Remove struct(s) from staging                     |
+| `PATCH`  | `/api/v1/stage/<channel>` | Release staged structs into the channel           |
+| `GET`    | `/api/v1/stage/<channel>` | List active staging IDs                           |
+| `PUT`    | `/api/v1/stage/<channel>` | Look up contents of staging area(s)               |
+
+All endpoints accept an optional `id` query parameter to target specific staging areas:
+
+- **No `id` param**: operate on the latest staging area (or all, depending on the method)
+- **`id=`** (empty string): operate on all staging areas
+- **`id=abc,def`**: operate on specific staging area(s) by ID
+
+### Lifecycle
+
+1. **Create** a new staging area: `POST /api/v1/stage/<channel>` with no body
+1. **Add** structs: `POST /api/v1/stage/<channel>?id=<staging_id>` with a JSON body
+1. **Review** contents: `PUT /api/v1/stage/<channel>?id=<staging_id>`
+1. **Release** into the graph: `PATCH /api/v1/stage/<channel>?id=<staging_id>`
+
+Released structs are pushed into the CSP graph as individual ticks on the channel. Released staging areas remain accessible via `PUT` (lookup) for historical reference, but no longer appear in `GET` (list).
+
+### Examples
+
+```bash
+# List channels with staging enabled
+curl http://localhost:8000/api/v1/stage/
+
+# Create an empty staging area
+curl -X POST http://localhost:8000/api/v1/stage/orders
+# Returns: {"<staging_id>": []}
+
+# Add a struct to the latest staging
+curl -X POST http://localhost:8000/api/v1/stage/orders \
+  -H "Content-Type: application/json" \
+  -d '{"symbol": "AAPL", "quantity": 10, "price": 190.5}'
+
+# Look up contents of all staging areas (including released)
+curl -X PUT http://localhost:8000/api/v1/stage/orders
+
+# Release a specific staging into the graph
+curl -X PATCH "http://localhost:8000/api/v1/stage/orders?id=<staging_id>"
+```
 
 ## Websockets
 
