@@ -383,7 +383,7 @@ class LogChannels(GatewayModule):
     def connect(self, channels: ChannelsType):
         logger_to_use = logging.getLogger(self.log_name)
 
-        for field in self.selection.select_from(channels, state_channels=self.log_states):
+        for field in self.selection.select_from(channels):
             data = channels.get_channel(field)
             # list baskets not supported yet
             if isinstance(data, dict):
@@ -392,6 +392,11 @@ class LogChannels(GatewayModule):
             else:
                 edge = channels.get_channel(field)
                 csp.log(self.log_level, field, edge, logger=logger_to_use)
+
+        if self.log_states:
+            for alias in self.selection.select_from(channels, state_channels=True):
+                edge = channels.get_state(alias)
+                csp.log(self.log_level, f"s_{alias}", edge, logger=logger_to_use)
 
 
 # Backwards compatibility alias

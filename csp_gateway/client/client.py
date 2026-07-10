@@ -18,7 +18,8 @@ from importlib import import_module
 from threading import Thread
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union, cast
 
-from httpx import AsyncClient as httpx_AsyncClient, Response, get as GET, post as POST
+import httpx
+from httpx import AsyncClient as httpx_AsyncClient, Response, get as GET, patch as PATCH, post as POST, put as PUT
 from jsonref import replace_refs
 from nest_asyncio import apply as applyAsyncioNesting
 from packaging import version
@@ -421,6 +422,7 @@ class BaseGatewayClient(BaseModel):
             "lookup": set(),
             "next": set(),
             "send": set(),
+            "stage": set(),
             "state": set(),
         }
     )
@@ -485,6 +487,7 @@ class BaseGatewayClient(BaseModel):
                     ("lookup", "/lookup/"),
                     ("next", "/next/"),
                     ("send", "/send/"),
+                    ("stage", "/stage/"),
                     ("state", "/state/"),
                 ):
                     if "{channel}" in path:
@@ -533,6 +536,17 @@ class BaseGatewayClient(BaseModel):
             sep = "&" if "?" in host else "?"
             auth = f"{sep}token={self.config.api_key}"
         return f"{host}{self.config.api_route}/{route}{auth}"
+
+    def _stage_id_param(self, staging_ids: Optional[List[str]]) -> Dict[str, Any]:
+        """Convert staging_ids to the query param dict for the stage REST API.
+
+        - None -> no 'id' param (server interprets as None)
+        - [] -> id="" (server interprets as empty list)
+        - ["a", "b"] -> id="a,b"
+        """
+        if staging_ids is None:
+            return {}
+        return {"id": ",".join(staging_ids)}
 
     def _handle_response(self, resp: Response, route: str) -> ResponseType:
         try:
@@ -613,6 +627,81 @@ class BaseGatewayClient(BaseModel):
         async with httpx_AsyncClient() as client:
             return self._handle_response(
                 await client.post(resolved_route, params={**params, **extra_params}, json=data, timeout=timeout, **self.http_args), route=route
+            )
+
+    def _delete(
+        self,
+        route: str,
+        params: Dict[str, Any] = None,
+        data: Dict[str, Any] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        params = params or {}
+        resolved_route, extra_params = self._buildroute(route)
+        kwargs: Dict[str, Any] = {"params": {**params, **extra_params}, "timeout": timeout, **self.http_args}
+        if data is not None:
+            kwargs["json"] = data
+        return self._handle_response(httpx.request("DELETE", resolved_route, **kwargs), route=route)
+
+    async def _deleteasync(
+        self,
+        route: str,
+        params: Dict[str, Any] = None,
+        data: Dict[str, Any] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        params = params or {}
+        resolved_route, extra_params = self._buildroute(route)
+        kwargs: Dict[str, Any] = {"params": {**params, **extra_params}, "timeout": timeout, **self.http_args}
+        if data is not None:
+            kwargs["json"] = data
+        async with httpx_AsyncClient() as client:
+            return self._handle_response(await client.request("DELETE", resolved_route, **kwargs), route=route)
+
+    def _patch(
+        self,
+        route: str,
+        params: Dict[str, Any] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        params = params or {}
+        resolved_route, extra_params = self._buildroute(route)
+        return self._handle_response(PATCH(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route)
+
+    async def _patchasync(
+        self,
+        route: str,
+        params: Dict[str, Any] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        params = params or {}
+        resolved_route, extra_params = self._buildroute(route)
+        async with httpx_AsyncClient() as client:
+            return self._handle_response(
+                await client.patch(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route
+            )
+
+    def _put(
+        self,
+        route: str,
+        params: Dict[str, Any] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        params = params or {}
+        resolved_route, extra_params = self._buildroute(route)
+        return self._handle_response(PUT(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route)
+
+    async def _putasync(
+        self,
+        route: str,
+        params: Dict[str, Any] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        params = params or {}
+        resolved_route, extra_params = self._buildroute(route)
+        async with httpx_AsyncClient() as client:
+            return self._handle_response(
+                await client.put(resolved_route, params={**params, **extra_params}, timeout=timeout, **self.http_args), route=route
             )
 
     def _stream(
@@ -799,6 +888,39 @@ class BaseGatewayClient(BaseModel):
     def state(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None) -> ResponseType: ...
 
     @abstractmethod
+    def stage(
+        self,
+        field: str,
+        method: str = "list",
+        data: Any = None,
+        staging_ids: Optional[List[str]] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_add(self, field: str, data: Any = None, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_new(self, field: str, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_remove(
+        self, field: str, data: Any = None, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT
+    ) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_clear(self, field: str, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_release(self, field: str, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_list(self, field: str, staging_id: Optional[str] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...
+
+    @abstractmethod
+    def stage_lookup(self, field: str, staging_id: Optional[str] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...
+
+    @abstractmethod
     def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, timeout: Optional[float] = None): ...
 
     # NOTE: sync version
@@ -884,6 +1006,132 @@ class SyncGatewayClientMixin:
         if return_type_override is not None:
             self.config.return_type = old_return_type
         return res
+
+    # --- Staging methods ---
+
+    @_raiseIfNotMounted
+    def stage(
+        self,
+        field: str,
+        method: str = "list",
+        data: Any = None,
+        staging_ids: Optional[List[str]] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        """Raw staging API — dispatches to the appropriate HTTP method.
+
+        Args:
+            field: Channel name with staging enabled.
+            method: One of "add", "remove", "release", "list", "lookup".
+            data: Struct data (as dict) for add/remove operations.
+            staging_ids: Optional list of staging IDs to target.
+            timeout: Request timeout.
+        """
+        params = self._stage_id_param(staging_ids)
+        route = "stage/{}".format(field)
+        if method == "add":
+            return self._post(route, params=params, data=data, timeout=timeout)
+        elif method == "remove":
+            return self._delete(route, params=params, data=data, timeout=timeout)
+        elif method == "release":
+            return self._patch(route, params=params, timeout=timeout)
+        elif method == "list":
+            if staging_ids and len(staging_ids) == 1:
+                params = {"id": staging_ids[0]}
+            return self._get(route, params=params, timeout=timeout)
+        elif method == "lookup":
+            if staging_ids and len(staging_ids) == 1:
+                params = {"id": staging_ids[0]}
+            return self._put(route, params=params, timeout=timeout)
+        else:
+            raise ValueError(f"Unknown stage method: {method}")
+
+    def stage_add(
+        self,
+        field: str,
+        data: Any = None,
+        staging_ids: Optional[List[str]] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        """Add a struct to staging area(s).
+
+        Args:
+            field: Channel name.
+            data: Struct data (as dict). If None, creates an empty staging area.
+            staging_ids: Target staging IDs. None = latest/create new, [] = all.
+        """
+        return self.stage(field, method="add", data=data, staging_ids=staging_ids, timeout=timeout)
+
+    def stage_new(self, field: str, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Create a new empty staging area.
+
+        Convenience for ``stage_add(field, data=None, staging_ids=None)``.
+        """
+        return self.stage(field, method="add", data=None, staging_ids=None, timeout=timeout)
+
+    def stage_remove(
+        self,
+        field: str,
+        data: Any = None,
+        staging_ids: Optional[List[str]] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        """Remove struct(s) from staging area(s).
+
+        Args:
+            field: Channel name.
+            data: Struct to remove. If None, clears entire staging(s).
+            staging_ids: Target staging IDs. None = latest, [] = all.
+        """
+        return self.stage(field, method="remove", data=data, staging_ids=staging_ids, timeout=timeout)
+
+    def stage_clear(self, field: str, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Clear all structs from staging area(s) without releasing.
+
+        Convenience for ``stage_remove(field, data=None, staging_ids=...)``.
+
+        Args:
+            field: Channel name.
+            staging_ids: Which stagings to clear. None = latest, [] = all.
+        """
+        return self.stage(field, method="remove", data=None, staging_ids=staging_ids, timeout=timeout)
+
+    def stage_release(self, field: str, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Release staged structs into the channel.
+
+        Args:
+            field: Channel name.
+            staging_ids: Which stagings to release. None = all.
+        """
+        return self.stage(field, method="release", staging_ids=staging_ids, timeout=timeout)
+
+    def stage_list(self, field: str, staging_id: Optional[str] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """List active staging areas with their contents.
+
+        Collects the active staging IDs, then looks up each one's contents.
+        Returns a dict of staging_id -> list of structs (same format as stage_lookup).
+
+        Args:
+            field: Channel name.
+            staging_id: If provided, only include this specific staging ID.
+        """
+        ids = [staging_id] if staging_id else None
+        id_result = self.stage(field, method="list", staging_ids=ids, timeout=timeout)
+        # id_result is a list of active staging IDs (or a dict with id -> exists)
+        if not id_result:
+            return {}
+        # Look up contents for all active stages
+        return self.stage(field, method="lookup", staging_ids=None, timeout=timeout)
+
+    def stage_lookup(self, field: str, staging_id: Optional[str] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Look up contents of staging area(s).
+
+        Args:
+            field: Channel name.
+            staging_id: If provided, look up only this specific staging area.
+        """
+        ids = [staging_id] if staging_id else None
+        return self.stage(field, method="lookup", staging_ids=ids, timeout=timeout)
 
     def stream(self, channels: Optional[List[Union[str, Tuple[str, str]]]] = None, callback: Callable = None, timeout: Optional[float] = None):
         """Stream data from specified channels with optional key filtering for dict baskets.
@@ -1032,6 +1280,7 @@ class SyncGatewayClient(SyncGatewayClientMixin, BaseGatewayClient):
         - lookup
         - next
         - send
+        - stage (stage_add, stage_new, stage_remove, stage_clear, stage_release, stage_list, stage_lookup)
         - state
 
     These methods will depend on the configuration of the corresponding GatewayServer.
@@ -1074,6 +1323,72 @@ class AsyncGatewayClientMixin:
     async def state(self, field: str = "", timeout: float = _DEFAULT_TIMEOUT, query: Optional[Query] = None) -> ResponseType:
         params = None if query is None else {"query": query.model_dump_json()}
         return await self._getasync("{}/{}".format("state", field), timeout=timeout, params=params)
+
+    @_raiseIfNotMounted
+    async def stage(
+        self,
+        field: str,
+        method: str = "list",
+        data: Any = None,
+        staging_ids: Optional[List[str]] = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> ResponseType:
+        """Raw staging API — dispatches to the appropriate HTTP method."""
+        params = self._stage_id_param(staging_ids)
+        route = "stage/{}".format(field)
+        if method == "add":
+            return await self._postasync(route, params=params, data=data, timeout=timeout)
+        elif method == "remove":
+            return await self._deleteasync(route, params=params, data=data, timeout=timeout)
+        elif method == "release":
+            return await self._patchasync(route, params=params, timeout=timeout)
+        elif method == "list":
+            if staging_ids and len(staging_ids) == 1:
+                params = {"id": staging_ids[0]}
+            return await self._getasync(route, params=params, timeout=timeout)
+        elif method == "lookup":
+            if staging_ids and len(staging_ids) == 1:
+                params = {"id": staging_ids[0]}
+            return await self._putasync(route, params=params, timeout=timeout)
+        else:
+            raise ValueError(f"Unknown stage method: {method}")
+
+    async def stage_add(
+        self, field: str, data: Any = None, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT
+    ) -> ResponseType:
+        """Add a struct to staging area(s)."""
+        return await self.stage(field, method="add", data=data, staging_ids=staging_ids, timeout=timeout)
+
+    async def stage_new(self, field: str, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Create a new empty staging area."""
+        return await self.stage(field, method="add", data=None, staging_ids=None, timeout=timeout)
+
+    async def stage_remove(
+        self, field: str, data: Any = None, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT
+    ) -> ResponseType:
+        """Remove struct(s) from staging area(s)."""
+        return await self.stage(field, method="remove", data=data, staging_ids=staging_ids, timeout=timeout)
+
+    async def stage_clear(self, field: str, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Clear all structs from staging area(s) without releasing."""
+        return await self.stage(field, method="remove", data=None, staging_ids=staging_ids, timeout=timeout)
+
+    async def stage_release(self, field: str, staging_ids: Optional[List[str]] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Release staged structs into the channel."""
+        return await self.stage(field, method="release", staging_ids=staging_ids, timeout=timeout)
+
+    async def stage_list(self, field: str, staging_id: Optional[str] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """List active staging areas with their contents."""
+        ids = [staging_id] if staging_id else None
+        id_result = await self.stage(field, method="list", staging_ids=ids, timeout=timeout)
+        if not id_result:
+            return {}
+        return await self.stage(field, method="lookup", staging_ids=None, timeout=timeout)
+
+    async def stage_lookup(self, field: str, staging_id: Optional[str] = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType:
+        """Look up contents of staging area(s)."""
+        ids = [staging_id] if staging_id else None
+        return await self.stage(field, method="lookup", staging_ids=ids, timeout=timeout)
 
     async def stream(self, channels: List[Union[str, Tuple[str, str]]] = None, timeout: Optional[float] = None):
         """Stream data from specified channels with optional key filtering for dict baskets.
@@ -1149,12 +1464,14 @@ class AsyncGatewayClient(AsyncGatewayClientMixin, BaseGatewayClient):
     An asynchronous Gateway client.
 
     This client will expose async methods:
-    - controls
-    - last
-    - lookup
-    - next
-    - send
-    - state
+
+        - controls
+        - last
+        - lookup
+        - next
+        - send
+        - stage (stage_add, stage_new, stage_remove, stage_clear, stage_release, stage_list, stage_lookup)
+        - state
 
     These methods will depend on the configuration of the corresponding GatewayServer.
 
@@ -1174,5 +1491,5 @@ AsyncClient = AsyncGatewayClient
 GatewayClient = SyncGatewayClient
 
 ClientConfig = GatewayClientConfig
-GatewayClientConfiguration = GatewayClientConfig
 ClientConfiguration = GatewayClientConfig
+GatewayClientConfiguration = GatewayClientConfig

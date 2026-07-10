@@ -117,13 +117,13 @@ jobs:
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
-        path: '**/junit.xml'
+        path: junit.xml
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
 
     - name: Publish Unit Test Results
       uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
       with:
-        files: '**/junit.xml'
+        files: junit.xml
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
 
     - name: Upload coverage

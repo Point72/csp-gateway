@@ -29,6 +29,14 @@ A client as a small number of general-purpose methods. In alphabetical order:
 - `lookup`: lookup a piece of data by `id`
 - `next`: get the next ticked data value on a channel
 - `send`: send some data onto a channel
+- `stage`: raw staging API dispatcher (add/remove/release/list/lookup)
+- `stage_add`: add a struct to staging area(s)
+- `stage_new`: create a new empty staging area
+- `stage_remove`: remove struct(s) from staging area(s)
+- `stage_clear`: clear all structs from staging area(s) without releasing
+- `stage_release`: release staged structs into the channel
+- `stage_list`: list active staging areas with their contents
+- `stage_lookup`: look up contents of all staging areas (including released)
 - `state`: get the value of a given channel's state accumulator
 
 Additionally, a client has some streaming methods available when websockets are configured:
@@ -282,11 +290,11 @@ client.state().as_json()
 ```
 
 ```
-['example']
+['example', 'example_with_state', 'example_with_state_alternative', 'example_with_state_multiple']
 ```
 
 ```python
-client.state("example").as_pandas_df().tail()
+client.state("example_with_state").as_pandas_df().tail()
 
 # We note that there are a large number of columns in the above dataframe.
 # This is because `mapping` is a dict with different keys for eery row.
@@ -503,7 +511,7 @@ client.send(
     }
 )
 
-client.state("example").as_pandas_df().tail()
+client.state("example_with_state").as_pandas_df().tail()
 ```
 
 <div>
@@ -721,6 +729,56 @@ File /isilon/home/nk12433/bitbucket/csp-gateway/csp_gateway/client/client.py:293
 
 
 ServerUnprocessableException: [{'loc': ['body'], 'msg': 'value is not a valid list', 'type': 'type_error.list'}, {'loc': ['body', 'x'], 'msg': 'value must be non-negative.', 'type': 'value_error'}]
+```
+
+## Staging
+
+Channels with staging enabled allow you to accumulate structs into staging areas before releasing them into the graph. The client provides several convenience methods for this workflow.
+
+```python
+# Create a new empty staging area
+result = client.stage_new("example_with_stage")
+# Returns: {"<staging_id>": []}
+staging_id = list(result.keys())[0]
+```
+
+```python
+# Add a struct to a specific staging area
+client.stage_add("example_with_stage", data={"x": 42, "y": "hello"}, staging_ids=[staging_id])
+# Returns: {"<staging_id>": [{"x": 42, "y": "hello", "id": "...", ...}]}
+```
+
+```python
+# List active staging areas with their contents
+client.stage_list("example_with_stage")
+# Returns: {"<staging_id>": [<items>]}
+```
+
+```python
+# Look up contents of all staging areas (including previously released)
+client.stage_lookup("example_with_stage")
+# Returns: {"<staging_id>": [<items>], "<old_staging_id>": [<items>], ...}
+```
+
+```python
+# Release staged structs into the channel (pushes them as ticks)
+client.stage_release("example_with_stage", staging_ids=[staging_id])
+# Returns: {"<staging_id>": [<released items>]}
+```
+
+```python
+# Remove specific structs or clear entire staging areas
+client.stage_remove("example_with_stage", data=item_dict, staging_ids=[staging_id])
+client.stage_clear("example_with_stage", staging_ids=[staging_id])
+```
+
+The raw `stage()` method is also available for direct control:
+
+```python
+client.stage("example_with_stage", method="add", data={"x": 1}, staging_ids=None)
+client.stage("example_with_stage", method="list")
+client.stage("example_with_stage", method="lookup")
+client.stage("example_with_stage", method="release", staging_ids=[staging_id])
 ```
 
 ## Next

@@ -127,12 +127,12 @@ class TestGatewayWebserver:
             f"Expected fully qualified type name in /api/v1/lookup/example/{{id}} type_, got: {lookup_example_type}"
         )
 
-        # Test /api/v1/state/example route
-        state_example_path = paths.get("/api/v1/state/example", {})
+        # Test /api/v1/state/example_with_state route
+        state_example_path = paths.get("/api/v1/state/example_with_state", {})
         state_example_get = state_example_path.get("get", {})
         state_example_type = state_example_get.get("type_", "")
         assert state_example_type == "csp_gateway.server.demo.omnibus.ExampleData", (
-            f"Expected fully qualified type name in /api/v1/state/example type_, got: {state_example_type}"
+            f"Expected fully qualified type name in /api/v1/state/example_with_state type_, got: {state_example_type}"
         )
 
         # Test /api/v1/controls/heartbeat route
@@ -359,7 +359,7 @@ class TestGatewayWebserver:
         last_data = self._wait_for_data(rest_client=rest_client)
 
         # Get state data
-        response = rest_client.get("/api/v1/state/example?token=test")
+        response = rest_client.get("/api/v1/state/example_with_state?token=test")
         assert response.status_code == 200
 
         state_data = response.json()
@@ -371,7 +371,7 @@ class TestGatewayWebserver:
         self._wait_for_data(rest_client=rest_client)
 
         # Get state data
-        response = rest_client.get('/api/v1/state/example?token=test&query={"filters":[{"attr":"x","by":{"value":1,"where":"=="}}]}')
+        response = rest_client.get('/api/v1/state/example_with_state?token=test&query={"filters":[{"attr":"x","by":{"value":1,"where":"=="}}]}')
         assert response.status_code == 200
 
         state_data = response.json()
@@ -508,6 +508,9 @@ class TestGatewayWebserver:
             "controls",
             "example",
             "example_list",
+            "example_with_stage",
+            "example_with_state",
+            "example_with_state_multiple",
             "never_ticks",
             "str_basket",
         ]
@@ -522,6 +525,9 @@ class TestGatewayWebserver:
             "controls",
             "example",
             "example_list",
+            "example_with_stage",
+            "example_with_state",
+            "example_with_state_multiple",
             "never_ticks",
             "str_basket",
         ]
@@ -530,7 +536,12 @@ class TestGatewayWebserver:
         self._wait_for_data(rest_client=rest_client)
         response_state = rest_client.get("/api/v1/state?token=test")
         assert response_state.status_code == 200
-        assert sorted(response_state.json()) == ["example"]
+        assert sorted(response_state.json()) == [
+            "example",
+            "example_with_state",
+            "example_with_state_alternative",
+            "example_with_state_multiple",
+        ]
 
     def test_csp_toplevel_send(self, rest_client: TestClient):
         self._wait_for_data(rest_client=rest_client)
@@ -557,7 +568,12 @@ class TestGatewayWebserver:
         assert sorted(list(gateway_client.openapi_spec.keys())) == ["components", "info", "openapi", "paths"]
         assert "/api/v1/last/example" in gateway_client.openapi_spec["paths"].keys()
         assert "/api/v1/last/example_list" in gateway_client.openapi_spec["paths"].keys()
-        assert response_state == ["example"]
+        assert sorted(response_state) == [
+            "example",
+            "example_with_state",
+            "example_with_state_alternative",
+            "example_with_state_multiple",
+        ]
 
         for route in ["example", "example_list"]:
             data = gateway_client.last(route)
@@ -602,7 +618,7 @@ class TestGatewayWebserver:
             send_data["y"],
         )
 
-        return_data = gateway_client.state("example", query=Query(filters=[Filter(attr="x", by={"value": 1, "where": "=="})]))
+        return_data = gateway_client.state("example_with_state", query=Query(filters=[Filter(attr="x", by={"value": 1, "where": "=="})]))
         assert isinstance(return_data, list)
         return_datum = return_data[0]
         assert "id" in return_datum
@@ -798,6 +814,9 @@ class TestGatewayWebserver:
             "controls",
             "example",
             "example_list",
+            "example_with_stage",
+            "example_with_state",
+            "example_with_state_multiple",
             "my_custom_table",
             # "never_ticks",  # NOTE: never_ticks has no data, so table is omitted
             "str_basket",
@@ -831,6 +850,9 @@ class TestGatewayWebserver:
             "controls",
             "example",
             "example_list",
+            "example_with_stage",
+            "example_with_state",
+            "example_with_state_multiple",
             "heartbeat",
             "never_ticks",
             "str_basket/a",

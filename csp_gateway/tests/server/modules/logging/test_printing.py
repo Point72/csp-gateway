@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Dict, List
+from typing import Annotated, Dict, List
 
 import csp
 import numpy as np
@@ -21,10 +21,8 @@ class MyPrintGatewayChannels(GatewayChannels):
     my_static: float = 0.0
     my_static_dict: Dict[str, float] = {}
     my_static_list: List[str] = []
-    my_channel: ts[int] = None
-    s_my_channel: ts[State[int]] = None
-    my_list_channel: ts[[int]] = None
-    s_my_list_channel: ts[State[int]] = None
+    my_channel: Annotated[ts[int], State(keyby="id")] = None
+    my_list_channel: Annotated[ts[[int]], State(keyby="id")] = None
     my_enum_basket: Dict[MyEnum, ts[int]] = None
     my_str_basket: Dict[str, ts[int]] = None
     my_enum_basket_list: Dict[MyEnum, ts[[int]]] = None
@@ -48,9 +46,7 @@ class MyPrintSetModule(GatewayModule):
             csp.const(self.my_list_data),
         )
         channels.add_send_channel(MyPrintGatewayChannels.my_channel)
-        channels.set_state(MyPrintGatewayChannels.my_channel, "id")
         channels.add_send_channel(MyPrintGatewayChannels.my_list_channel)
-        channels.set_state(MyPrintGatewayChannels.my_list_channel, "id")
 
         channels.set_channel(MyPrintGatewayChannels.my_array_channel, csp.const(np.array([1.0, 2.0])))
 

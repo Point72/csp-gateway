@@ -946,6 +946,7 @@ modules:
 - **mount_last** (`ChannelSelection`): channels to include in last routes
 - **mount_next** (`ChannelSelection`): channels to include in next routes
 - **mount_send** (`ChannelSelection`): channels to include in send routes
+- **mount_stage** (`ChannelSelection`): channels to include in stage routes (automatically includes channels with `Stage()` annotation or `set_stage` call)
 - **mount_state** (`ChannelSelection`): channels to include in state routes
 - **mount_lookup** (`ChannelSelection`): channels to include in lookup routes
 

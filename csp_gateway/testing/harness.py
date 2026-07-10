@@ -418,10 +418,7 @@ class GatewayTestHarness(GatewayModule):
                 if channel not in s_values:
                     s_values[channel] = []
 
-                if isinstance(channel, str) and channel.startswith("s_"):
-                    s_values[channel].append((csp.now(), value.query()))
-                else:
-                    s_values[channel].append((csp.now(), value))
+                s_values[channel].append((csp.now(), value))
 
         if csp.ticked(event):
             try:
