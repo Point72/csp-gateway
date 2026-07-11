@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 from io import BytesIO
 from logging import getLogger
 from typing import (
+    TYPE_CHECKING,
     Dict,
     List,
     Literal,
@@ -29,6 +30,9 @@ from typing_extensions import TypeAliasType
 from csp_gateway.server import ChannelSelection, GatewayChannels, GatewayModule
 from csp_gateway.server.web import GatewayWebApp, get_default_responses
 from csp_gateway.utils import PickleableQueue, get_args, get_origin, get_thread
+
+if TYPE_CHECKING:
+    from csp_gateway.server.web.spaday_ui import GatewayUI
 
 __all__ = (
     "psp_schema_to_arrow_schema",
@@ -625,6 +629,26 @@ class MountPerspectiveTables(GatewayModule):
                 "unused_tables": self._unused_tables,
                 "table_sizes": self._get_table_sizes(),
             }
+
+    def ui(self, app: "GatewayUI") -> None:
+        # Register the Perspective workspace as the main panel of the spaday UI. Data rides
+        # Perspective's own websocket (mounted by rest() at {API_STR}/perspective); the spaday
+        # page only carries the workspace layout/theme config.
+        from csp_gateway.server.web.spaday_ui import Region
+
+        layouts = dict(self._layouts)
+        app.add(
+            Region.MAIN,
+            app.perspective_panel(
+                route=f"{app.settings.API_STR}{self._route}",
+                tables=list(self._get_tables().keys()),
+                layouts=layouts,
+            ),
+        )
+        default_view = self.default_layout or "__default__"
+        app.seed_store(view=default_view)
+        if layouts:
+            app.add(Region.HEADER_RIGHT, app.layout_selector(layouts, value=default_view), order=90)
 
     def run_perspective(self):
         """Launch the perspective threads"""

@@ -415,6 +415,9 @@ class Gateway(ChannelsFactory[GatewayChannels]):
         for module in self.modules:
             if not module.disable:
                 module.rest(web_app)
+                # When the spaday UI provider is active, let modules contribute to the UI too.
+                if web_app.ui is not None:
+                    module.ui(web_app.ui)
 
         web_app._finalize()
 

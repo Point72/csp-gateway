@@ -15,6 +15,8 @@ modules:
   mount_rest_routes:
     _target_: csp_gateway.MountRestRoutes
     force_mount_all: True
+  mount_send_form:
+    _target_: csp_gateway.MountSendForm
 
 gateway:
   _target_: csp_gateway.Gateway
@@ -26,6 +28,7 @@ gateway:
     - /modules/mount_outputs
     - /modules/mount_perspective_tables
     - /modules/mount_rest_routes
+    - /modules/mount_send_form
   channels:
     _target_: csp_gateway.server.demo.simple.ExampleGatewayChannels
 

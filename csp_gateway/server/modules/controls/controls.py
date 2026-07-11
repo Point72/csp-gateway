@@ -3,6 +3,7 @@ import resource
 import socket
 import threading
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 try:
     import psutil
@@ -18,6 +19,9 @@ from csp_gateway.server import GatewayChannels, GatewayModule
 # separate to avoid circular
 from csp_gateway.server.web import GatewayWebApp
 from csp_gateway.utils import Controls
+
+if TYPE_CHECKING:
+    from csp_gateway.server.web.spaday_ui import GatewayUI
 
 _HOSTNAME = socket.gethostname()
 _USER = getpass.getuser()
@@ -45,6 +49,17 @@ class MountControls(GatewayModule):
             available.append("shutdown")
 
         app.add_controls_available_channels(fields=set(available))
+
+    def ui(self, app: "GatewayUI") -> None:
+        # Add a guarded shutdown ("kill switch") to the spaday settings drawer, matching the
+        # power button in the React UI. Only when the shutdown control is actually mounted.
+        if self.mount_shutdown:
+            from csp_gateway.server.web.spaday_ui import Region
+
+            app.add(
+                Region.DRAWER_RIGHT,
+                app.confirm_button("Shutdown", f"{app.settings.API_STR}/controls/shutdown", variant="danger"),
+            )
 
     @csp.node
     def manage_controls(self, data: ts[Controls]):

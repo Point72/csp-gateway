@@ -112,6 +112,10 @@ client = [
     "packaging",
     "pydantic>=2",
 ]
+spaday = [
+    # Optional spaday-based frontend provider (Settings.UI_PROVIDER = "spaday")
+    "spaday>=0.2.2",
+]
 
 [project.scripts]
 cspgateway-start = "csp_gateway.server.cli:main"
