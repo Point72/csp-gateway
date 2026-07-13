@@ -45,6 +45,9 @@ from .routes import (
 )
 from .static import CacheControlledStaticFiles
 
+if typing.TYPE_CHECKING:
+    from .spaday_ui import GatewayUI
+
 # from uvicorn.supervisors import Multiprocess
 
 
@@ -112,6 +115,16 @@ class GatewayWebApp(object):
         self.settings = settings.model_copy(update={"ROOT_PATH": root_path})
         if ui:
             self.settings.UI = True
+
+        # spaday UI provider (only when the 'spaday' frontend is selected AND the UI is enabled).
+        # Modules populate this via their `ui()` hook and it is mounted at finalization. Imported
+        # here (not at module load) so the optional `spaday` dependency is only required when the
+        # spaday frontend is actually served.
+        self.ui: Optional["GatewayUI"] = None
+        if self.settings.UI and self.settings.UI_PROVIDER == "spaday":
+            from .spaday_ui import GatewayUI
+
+            self.ui = GatewayUI(self, self.settings)
 
         # for logging
         self.logger = logger or getLogger(__name__)
@@ -366,23 +379,27 @@ class GatewayWebApp(object):
 
         # Add UI if present, otherwise redirect to docs
         if self.settings.UI:
+            if self.ui is not None:
+                # spaday provider: mount the spaday page (page, tree, and /js assets) at the root.
+                self.ui.mount()
+            else:
 
-            @app_router.get("/", include_in_schema=False, response_class=HTMLResponse)
-            async def serve_react_app(request: Request):
-                root_path = request.scope.get("root_path", "")
-                ui_config = self._prefixed_ui_config(root_path)
-                return self.templates.TemplateResponse(
-                    request,
-                    "index.html.j2",
-                    {
-                        "title": ui_config["title"],
-                        "description": ui_config["description"],
-                        "base_path": root_path,
-                        "ui_config": ui_config,
-                        "custom_css": ui_config["customCss"],
-                        "custom_js": ui_config["customJs"],
-                    },
-                )
+                @app_router.get("/", include_in_schema=False, response_class=HTMLResponse)
+                async def serve_react_app(request: Request):
+                    root_path = request.scope.get("root_path", "")
+                    ui_config = self._prefixed_ui_config(root_path)
+                    return self.templates.TemplateResponse(
+                        request,
+                        "index.html.j2",
+                        {
+                            "title": ui_config["title"],
+                            "description": ui_config["description"],
+                            "base_path": root_path,
+                            "ui_config": ui_config,
+                            "custom_css": ui_config["customCss"],
+                            "custom_js": ui_config["customJs"],
+                        },
+                    )
 
         else:
 

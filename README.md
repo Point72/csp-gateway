@@ -19,7 +19,7 @@ It is is composed of four major components:
 
 - Engine: [csp](https://github.com/point72/csp), a streaming, complex event processor core
 - API: [FastAPI](https://fastapi.tiangolo.com) REST/WebSocket API
-- UI: [Perspective](https://perspective-dev.github.io/) and React based frontend with automatic table and chart visualizations
+- UI: [Perspective](https://perspective-dev.github.io/) and React based frontend with automatic table and chart visualizations, with an optional [spaday](https://github.com/1kbgz/spaday)-based frontend
 - Configuration: [ccflow](https://github.com/point72/ccflow), a [Pydantic](https://docs.pydantic.dev/latest/)/[Hydra](https://hydra.cc) based extensible, composeable dependency injection and configuration framework
 
 For a detailed overview, see our [Documentation](https://github.com/Point72/csp-gateway/wiki/Overview).

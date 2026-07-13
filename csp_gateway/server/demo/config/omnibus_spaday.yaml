@@ -1,0 +1,15 @@
+# @package _global_
+defaults:
+  - /gateway: omnibus
+  - _self_
+
+# csp-gateway-start --config-dir=csp_gateway/server/demo +config=omnibus_spaday
+#
+# Same as the `omnibus` config, but serves the spaday-based UI instead of the built-in
+# Perspective/React UI. Requires the `spaday` optional dependency.
+
+port: 8000
+
+gateway:
+  settings:
+    UI_PROVIDER: spaday

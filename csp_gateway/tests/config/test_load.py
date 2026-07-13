@@ -41,3 +41,11 @@ def test_start_load():
         "rest": True,
         "ui": True,
     }
+
+
+def test_spaday_demo_configs_load():
+    """The shipped spaday demo configs compose into a Gateway (guards demo_spaday / omnibus_spaday)."""
+    demo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../server/demo"))
+    for name in ("demo_spaday", "omnibus_spaday"):
+        g = csp_gateway.server.config.load_gateway(overwrite=True, config_dir=demo_dir, overrides=[f"+config={name}"])
+        assert isinstance(g, Gateway), name

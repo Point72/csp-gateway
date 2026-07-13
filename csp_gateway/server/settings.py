@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import AnyHttpUrl, Field
 
@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     )
 
     UI: bool = Field(False, description="Enables ui in the web application")
+
+    UI_PROVIDER: Literal["default", "spaday"] = Field(
+        "default",
+        description="Frontend provider for the UI. 'default' serves the built-in "
+        "Perspective/React UI; 'spaday' serves a spaday-based UI that mimics it "
+        "(requires the 'spaday' optional dependency).",
+    )
 
     # UI customization fields that let downstream applications white-label the
     # default UI from server-side config alone, without a custom Javascript bundle.

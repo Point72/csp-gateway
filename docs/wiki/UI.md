@@ -34,3 +34,25 @@ The rightmost top bar button opens the settings drawer. Depending on your server
 - Email: if your server settings have an email contact, this will generate a `mailto:` link
 - Logs: if your server includes the [`MountOutputsFolder`](MountOutputsFolder) module, this will link to an integrated log and configuration viewer
 - Graph View: if your server includes the [`MountChannelsGraph`](MountChannelsGraph) module, this will link to an integrated graph viewer
+
+## Alternative frontend: spaday
+
+The React/Perspective UI above is the default. `csp-gateway` can optionally serve an alternative frontend built with [spaday](https://github.com/1kbgz/spaday), selected per gateway with the `UI_PROVIDER` setting. It renders the same pieces from the same modules — the Perspective workspace, layout selector, theme toggle, and the settings-drawer actions (shutdown, logs, channels graph, email), plus a "send to a channel" form panel — only the frontend technology differs.
+
+It is an optional extra (it pulls in the `spaday` dependency):
+
+```bash
+pip install 'csp-gateway[spaday]'
+```
+
+Select it in your gateway configuration:
+
+```yaml
+port: 8000
+
+gateway:
+  settings:
+    UI_PROVIDER: spaday
+```
+
+`UI_PROVIDER` defaults to `default` (the React/Perspective UI); set it to `spaday` to use the spaday frontend. Everything else — modules, the REST API, authentication, and `ROOT_PATH` sub-path serving — behaves the same. Selecting `spaday` without the extra installed raises a clear error at startup.

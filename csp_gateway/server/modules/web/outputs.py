@@ -1,6 +1,6 @@
 import os
 import os.path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -16,6 +16,9 @@ from csp_gateway.server import GatewayChannels, GatewayModule
 
 # separate to avoid circular
 from csp_gateway.server.web import GatewayWebApp
+
+if TYPE_CHECKING:
+    from csp_gateway.server.web.spaday_ui import GatewayUI
 
 
 class MountOutputsFolder(GatewayModule):
@@ -67,3 +70,9 @@ class MountOutputsFolder(GatewayModule):
 
                 return StreamingResponse(iterfile(), media_type=media_type)
             raise HTTPException(status_code=404, detail="Not found: {}".format(request.url._url))
+
+    def ui(self, app: "GatewayUI") -> None:
+        # Surface the output/log browser as a link in the spaday settings drawer.
+        from csp_gateway.server.web.spaday_ui import Region
+
+        app.add(Region.DRAWER_RIGHT, app.link_button("Logs", "/outputs"))
