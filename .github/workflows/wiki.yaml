@@ -25,6 +25,6 @@ jobs:
       - uses: actions-ext/python/setup@main
       - run: pip install nbconvert
       - run: jupyter nbconvert examples/Client.ipynb --to markdown --output  ../docs/wiki/Client.md
-      - uses: Andrew-Chen-Wang/github-wiki-action@4e78882ff52f8751488e506e49b221145506ee34  # v5.0.5
+      - uses: Andrew-Chen-Wang/github-wiki-action@1bbb4280446f9630e8e21a18012cbacf3b0f992e  # v5.0.6
         with:
           path: docs/wiki
