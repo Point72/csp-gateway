@@ -135,6 +135,22 @@ def disable_duckdb_state() -> None:
     _USE_DUCKDB_STATE = False
 
 
+def _get_keyby_value(record: Any, subkey: str) -> Any:
+    """Resolve a ``keyby`` term against ``record``, supporting dotted paths into nested structs.
+
+    A ``keyby`` term may reference a field on a nested struct using dotted notation
+    (e.g. ``"security_ob.redwood_security_id"``). Each segment is resolved with ``getattr``; if any
+    segment is missing/None the function returns ``None`` -- matching the behaviour of a plain
+    ``getattr(record, subkey, None)`` for an unset flat key.
+    """
+    value = record
+    for part in subkey.split("."):
+        value = getattr(value, part, None)
+        if value is None:
+            return None
+    return value
+
+
 class StateType(CoreEnum):
     UNKNOWN = 0
     DEFAULT = 1
@@ -209,7 +225,7 @@ class DefaultState(BaseState):
 
         for subkey in self._keyby:
             # extract the key from the record
-            subkey_to_use = getattr(record, subkey, None)
+            subkey_to_use = _get_keyby_value(record, subkey)
 
             if subkey == self._keyby[-1]:
                 # Put the element there if last
@@ -353,7 +369,9 @@ class DuckDBState(object):
                 if filter.by.value is not None:
                     by_val = filter.by.value
                     if isinstance(by_val, str):
-                        by_val = f"'{by_val}'"
+                        # Escape single quotes (SQL string literal) to avoid parser errors / injection.
+                        escaped = by_val.replace("'", "''")
+                        by_val = f"'{escaped}'"
                     cond = f"{self._col_name}.{filter.attr} {filter.by.where} CAST({by_val} AS {attr_type})"
                 elif filter.by.when is not None:
                     cond = f"{self._col_name}.{filter.attr} {filter.by.where} CAST('{filter.by.when}' AS TIMESTAMP)"
@@ -468,7 +486,7 @@ class DuckDBState(object):
             obj_id = None
             for subkey in self._keyby:
                 # extract the key from the record
-                subkey_to_use = getattr(record, subkey, None)
+                subkey_to_use = _get_keyby_value(record, subkey)
 
                 if subkey == self._keyby[-1]:
                     if subkey_to_use not in place.keys():

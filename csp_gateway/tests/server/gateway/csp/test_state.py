@@ -65,6 +65,40 @@ _STATES = [StateType.DUCKDB, StateType.DEFAULT]
 _STRUCTS = [CspStruct, NonCspStruct]
 
 
+class DeepLeaf(Struct):
+    x: int = 0
+    y: str = "y"
+    unset_leaf: str  # intentionally left unset by default
+
+
+class DeepMid(Struct):
+    leaf: DeepLeaf = DeepLeaf()
+    mid_val: int = 0
+    unset_mid: DeepLeaf  # intentionally unset nested struct
+
+
+class DeepRoot(Struct):
+    mid: DeepMid = DeepMid()
+    root_val: int = 0
+    unset_root: DeepMid  # intentionally unset nested struct
+
+
+@pytest.mark.parametrize("use_duckdb", [True, False])
+def test_state_query_filter_string_with_single_quote(use_duckdb):
+    """A string filter value containing a single quote must be handled identically on both backends
+    (DuckDB SQL-escapes it) rather than silently dropped by a DuckDB parser error."""
+    (enable_duckdb_state if use_duckdb else disable_duckdb_state)()
+    try:
+        s = State[CspStruct](keyby=("a",))
+        s.insert(CspStruct(a=1, b="O'Brien"))
+        s.insert(CspStruct(a=2, b="Smith"))
+        q = Query(filters=[Filter(attr="b", by=FilterCondition(value="O'Brien", where="=="))])
+        res = s.query(q)
+        assert [r.a for r in res] == [1]
+    finally:
+        enable_duckdb_state()
+
+
 def test_state():
     for specialization, struct_type in zip(_STATES, _STRUCTS):
         s = State[struct_type]()
@@ -134,6 +168,150 @@ def test_duckdb_nested_filter():
     query2 = Query(filters=[fil2])
     res2 = s.query(query2)
     assert res2 == [ts2]
+
+
+def test_state_keyby_nested():
+    """keyby on a dotted path into a nested struct must resolve per-record (no collapse)."""
+    for specialization, struct_type in zip(_STATES, _STRUCTS):
+        s = State[struct_type](keyby=("g.suba",))
+        assert s.state_type() == specialization
+        ts1 = struct_type(a=0, b="hello", g=CspSubStruct(suba=1, subb="one"))
+        ts2 = struct_type(a=1, b="bye", g=CspSubStruct(suba=2, subb="two"))
+        # ts3 shares g.suba with ts1, so it should replace ts1 rather than create a new slot.
+        ts3 = struct_type(a=2, b="later", g=CspSubStruct(suba=1, subb="one-updated"))
+        s.insert(ts1)
+        s.insert(ts2)
+        s.insert(ts3)
+        res = s.query()
+        assert len(res) == 2
+        by_suba = {r.g.suba: r for r in res}
+        assert by_suba[1] is ts3
+        assert by_suba[2] is ts2
+
+
+def test_get_keyby_value_paths():
+    """Unit-test the dotted-path keyby resolver: depth, missing segments, and edge cases."""
+    gkv = state_module._get_keyby_value
+    root = DeepRoot(root_val=7, mid=DeepMid(mid_val=3, leaf=DeepLeaf(x=5, y="hi")))
+
+    # flat and increasingly deep valid paths
+    assert gkv(root, "root_val") == 7
+    assert gkv(root, "mid.mid_val") == 3
+    assert gkv(root, "mid.leaf.x") == 5
+    assert gkv(root, "mid.leaf.y") == "hi"
+
+    # a falsy-but-present leaf value must be preserved (not treated as missing)
+    assert gkv(DeepRoot(mid=DeepMid(leaf=DeepLeaf(x=0))), "mid.leaf.x") == 0
+
+    # missing top-level attribute
+    assert gkv(root, "nope") is None
+    # missing leaf attribute on an otherwise-valid intermediate
+    assert gkv(root, "mid.leaf.nope") is None
+    # declared but unset scalar leaf
+    assert gkv(root, "mid.leaf.unset_leaf") is None
+    # unset intermediate struct short-circuits (does not raise)
+    assert gkv(root, "unset_root.mid_val") is None
+    assert gkv(root, "mid.unset_mid.x") is None
+    # attempting to descend into a scalar returns None (does not raise)
+    assert gkv(root, "mid.mid_val.x") is None
+
+
+@pytest.mark.parametrize("use_duckdb", [True, False])
+def test_state_keyby_deeply_nested(use_duckdb):
+    """keyby on a 3-level dotted path resolves per-record on both state backends."""
+    (enable_duckdb_state if use_duckdb else disable_duckdb_state)()
+    try:
+        s = State[DeepRoot](keyby=("mid.leaf.x",))
+        assert s.state_type() == (StateType.DUCKDB if use_duckdb else StateType.DEFAULT)
+        r1 = DeepRoot(root_val=1, mid=DeepMid(leaf=DeepLeaf(x=10)))
+        r2 = DeepRoot(root_val=2, mid=DeepMid(leaf=DeepLeaf(x=20)))
+        # r3 shares mid.leaf.x with r1, so it must replace r1 rather than create a new slot.
+        r3 = DeepRoot(root_val=3, mid=DeepMid(leaf=DeepLeaf(x=10)))
+        s.insert(r1)
+        s.insert(r2)
+        s.insert(r3)
+        res = s.query()
+        assert len(res) == 2
+        by_x = {r.mid.leaf.x: r for r in res}
+        assert by_x[10] is r3
+        assert by_x[20] is r2
+    finally:
+        enable_duckdb_state()
+
+
+@pytest.mark.parametrize("use_duckdb", [True, False])
+@pytest.mark.parametrize(
+    "missing_key",
+    [
+        "nope",  # missing top-level attribute
+        "mid.leaf.nope",  # missing leaf attribute on a valid intermediate
+        "mid.leaf.unset_leaf",  # declared but unset scalar leaf
+        "unset_root.mid_val",  # unset intermediate struct
+        "mid.unset_mid.x",  # deep path through an unset intermediate struct
+        "mid.mid_val.x",  # descending into a scalar
+    ],
+)
+def test_state_keyby_unresolvable_path_collapses(use_duckdb, missing_key):
+    """A keyby path that cannot be resolved keys every record under None (last write wins),
+    matching the behaviour of an unset flat key -- and never raises."""
+    (enable_duckdb_state if use_duckdb else disable_duckdb_state)()
+    try:
+        s = State[DeepRoot](keyby=(missing_key,))
+        r1 = DeepRoot(root_val=1, mid=DeepMid(leaf=DeepLeaf(x=10)))
+        r2 = DeepRoot(root_val=2, mid=DeepMid(leaf=DeepLeaf(x=20)))
+        s.insert(r1)
+        s.insert(r2)
+        res = s.query()
+        assert len(res) == 1
+        assert res[0] is r2
+    finally:
+        enable_duckdb_state()
+
+
+@pytest.mark.parametrize("use_duckdb", [True, False])
+def test_state_query_nested_filter(use_duckdb):
+    """State.query filtering by a dotted path into a nested struct works on both backends."""
+    (enable_duckdb_state if use_duckdb else disable_duckdb_state)()
+    try:
+        s = State[DeepRoot](keyby=("root_val",))
+        r1 = DeepRoot(root_val=1, mid=DeepMid(leaf=DeepLeaf(x=10)))
+        r2 = DeepRoot(root_val=2, mid=DeepMid(leaf=DeepLeaf(x=20)))
+        r3 = DeepRoot(root_val=3, mid=DeepMid(leaf=DeepLeaf(x=10)))
+        for r in (r1, r2, r3):
+            s.insert(r)
+        q = Query(filters=[Filter(attr="mid.leaf.x", by=FilterCondition(value=10, where="=="))])
+        res = s.query(q)
+        assert sorted(r.root_val for r in res) == [1, 3]
+    finally:
+        enable_duckdb_state()
+
+
+@pytest.mark.parametrize("use_duckdb", [True, False])
+@pytest.mark.parametrize(
+    "where, value, expected",
+    [
+        ("==", 30, [3]),
+        ("!=", 30, [1, 2, 4, 5]),
+        (">", 25, [3, 4, 5]),
+        (">=", 30, [3, 4, 5]),
+        ("<", 25, [1, 2]),
+        ("<=", 20, [1, 2]),
+    ],
+)
+def test_state_query_nested_filter_operators(use_duckdb, where, value, expected):
+    """Every comparison operator on a nested attr returns the correct (possibly multiple) rows,
+    identically on both backends. Expected sets are non-empty, so a silently-failing DuckDB query
+    (State.query swallows exceptions to []) would fail the assertion rather than pass."""
+    (enable_duckdb_state if use_duckdb else disable_duckdb_state)()
+    try:
+        s = State[DeepRoot](keyby=("root_val",))
+        for rv, x in zip(range(1, 6), [10, 20, 30, 40, 50]):
+            s.insert(DeepRoot(root_val=rv, mid=DeepMid(leaf=DeepLeaf(x=x))))
+        q = Query(filters=[Filter(attr="mid.leaf.x", by=FilterCondition(value=value, where=where))])
+        res = s.query(q)
+        assert sorted(r.root_val for r in res) == expected
+    finally:
+        enable_duckdb_state()
 
 
 def test_many_inserts():
