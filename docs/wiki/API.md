@@ -46,6 +46,19 @@ class ExampleData(GatewayStruct):
 
 If my `GatewayModule` called `set_state("example", ("x",))`, state would be collected as the last tick of `ExampleData` per each unique value of `x`. If called with `set_state("example", ("x", "y"))`, it would be collected as the last tick per each unique pair `x,y`, etc.
 
+Keys may also reference a field on a **nested struct** using a dot-separated path. For example, given:
+
+```python
+class Inner(GatewayStruct):
+    id: str
+
+class ExampleData(GatewayStruct):
+    x: str
+    inner: Inner
+```
+
+`set_state("example", ("inner.id",))` collects the last tick per unique value of `inner.id`, and `set_state("example", ("inner.id", "x"))` per unique `inner.id, x` pair. A path that cannot be resolved (missing or unset segment) is treated as `None`, matching the behavior of an unset flat key.
+
 > [!IMPORTANT]
 >
 > This code and API will likely change a bit as we allow for more granular collection of records,
@@ -72,6 +85,13 @@ api/v1/state/example?query={"filters":[{"attr":"x","by":{"value":5,"where":"=="}
 
 # Filter only records where `record.x` < 50 and `record.x` >= 30
 /api/v1/state/example?query={"filters":[{"attr":"x","by":{"value":50,"where":"<"}},{"attr":"x","by":{"value":30,"where":">="}}]}
+```
+
+Filter attributes (both `attr` and the comparison target `by.attr`) also accept dot-separated paths into nested struct fields:
+
+```raw
+# Filter only records where `record.inner.id` == "abc"
+/api/v1/state/example?query={"filters":[{"attr":"inner.id","by":{"value":"abc","where":"=="}}]}
 ```
 
 > [!IMPORTANT]
