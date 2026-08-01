@@ -27,7 +27,7 @@ importers:
         version: 4.5.1
       '@perspective-dev/server':
         specifier: ~4.5.1
-        version: 4.5.1
+        version: 4.5.2
       '@perspective-dev/viewer':
         specifier: ~4.5.1
         version: 4.5.1
@@ -277,8 +277,11 @@ packages:
   '@perspective-dev/react@4.5.1':
     resolution: {integrity: sha512-GIQIzMS/06HO0gMh46MUVwnezw32OtpbNCY7SiM7PSVUVe4v/AXiBytiSPlbWfD7j+Zh5QRh2o1z41Rx7D5h6Q==}
 
-  '@perspective-dev/server@4.5.1':
-    resolution: {integrity: sha512-VzR1Z+SdUlB4K1hTHFxVE7PLxFXtTb008fBGMg/uo3Y3qDbJh/9IcZjOwvpI86k6QUZ49VR2w3BDGdh7YzF/8A==}
+  '@perspective-dev/server@4.5.2':
+    resolution: {integrity: sha512-VlI+5yq0Cgw01/zylQqRVo32/wXAw7n4gVF8HEsr2oRzcAaRfpxCPwbUgzMkZFjgu7+TC+CUN1wIQ51lUkB79g==}
+
+  '@perspective-dev/server@5.0.0':
+    resolution: {integrity: sha512-tuWAHeOusI+Jva34x5PPXBVnEaXB0Yeq/rfpioUygnLwmz4LJVk+SIjfoK4uEriScbV52dgatQjSbyWzUcKtqQ==}
 
   '@perspective-dev/viewer-charts@4.5.1':
     resolution: {integrity: sha512-O4M45uav+zhommqEQJs05lc2G9/OvAIBUYux04s6TP5zxEuCCZjfAfCJKVLB4rTIeZJGES+lcXoCahktFCMLZg==}
@@ -767,24 +770,28 @@ packages:
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-arm64-musl@1.32.0:
     resolution: {integrity: sha512-UpQkoenr4UJEzgVIYpI80lDFvRmPVg6oqboNHfoH4CQIfNA+HOrZ7Mo7KZP02dC6LjghPQJeBsvXhJod/wnIBg==}
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-linux-x64-gnu@1.32.0:
     resolution: {integrity: sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-x64-musl@1.32.0:
     resolution: {integrity: sha512-bYcLp+Vb0awsiXg/80uCRezCYHNg1/l3mt0gzHnWV9XP1W5sKa5/TCdGWaR/zBM2PeF/HbsQv/j2URNOiVuxWg==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-win32-arm64-msvc@1.32.0:
     resolution: {integrity: sha512-8SbC8BR40pS6baCM8sbtYDSwEVQd4JlFTOlaD3gWGHfThTcABnNDBda6eTZeqbofalIJhFx0qKzgHJmcPTnGdw==}
@@ -1352,7 +1359,7 @@ snapshots:
 
   '@perspective-dev/client@4.5.1':
     dependencies:
-      '@perspective-dev/server': 4.5.1
+      '@perspective-dev/server': 5.0.0
       pro_self_extracting_wasm: 0.0.9
       stoppable: 1.1.0
       ws: 8.20.1
@@ -1376,7 +1383,9 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@perspective-dev/server@4.5.1': {}
+  '@perspective-dev/server@4.5.2': {}
+
+  '@perspective-dev/server@5.0.0': {}
 
   '@perspective-dev/viewer-charts@4.5.1': {}
 
