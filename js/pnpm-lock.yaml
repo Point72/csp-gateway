@@ -30,7 +30,7 @@ importers:
         version: 4.5.1
       '@perspective-dev/viewer':
         specifier: ~4.5.1
-        version: 4.5.1
+        version: 4.5.2
       '@perspective-dev/viewer-charts':
         specifier: ~4.5.1
         version: 4.5.1
@@ -274,11 +274,17 @@ packages:
   '@perspective-dev/client@4.5.1':
     resolution: {integrity: sha512-Yb/huLDHEQ9FFeTloipHKM2oVtgTkHLIEqh971eznOc0sNQGg9Sd7flju8xlKe8KMGe3VCo7/wlvxr4GqBi1Bw==}
 
+  '@perspective-dev/client@5.0.0':
+    resolution: {integrity: sha512-K+Rg+j9GNHsGyD0uI7kng8nuodtdEa/DHQecZYcUe4ikk7ztLuekTAp0DzhIEZWyEdzG5JChFpqvId4RgCuDOw==}
+
   '@perspective-dev/react@4.5.1':
     resolution: {integrity: sha512-GIQIzMS/06HO0gMh46MUVwnezw32OtpbNCY7SiM7PSVUVe4v/AXiBytiSPlbWfD7j+Zh5QRh2o1z41Rx7D5h6Q==}
 
   '@perspective-dev/server@4.5.1':
     resolution: {integrity: sha512-VzR1Z+SdUlB4K1hTHFxVE7PLxFXtTb008fBGMg/uo3Y3qDbJh/9IcZjOwvpI86k6QUZ49VR2w3BDGdh7YzF/8A==}
+
+  '@perspective-dev/server@5.0.0':
+    resolution: {integrity: sha512-tuWAHeOusI+Jva34x5PPXBVnEaXB0Yeq/rfpioUygnLwmz4LJVk+SIjfoK4uEriScbV52dgatQjSbyWzUcKtqQ==}
 
   '@perspective-dev/viewer-charts@4.5.1':
     resolution: {integrity: sha512-O4M45uav+zhommqEQJs05lc2G9/OvAIBUYux04s6TP5zxEuCCZjfAfCJKVLB4rTIeZJGES+lcXoCahktFCMLZg==}
@@ -286,8 +292,11 @@ packages:
   '@perspective-dev/viewer-datagrid@4.5.1':
     resolution: {integrity: sha512-MQyAzigizk32zgZori/8jbWptRJ2UQATi8XaBO9xTcSarr0noDsPp1wxHIDOCSkxoX+0LBOkro+LmQ5AAnLWgw==}
 
-  '@perspective-dev/viewer@4.5.1':
-    resolution: {integrity: sha512-dILBJOlVKwIXwTFkwSJL9ZBk1QQKKnQrgg9CBCZCJEiqe2+ApgW0UlT1XzCCK4uuwHAVHtBaNow237iDqWSf3A==}
+  '@perspective-dev/viewer@4.5.2':
+    resolution: {integrity: sha512-zFgrZt43sG0xyv2g6pI/35r32LoL4NN8N6yYjyyM/kXzmc9jNILIjfWj+4zZLyBshBE9xvWYBmfDXNjMfWf3vA==}
+
+  '@perspective-dev/viewer@5.0.0':
+    resolution: {integrity: sha512-aP1pzORvpZ4ZBbpn/dkp8pGUoCKZ66jqxzfFely6vIONqKwU2gYGJLPkV0bSbVb57sL074OIot02KYimH3i3YA==}
 
   '@perspective-dev/workspace@4.5.1':
     resolution: {integrity: sha512-9hVsVHu6sKwRQkP2ChmIlI/W6ieA2Mr49OiSHVSicEw28INbMZgaEU/Pn21pIsg0S+VOgxcu/b07f37GajSecA==}
@@ -333,8 +342,8 @@ packages:
     resolution: {integrity: sha512-NF+epuEdnUYVlGuhaxbbq+dvJttwLnGY+YixlXlME5KpQ5W3CnXA5cVTneY3SPbPDRkcjMbifrwmFYcClgOZeg==}
     engines: {node: '>= 0.8'}
 
-  bn.js@5.2.3:
-    resolution: {integrity: sha512-EAcmnPkxpntVL+DS7bO1zhcZNvCkxqtkd0ZY53h06GNQ3DEkkGZ/gKgmDv6DdZQGj9BgfSPKtJJ7Dp1GPP8f7w==}
+  bn.js@5.2.5:
+    resolution: {integrity: sha512-Vq886eXykuP5E6HcKSSStP3bJgrE6In5WKxVUvJ8XGpWWYs2xZHWqUwzCtGgEtBcxyd57KBFDPFoUfNzdaHCNg==}
 
   brace-expansion@1.1.14:
     resolution: {integrity: sha512-MWPGfDxnyzKU7rNOW9SP/c50vi3xrmrua/+6hfPbCS2ABNWfx24vPidzvC7krjU/RTo235sV776ymlsMtGKj8g==}
@@ -767,24 +776,28 @@ packages:
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-arm64-musl@1.32.0:
     resolution: {integrity: sha512-UpQkoenr4UJEzgVIYpI80lDFvRmPVg6oqboNHfoH4CQIfNA+HOrZ7Mo7KZP02dC6LjghPQJeBsvXhJod/wnIBg==}
     engines: {node: '>= 12.0.0'}
     cpu: [arm64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-linux-x64-gnu@1.32.0:
     resolution: {integrity: sha512-V7Qr52IhZmdKPVr+Vtw8o+WLsQJYCTd8loIfpDaMRWGUZfBOYEJeyJIkqGIDMZPwPx24pUMfwSxxI8phr/MbOA==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [glibc]
 
   lightningcss-linux-x64-musl@1.32.0:
     resolution: {integrity: sha512-bYcLp+Vb0awsiXg/80uCRezCYHNg1/l3mt0gzHnWV9XP1W5sKa5/TCdGWaR/zBM2PeF/HbsQv/j2URNOiVuxWg==}
     engines: {node: '>= 12.0.0'}
     cpu: [x64]
     os: [linux]
+    libc: [musl]
 
   lightningcss-win32-arm64-msvc@1.32.0:
     resolution: {integrity: sha512-8SbC8BR40pS6baCM8sbtYDSwEVQd4JlFTOlaD3gWGHfThTcABnNDBda6eTZeqbofalIJhFx0qKzgHJmcPTnGdw==}
@@ -931,8 +944,8 @@ packages:
     resolution: {integrity: sha512-95/dZfLmlGc/6Xp7gqvRBgXF8M+osw/Xtalz1U/Va8MpSC1TiR7rM4lEvAs1p/q4v/EZk6bow3tKEclbMGsSFQ==}
     hasBin: true
 
-  qs@6.15.2:
-    resolution: {integrity: sha512-Rzq0KEyX/w/tEybncDgdkZrJgVUsUMk3xjh3t5bv3S1HTAtg+uOYt72+ZfwiQwKdysThkTBdL/rTi6HDmX9Ddw==}
+  qs@6.15.3:
+    resolution: {integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==}
     engines: {node: '>=0.6'}
 
   queue-microtask@1.2.3:
@@ -968,6 +981,9 @@ packages:
   regexp.prototype.flags@1.5.4:
     resolution: {integrity: sha512-dYqgNSZbDwkaJ2ceRd9ojCGjBq+mOm9LmtXnAnEGyHhN/5R7iDW2TRw3h+o/jCFxus3P2LfWIIiwowAjANm7IA==}
     engines: {node: '>= 0.4'}
+
+  regular-layout@0.6.1:
+    resolution: {integrity: sha512-vGDEFACgFbS/d5kLWJ6AMWY/3DYaZoF1P8+y4KIDnPUFqUQgV5bV8avX7836izmexfmz6ik8JZ4V0Xo4FhaZGQ==}
 
   regular-table@0.8.4:
     resolution: {integrity: sha512-VmV3kxmkXX0BehXSFBeF6FMBqyYdciY6d/wI6/5hvXomH7K9nfGASOmitF3WeLsL9eiiattwR+o3tcu4En/Xaw==}
@@ -1057,6 +1073,10 @@ packages:
 
   side-channel@1.1.0:
     resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==}
+    engines: {node: '>= 0.4'}
+
+  side-channel@1.1.1:
+    resolution: {integrity: sha512-6x6dK6zJdpTzF4sQeNYxwtvBzf6Eg4GtlesS94HOvTudUeyK2WXAaIfmDgsyslYrRBeFIlsi54AYsFGUuhmvrQ==}
     engines: {node: '>= 0.4'}
 
   slash@5.1.0:
@@ -1180,6 +1200,18 @@ packages:
 
   ws@8.20.1:
     resolution: {integrity: sha512-It4dO0K5v//JtTXuPkfEOaI3uUN87iYPnqo/ZzqCoG3g8uhA66QUMs/SrM0YK7/NAu+r4LMh/9dq2A7k+rHs+w==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -1362,10 +1394,22 @@ snapshots:
       - supports-color
       - utf-8-validate
 
+  '@perspective-dev/client@5.0.0':
+    dependencies:
+      '@perspective-dev/server': 5.0.0
+      pro_self_extracting_wasm: 0.0.9
+      stoppable: 1.1.0
+      ws: 8.21.1
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
   '@perspective-dev/react@4.5.1':
     dependencies:
       '@perspective-dev/client': 4.5.1
-      '@perspective-dev/viewer': 4.5.1
+      '@perspective-dev/viewer': 5.0.0
       '@perspective-dev/workspace': 4.5.1
       '@types/react': 19.2.15
       react: 19.2.6
@@ -1378,12 +1422,14 @@ snapshots:
 
   '@perspective-dev/server@4.5.1': {}
 
+  '@perspective-dev/server@5.0.0': {}
+
   '@perspective-dev/viewer-charts@4.5.1': {}
 
   '@perspective-dev/viewer-datagrid@4.5.1':
     dependencies:
       '@perspective-dev/client': 4.5.1
-      '@perspective-dev/viewer': 4.5.1
+      '@perspective-dev/viewer': 5.0.0
       regular-table: 0.8.4
     transitivePeerDependencies:
       - bufferutil
@@ -1391,10 +1437,21 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@perspective-dev/viewer@4.5.1':
+  '@perspective-dev/viewer@4.5.2':
     dependencies:
-      '@perspective-dev/client': 4.5.1
+      '@perspective-dev/client': 5.0.0
       pro_self_extracting_wasm: 0.0.9
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
+  '@perspective-dev/viewer@5.0.0':
+    dependencies:
+      '@perspective-dev/client': 5.0.0
+      pro_self_extracting_wasm: 0.0.9
+      regular-layout: 0.6.1
     transitivePeerDependencies:
       - bufferutil
       - debug
@@ -1462,7 +1519,7 @@ snapshots:
     dependencies:
       safe-buffer: 5.1.2
 
-  bn.js@5.2.3: {}
+  bn.js@5.2.5: {}
 
   brace-expansion@1.1.14:
     dependencies:
@@ -1978,7 +2035,7 @@ snapshots:
 
   leb128@0.0.5:
     dependencies:
-      bn.js: 5.2.3
+      bn.js: 5.2.5
       buffer-pipe: 0.0.3
 
   lightningcss-android-arm64@1.32.0:
@@ -2153,9 +2210,10 @@ snapshots:
       - debug
       - supports-color
 
-  qs@6.15.2:
+  qs@6.15.3:
     dependencies:
-      side-channel: 1.1.0
+      es-define-property: 1.0.1
+      side-channel: 1.1.1
 
   queue-microtask@1.2.3: {}
 
@@ -2199,6 +2257,8 @@ snapshots:
       get-proto: 1.0.1
       gopd: 1.2.0
       set-function-name: 2.0.2
+
+  regular-layout@0.6.1: {}
 
   regular-table@0.8.4: {}
 
@@ -2299,6 +2359,14 @@ snapshots:
       side-channel-map: 1.0.1
 
   side-channel@1.1.0:
+    dependencies:
+      es-errors: 1.3.0
+      object-inspect: 1.13.4
+      side-channel-list: 1.0.1
+      side-channel-map: 1.0.1
+      side-channel-weakmap: 1.0.2
+
+  side-channel@1.1.1:
     dependencies:
       es-errors: 1.3.0
       object-inspect: 1.13.4
@@ -2419,7 +2487,7 @@ snapshots:
 
   union@0.5.0:
     dependencies:
-      qs: 6.15.2
+      qs: 6.15.3
 
   url-join@4.0.1: {}
 
@@ -2478,5 +2546,7 @@ snapshots:
       isexe: 2.0.0
 
   ws@8.20.1: {}
+
+  ws@8.21.1: {}
 
   zx@8.8.5: {}
