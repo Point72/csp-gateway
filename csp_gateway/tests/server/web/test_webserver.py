@@ -281,7 +281,8 @@ class TestGatewayWebserver:
         assert isinstance(data, list)
         assert len(data) == 3
 
-        for channel_name, multiplier in ExampleEnum.__metadata__.items():
+        for channel_name, member in ExampleEnum.__members__.items():
+            multiplier = getattr(member, "value", member)
             response = rest_client.get(f"/api/v1/last/basket/{channel_name}?token=test")
             assert response.status_code == 200
 
@@ -342,7 +343,8 @@ class TestGatewayWebserver:
         assert isinstance(data, list)
         assert len(data) == 3
 
-        for channel_name, multiplier in ExampleEnum.__metadata__.items():
+        for channel_name, member in ExampleEnum.__members__.items():
+            multiplier = getattr(member, "value", member)
             response = rest_client.get(f"/api/v1/next/basket/{channel_name}?token=test")
             assert response.status_code == 200
 
