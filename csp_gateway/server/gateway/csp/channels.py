@@ -867,7 +867,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
                 # as we might not know all the keys yet
                 self._send_channels[field, indexer] = (field,)
         else:
-            if _has_indexer(indexer):
+            if indexer is not None:
                 raise TypeError(f"{field} provided with indexer but is not dict basket")
             tstype = tstype.typ
             self._send_channels[field, indexer] = GenericPushAdapter(tstype, name="manual_{}".format(field))

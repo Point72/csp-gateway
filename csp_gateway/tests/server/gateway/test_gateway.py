@@ -32,6 +32,9 @@ class MyEnum(Enum):
     ONE = 1
     TWO = 2
 
+    def __bool__(self):
+        return self.value != 0
+
 
 class MyStruct(GatewayStruct):
     foo: float

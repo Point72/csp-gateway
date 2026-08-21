@@ -291,6 +291,9 @@ def test_create_snapshot_dict_with_zero_valued_enum_key():
     class ZeroBasedEnum(csp.Enum):
         ZERO = 0
 
+        def __bool__(self):
+            return False
+
     value = MyStruct(foo=1.0)
     snapshot_dict = _create_snapshot_dict(
         [CVM(channel="enum_basket", value=value, dict_basket_key=ZeroBasedEnum.ZERO, timestamp=datetime(2020, 1, 1))]
