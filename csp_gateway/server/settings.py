@@ -79,6 +79,18 @@ class Settings(BaseSettings):
         "*.js and *.css files are additionally auto-injected into the UI in sorted filename order. Do "
         "not point this at a directory containing private files.",
     )
+    THEME: dict[str, str] = Field(
+        default_factory=dict,
+        description="Design tokens for the spaday UI, overriding the built-in light-mode palette. "
+        "Recognized slots are surface, surface_2, border, muted, text and page; any other key is "
+        "emitted as a CSS custom property (underscores become dashes), so WebAwesome tokens like "
+        "wa_color_brand_fill_loud can be set here too. Ignored by the legacy UI provider.",
+    )
+    THEME_DARK: dict[str, str] = Field(
+        default_factory=dict,
+        description="Dark-mode counterpart to THEME, applied when the UI is in dark mode. Keys not "
+        "given here fall back to the built-in dark palette, not to THEME.",
+    )
 
     # DEPRECATED auth settings
     # Historically (csp-gateway <2.5), auth was configured via these two fields

@@ -56,3 +56,23 @@ gateway:
 ```
 
 `UI_PROVIDER` defaults to `default` (the React/Perspective UI); set it to `spaday` to use the spaday frontend. Everything else — modules, the REST API, authentication, and `ROOT_PATH` sub-path serving — behaves the same. Selecting `spaday` without the extra installed raises a clear error at startup.
+
+### Theming the spaday UI
+
+The spaday shell is themed with design tokens rather than a stylesheet, set per mode with `THEME` and `THEME_DARK`:
+
+```yaml
+gateway:
+  settings:
+    UI_PROVIDER: spaday
+    THEME:
+      page: "#f7f2ea"
+      surface: "#ffffff"
+      wa_color_brand_fill_loud: "#8b1f2f"
+    THEME_DARK:
+      page: "#1a1412"
+```
+
+The recognized slots are `surface`, `surface_2`, `border`, `muted`, `text` and `page`; any key not in that list is emitted as a CSS custom property with underscores turned into dashes, so WebAwesome's own tokens (`wa_color_brand_fill_loud` above) can be set the same way. Unset slots fall back to that mode's built-in default, so `THEME_DARK` only needs the values that differ.
+
+Tokens are the right tool for branding because the UI is built from web components whose internals are shadow DOM: they cannot be reached by an external stylesheet, but they do inherit custom properties.

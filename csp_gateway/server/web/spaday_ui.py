@@ -83,21 +83,76 @@ _ANONYMOUS_TENANT = "__anonymous__"
 
 # Minimal shell theming so the spaday page looks reasonable in both light and dark modes.
 # Keyed off the ``wa-dark`` class that ``App().bind_root_class("wa-dark", "dark")`` toggles.
-THEME_CSS = """<style>
-      html, body { height: 100%; }
-      body { margin: 0; font-family: system-ui, sans-serif; }
-      spa-app { --spa-gap: 0.75rem; height: 100vh; }
-      html:not(.wa-dark) { background: #eef1f5; }
-      html:not(.wa-dark) spa-app {
-        --spa-surface: #ffffff; --spa-surface-2: #f3f5f8; --spa-border: #dde3ec; --spa-muted: #5a6a80;
-        color: #1a2230; background: #eef1f5;
-      }
-      html.wa-dark { background: #1b222e; }
-      html.wa-dark spa-app {
-        --spa-surface: #222b39; --spa-surface-2: #2a3445; --spa-border: #3b4860; --spa-muted: #8fa3c0;
-        color: #e6eefb; background: #1b222e;
-      }
+_LIGHT_THEME = {
+    "surface": "#ffffff",
+    "surface_2": "#f3f5f8",
+    "border": "#dde3ec",
+    "muted": "#5a6a80",
+    "text": "#1a2230",
+    "page": "#eef1f5",
+}
+_DARK_THEME = {
+    "surface": "#222b39",
+    "surface_2": "#2a3445",
+    "border": "#3b4860",
+    "muted": "#8fa3c0",
+    "text": "#e6eefb",
+    "page": "#1b222e",
+}
+
+#: Named palette slots -> the `spa-*` shell token they drive (see `spaday.theme.SHELL_TOKENS`).
+_SHELL_SLOTS = {
+    "surface": "--spa-surface",
+    "surface_2": "--spa-surface-2",
+    "border": "--spa-border",
+    "muted": "--spa-muted",
+}
+
+# A token value is interpolated into a <style> block, so anything that could close a declaration or
+# escape the element is rejected rather than escaped -- no legitimate value needs these.
+_UNSAFE_TOKEN_CHARS = set("{}<>;@")
+
+
+def _theme_declarations(overrides: dict[str, str], defaults: dict[str, str]) -> tuple[str, str]:
+    """The `spa-app` declarations for one mode, plus that mode's page background.
+
+    Recognized slots map onto the shell's own tokens; anything else is passed through as a CSS
+    custom property, which is how WebAwesome components are themed (their internals are shadow
+    DOM and reachable only through custom properties).
+    """
+    for name, value in overrides.items():
+        if set(value) & _UNSAFE_TOKEN_CHARS:
+            raise ValueError(f"Invalid character in theme token {name!r}: {value!r}")
+    tokens = {**defaults, **overrides}
+    page = tokens["page"]
+    declarations = [f"{prop}: {tokens[slot]};" for slot, prop in _SHELL_SLOTS.items()]
+    declarations.append(f"color: {tokens['text']};")
+    declarations.append(f"background: {page};")
+    declarations += [f"--{name.replace('_', '-')}: {value};" for name, value in overrides.items() if name not in defaults]
+    return " ".join(declarations), page
+
+
+def theme_css(light: dict[str, str] | None = None, dark: dict[str, str] | None = None) -> str:
+    """The `<style>` block for the shell palette, keyed off the `wa-dark` class.
+
+    Emitted as a stylesheet rather than `App().css(...)` because the two modes need different
+    values for the same token, which a single set of inline custom properties cannot express.
+    """
+    light_decls, light_page = _theme_declarations(light or {}, _LIGHT_THEME)
+    dark_decls, dark_page = _theme_declarations(dark or {}, _DARK_THEME)
+    return f"""<style>
+      html, body {{ height: 100%; }}
+      body {{ margin: 0; font-family: system-ui, sans-serif; }}
+      spa-app {{ --spa-gap: 0.75rem; height: 100vh; }}
+      html:not(.wa-dark) {{ background: {light_page}; }}
+      html:not(.wa-dark) spa-app {{ {light_decls} }}
+      html.wa-dark {{ background: {dark_page}; }}
+      html.wa-dark spa-app {{ {dark_decls} }}
     </style>"""
+
+
+#: The default (unconfigured) palette, kept for callers that do not vary the theme.
+THEME_CSS = theme_css()
 
 
 @dataclass
@@ -691,6 +746,7 @@ class GatewayUI:
         """
         title = getattr(self._settings, "TITLE", "Gateway")
         root = getattr(self._settings, "ROOT_PATH", "") or ""
+        head = theme_css(getattr(self._settings, "THEME", None), getattr(self._settings, "THEME_DARK", None))
         # spaday's mount() appends plain Starlette routes, which do not carry the FastAPI auth
         # dependencies. Build them on a scratch app under the ROOT_PATH prefix (so the emitted page URLs
         # — /js runtime, wasm — resolve under a proxied sub-path), then re-register with the prefix
@@ -719,7 +775,7 @@ class GatewayUI:
             wire=wire,
             routes=routes,
             store={"dark": False, **self._store_seeds},
-            head=THEME_CSS,
+            head=head,
             title=title,
             prefix=root,
         )

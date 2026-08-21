@@ -169,3 +169,49 @@ class TestRootPathNormalization:
             assert '<base href="/watchtower/" />' in client.get("/").text
         finally:
             gateway.stop()
+
+
+class TestSpadayTheme:
+    """The spaday shell palette is configurable through design tokens."""
+
+    def test_defaults_render_the_builtin_palette(self):
+        pytest.importorskip("spaday")
+        from csp_gateway.server.web.spaday_ui import theme_css
+
+        css = theme_css()
+        assert "--spa-surface: #ffffff;" in css
+        assert "--spa-surface: #222b39;" in css
+
+    def test_tokens_override_each_mode_independently(self):
+        pytest.importorskip("spaday")
+        from csp_gateway.server.web.spaday_ui import theme_css
+
+        css = theme_css({"surface": "#fff8f0"}, {"surface": "#2b1d16"})
+        assert "--spa-surface: #fff8f0;" in css
+        assert "--spa-surface: #2b1d16;" in css
+        # An unset slot still falls back to that mode's own default, not to the other mode.
+        assert "--spa-muted: #5a6a80;" in css
+        assert "--spa-muted: #8fa3c0;" in css
+
+    def test_unrecognized_keys_pass_through_as_custom_properties(self):
+        pytest.importorskip("spaday")
+        from csp_gateway.server.web.spaday_ui import theme_css
+
+        # This is how WebAwesome components are branded: their internals are shadow DOM and
+        # reachable only through inherited custom properties.
+        assert "--wa-color-brand-fill-loud: #8b1f2f;" in theme_css({"wa_color_brand_fill_loud": "#8b1f2f"})
+
+    def test_token_values_cannot_escape_the_style_block(self):
+        pytest.importorskip("spaday")
+        from csp_gateway.server.web.spaday_ui import theme_css
+
+        with pytest.raises(ValueError, match="Invalid character"):
+            theme_css({"page": "red; } body { display: none"})
+
+    def test_theme_reaches_the_served_page(self, tmp_path):
+        pytest.importorskip("spaday")
+        client, gateway = _make_client(tmp_path, UI_PROVIDER="spaday", THEME={"surface": "#fff8f0"})
+        try:
+            assert "--spa-surface: #fff8f0;" in client.get("/").text
+        finally:
+            gateway.stop()
