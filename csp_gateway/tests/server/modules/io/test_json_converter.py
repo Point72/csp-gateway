@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from enum import IntEnum
 from typing import Annotated, Any
 
 import csp
@@ -288,6 +289,17 @@ def test_convert_orjson_compatible():
 
     my_str = "hai"
     assert _convert_orjson_compatible(my_str) == my_str
+
+
+def test_create_snapshot_dict_with_zero_valued_enum_key():
+    class ZeroBasedEnum(IntEnum):
+        ZERO = 0
+
+    value = MyStruct(foo=1.0)
+    snapshot_dict = _create_snapshot_dict(
+        [CVM(channel="enum_basket", value=value, dict_basket_key=ZeroBasedEnum.ZERO, timestamp=datetime(2020, 1, 1))]
+    )
+    assert snapshot_dict["enum_basket"] == {"ZERO": _convert_orjson_compatible(value)}
 
 
 def test_parse_snapshot_dict():

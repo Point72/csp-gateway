@@ -75,6 +75,11 @@ def _normalize_keyby(keyby: str | tuple[str, ...] | list) -> tuple[str, ...]:
     return (keyby,)
 
 
+def _has_indexer(indexer) -> bool:
+    # Preserve the legacy empty-string sentinel while accepting zero-valued keys.
+    return indexer not in (None, "")
+
+
 class _SnapshotModelBaseClass(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", coerce_numbers_to_str=True)
 
@@ -375,9 +380,9 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             self._modules_connections_graph[field] = {"getters": [], "setters": []}
 
         if isinstance(module, str):
-            name = f"{module}{f'<{indexer}>' if indexer else ''}"
+            name = f"{module}{f'<{indexer}>' if _has_indexer(indexer) else ''}"
         else:
-            name = f"{module.__class__.__name__}{f'<{indexer}>' if indexer else ''}"
+            name = f"{module.__class__.__name__}{f'<{indexer}>' if _has_indexer(indexer) else ''}"
 
         if setting:
             if name not in self._modules_connections_graph[field]["setters"]:
@@ -727,7 +732,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             # now set field to the delayed edge
             setattr(self, field, self._delayed_channels[field])
 
-        if is_dict_basket(tstype) and indexer:
+        if is_dict_basket(tstype) and _has_indexer(indexer):
             # if using an indexer, return that edge (raise if not recognized)
             if indexer not in self._keys_for_channel(field):
                 raise GatewayException(
@@ -770,11 +775,11 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             gateway_tstype = tstype
 
         # validate arguments
-        if _is_dict_basket and isinstance(edge, Edge) and not indexer:
+        if _is_dict_basket and isinstance(edge, Edge) and not _has_indexer(indexer):
             # if its a dict basket and you set an edge, you need to provide an indexer
             raise GatewayException(f"Field `{field}` refers to a dict basket, and you have provided an edge {edge} but not an indexer")
 
-        if _is_dict_basket and isinstance(edge, dict) and indexer:
+        if _is_dict_basket and isinstance(edge, dict) and _has_indexer(indexer):
             # if its a dict basket and you set a dict, you should not provide an indexer
             raise GatewayException(f"Field `{field}` refers to a dict basket, and you have provided an edge basket but also an indexer {indexer}")
 
@@ -786,7 +791,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             # must provide an edge type
             raise TypeError(f"Edge provided for field `{field}` is not an `Edge` instance {edge}")
 
-        if not _is_dict_basket and indexer:
+        if not _is_dict_basket and _has_indexer(indexer):
             # don't provide an indexer for non-dict basket
             raise GatewayException(f"Indexer provided for field `{field}` but it is not a basket instance")
 
@@ -967,7 +972,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         tstype = self.get_outer_type(field)
 
         # First ensure edge is constructed
-        if indexer:
+        if _has_indexer(indexer):
             edge = self.get_channel(field, indexer)
         else:
             edge = self.get_channel(field)
@@ -990,7 +995,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         trigger = ConcurrentFutureAdapter(name=f"RequestLast<{edge_type_name}>")
 
         if is_dict_basket(tstype):
-            if indexer:
+            if _has_indexer(indexer):
                 named_on_request_node_dict_basket(f"QueryLast<Basket<{edge_type_name}>>")({indexer: edge}, trigger.out())
             else:
                 named_on_request_node_dict_basket(f"QueryLast<Basket<{edge_type_name}>>")(edge, trigger.out())
@@ -1009,7 +1014,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         tstype = self.get_outer_type(field)
 
         # First ensure edge is constructed
-        if indexer:
+        if _has_indexer(indexer):
             edge = self.get_channel(field, indexer)
         else:
             edge = self.get_channel(field)
@@ -1032,7 +1037,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         trigger = ConcurrentFutureAdapter(name=f"RequestLast<{edge_type_name}>")
 
         if is_dict_basket(tstype):
-            if indexer:
+            if _has_indexer(indexer):
                 named_wait_for_next_node_dict_basket(f"QueryNext<Basket<{edge_type_name}>>")({indexer: edge}, trigger.out())
             else:
                 named_wait_for_next_node_dict_basket(f"QueryNext<Basket<{edge_type_name}>>")(edge, trigger.out())
@@ -1067,7 +1072,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         tstype = self.get_outer_type(field)
 
         if is_dict_basket(tstype):
-            if indexer:
+            if _has_indexer(indexer):
                 # wire in now
                 tstype = get_dict_basket_value_type(tstype)
                 self._send_channels[field, indexer] = GenericPushAdapter(tstype, name=f"manual_{field}[{indexer}]")
@@ -1118,7 +1123,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
 
         # wait for result
         result = future.result(timeout=timeout)
-        if indexer:
+        if _has_indexer(indexer):
             return result.get(indexer)
         return result
 
@@ -1134,7 +1139,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
 
         # wait for result
         result = future.result(timeout=timeout)
-        if indexer:
+        if _has_indexer(indexer):
             return result.get(indexer)
         return result
 
@@ -1331,7 +1336,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
     def _check(self, field: str, where: dict, kind: str, indexer: str | int | None = None) -> None:
         if (field, indexer) not in where:
             # TODO should only be called once the graph is started
-            raise NoProviderException("Nobody provides {}: {}{}".format(kind, field, f"-{indexer}" if indexer else ""))
+            raise NoProviderException("Nobody provides {}: {}{}".format(kind, field, f"-{indexer}" if _has_indexer(indexer) else ""))
 
     def override(self, field: str, value: Any) -> None:
         raise NotImplementedError()

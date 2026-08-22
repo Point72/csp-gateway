@@ -103,7 +103,7 @@ class ChannelsFactory(BaseModel, Generic[ChannelsType]):
 
         # second pass to finish connecting in wires
         for (field, indexer), push_adapter in channels._send_channels.items():
-            with channels._connection_context(f"Send[{field}]{f'<{indexer}>' if indexer else ''}"):
+            with channels._connection_context(f"Send[{field}]{f'<{indexer}>' if indexer not in (None, '') else ''}"):
                 # Add it as an edge on the StreamGroup
                 if isinstance(push_adapter, GenericPushAdapter):
                     channels.set_channel(field, push_adapter.out(), indexer=indexer)

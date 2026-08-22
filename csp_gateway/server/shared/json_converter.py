@@ -93,7 +93,7 @@ def _create_snapshot_dict(all_data: list[ChannelValueModel]) -> dict[str, Any]:
     for data in all_data:
         channel = data.channel
         value = _convert_orjson_compatible(data.value)
-        if key := data.dict_basket_key:
+        if (key := data.dict_basket_key) not in (None, ""):
             res[channel][_convert_orjson_compatible(key)] = value
         else:
             res[channel] = value
