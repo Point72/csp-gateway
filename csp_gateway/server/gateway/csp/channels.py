@@ -2,7 +2,7 @@ import warnings
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from datetime import datetime
-from enum import Enum
+from enum import Enum as PyEnum
 from logging import getLogger
 from typing import (
     TYPE_CHECKING,
@@ -14,7 +14,7 @@ from typing import (
 )
 
 import csp
-from csp import ts
+from csp import Enum as CspEnum, ts
 from csp.impl.genericpushadapter import GenericPushAdapter
 from csp.impl.types.container_type_normalizer import ContainerTypeNormalizer
 from csp.impl.types.tstype import TsType, isTsType
@@ -81,7 +81,7 @@ class _SnapshotModelBaseClass(BaseModel):
 
 def _recursive_remove_enums(vals_dict):
     for k, v in list(vals_dict.items()):
-        is_enum_key = isinstance(k, Enum)
+        is_enum_key = isinstance(k, (PyEnum, CspEnum))
         is_dict_value = isinstance(v, dict)
         if is_enum_key:
             v = vals_dict.pop(k)
@@ -400,7 +400,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         if is_dict_basket(tstype):
             # get type of key in basket
             basket_key_type = get_dict_basket_key_type(tstype)
-            if issubclass(basket_key_type, Enum):
+            if issubclass(basket_key_type, (PyEnum, CspEnum)):
                 return {e: None for e in basket_key_type}
             else:
                 return self._dynamic_keys.get(field, {})
@@ -1081,7 +1081,7 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             tstype = tstype.typ
             self._send_channels[field, indexer] = GenericPushAdapter(tstype, name=f"manual_{field}")
 
-    def _add_send_channel_dict_basket(self, field: str, keys: list[str] | Enum) -> None:
+    def _add_send_channel_dict_basket(self, field: str, keys: list[str] | type[PyEnum] | type[CspEnum]) -> None:
         # NOTE: Do not call this directly, it is used in the factory finalization
 
         # get type of edge

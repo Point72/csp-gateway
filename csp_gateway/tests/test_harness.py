@@ -8,6 +8,16 @@ from csp_gateway.testing import GatewayTestHarness
 from csp_gateway.testing.shared_helpful_classes import MyGateway, MyGatewayChannels, MyStruct
 
 
+def test_assert_attr_unset_uses_gateway_struct_field_presence():
+    h = GatewayTestHarness(test_channels=[MyGatewayChannels.my_channel])
+    h.send(MyGatewayChannels.my_channel, MyStruct())
+    h.assert_attr_unset(MyGatewayChannels.my_channel, "foo")
+    h.assert_attr_unset(MyGatewayChannels.my_channel, "my_flag", unset=False)
+
+    gateway = MyGateway(modules=[h], channels=MyGatewayChannels())
+    csp.run(gateway.graph, starttime=datetime(2020, 1, 1), endtime=timedelta(0))
+
+
 @pytest.mark.parametrize("make_invalid", (True, False))
 def test_delay(make_invalid):
     channels = [

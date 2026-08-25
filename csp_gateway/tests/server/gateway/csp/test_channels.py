@@ -66,6 +66,12 @@ class MyGatewayChannels(GatewayChannels):
     my_array_channel: ts[Numpy1DArray[float]] = None
 
 
+def test_csp_enum_dict_basket_has_static_keys():
+    channels = MyGatewayChannels()
+
+    assert set(channels._keys_for_channel("my_enum_basket")) == set(MyEnum)
+
+
 class DerivedChannels(MyGatewayChannels):
     pass
 

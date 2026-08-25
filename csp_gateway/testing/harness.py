@@ -191,7 +191,12 @@ class GatewayAssertAttrUnsetEvent(BaseGatewayTestEvent):
     attr: str
 
     def apply(self, now, values, tick_counts, *args, **kwargs):
-        assert hasattr(values[self.channel], self.attr) == (not self.unset)
+        value = values[self.channel]
+        if hasattr(value, "_implicitly_unset"):
+            is_set = self.attr not in value._implicitly_unset() and getattr(value, self.attr, None) is not None
+        else:
+            is_set = hasattr(value, self.attr)
+        assert is_set == (not self.unset)
 
 
 class GatewayAssertLenEvent(BaseGatewayTestEvent):
@@ -256,7 +261,12 @@ class GatewayAssertIdxAttrUnsetEvent(BaseGatewayTestEvent):
     attr: str
 
     def apply(self, now, values, tick_counts, *args, **kwargs):
-        assert hasattr(values[self.channel][self.idx], self.attr) == (not self.unset)
+        value = values[self.channel][self.idx]
+        if hasattr(value, "_implicitly_unset"):
+            is_set = self.attr not in value._implicitly_unset() and getattr(value, self.attr, None) is not None
+        else:
+            is_set = hasattr(value, self.attr)
+        assert is_set == (not self.unset)
 
 
 class GatewayAssertTickedEvents(BaseGatewayTestEvent):
