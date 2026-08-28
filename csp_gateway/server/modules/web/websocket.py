@@ -14,7 +14,8 @@ from uvicorn.protocols.utils import ClientDisconnected
 
 from csp_gateway.server import ChannelSelection, GatewayChannels, GatewayModule
 
-# separate to avoid circular
+# Imported from the leaf module, not the `csp_gateway.server` package: that package re-exports
+# `.modules` before `.web`, so it is only partially initialized while this module is imported.
 from csp_gateway.server.web import (
     GatewayWebApp,
     get_default_responses,

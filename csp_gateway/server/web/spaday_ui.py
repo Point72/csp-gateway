@@ -30,10 +30,10 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "The spaday UI provider (Settings.UI_PROVIDER='spaday') requires the 'spaday' "
-        "dependency, which ships with csp-gateway. Reinstall it with: pip install csp-gateway."
+        "dependency and its companion packages. Install them with: pip install 'csp-gateway[server]'."
     ) from exc
 
-from spaday import Js, element
+from spaday import Js, Wire, element
 from spaday.actions import (
     CallEndpoint,
     Download,
@@ -757,7 +757,8 @@ class GatewayUI:
 
         # On-demand main tabs: registered tabs (`add_tab`) plus the send panel behind "+". The
         # workspace sits in a regular-layout whose layout starts as just the workspace tab; opening
-        # a tab inserts its frame (closeable, draggable), and the chrome only exists while more
+        # a tab inserts its frame (closeable, but not draggable -- the layout is locked below), and
+        # the chrome only exists while more
         # than one tab is open — `regular-layout-update` keeps `main_tabbed` in sync, driving the
         # solo-mode class. With no tabs registered and no send panel, the main region is exactly
         # the plain workspace it always was.
@@ -975,8 +976,6 @@ class GatewayUI:
         wire: Any = None
         routes: list = []
         if self._models:
-            from spaday import Wire
-
             wire = [Wire("/ws", namespace=namespace) for namespace in self._models]
             routes = [WebSocketRoute("/ws", self._ws_endpoint())]
         _spaday_mount(

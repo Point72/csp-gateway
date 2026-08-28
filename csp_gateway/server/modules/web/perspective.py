@@ -451,6 +451,8 @@ class MountPerspectiveTables(GatewayModule):
 
         # Add server-defined views
         for new_table_name, view_config in self.server_views.items():
+            # Copy: `self.server_views` is user configuration and is read again on a reconnect.
+            view_config = dict(view_config)
             base_table = self._client.open_table(view_config.pop("table"))
             view = base_table.view(**view_config)
             self._table_insts[new_table_name] = self._client.table(view, name=new_table_name)
