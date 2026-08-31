@@ -14,7 +14,7 @@ authors = [
 description = "csp-gateway is a framework for building high-performance streaming applications"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-version = "2.9.0"
+version = "3.0.0"
 requires-python = ">=3.11"
 keywords = [
     "csp",
@@ -132,7 +132,7 @@ Repository = "https://github.com/Point72/csp-gateway"
 Homepage = "https://github.com/Point72/csp-gateway/wiki"
 
 [tool.bumpversion]
-current_version = "2.9.0"
+current_version = "3.0.0"
 commit = true
 tag = false
 commit_args = "-s"
