@@ -47,7 +47,7 @@ jobs:
           version: ${{ matrix.python-version }}
 
       - name: Setup Node.js
-        uses: actions-ext/node/setup@0ea5bdcd24d2488b28e16bf611b446a2f8e1e12f
+        uses: actions-ext/node/setup@76f3a17a300e54d13e6486d4caecfaa41833bf70
         with:
           version: ${{ matrix.node-version }}
 
@@ -130,7 +130,7 @@ jobs:
           version: ${{ matrix.python-version }}
 
       - name: Setup Node.js
-        uses: actions-ext/node/setup@0ea5bdcd24d2488b28e16bf611b446a2f8e1e12f
+        uses: actions-ext/node/setup@76f3a17a300e54d13e6486d4caecfaa41833bf70
         with:
           version: 22.x
 
