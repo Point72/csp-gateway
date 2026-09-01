@@ -108,7 +108,7 @@ server = [
     # 0.2.6 documents that frame content fills ::part(container) with height:100%, not flex:1.
     "spaday-regular-layout>=0.2.6",
     "spaday-webawesome>=0.2.0",
-    "uvicorn>=0.28.1,<0.50",
+    "uvicorn>=0.28.1,<0.53",
     "uvloop",
     "websockets",
 ]
