@@ -98,7 +98,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Test source distribution
-        uses: actions-ext/python/test-sdist@6e1b91a408ea89f49bc8aff8724f83826f7b5446
+        uses: actions-ext/python/test-sdist@1151b211cbac1137879fd28605e82a9f4511e0db
         with:
           module: csp_gateway
         if: matrix.os == 'ubuntu-latest'
