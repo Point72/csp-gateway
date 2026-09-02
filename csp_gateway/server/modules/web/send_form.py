@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
 
@@ -65,29 +65,17 @@ class MountSendForm(GatewayModule):
         # to a `/send/{channel}` route that `MountRestRoutes` intentionally did not mount.
         allowed = set(self.mount_send.select_from(web_app.gateway.channels_model))
 
-        # Collect the selectable keys per dict-basket channel from its keyed send adapters.
-        keys_by_channel: dict[str, list[str]] = {}
-        for channel, indexer in channels._send_channels:
-            if indexer is not None and web_app._is_dict_basket_field(channel):
-                keys_by_channel.setdefault(channel, []).append(getattr(indexer, "name", None) or str(indexer))
-
         forms = []
-        seen: set[str] = set()
-        for channel, _indexer in channels._send_channels:
-            if channel in seen or channel not in allowed:
+        for descriptor in channels.send_channel_descriptors():
+            channel = descriptor.channel
+            if channel not in allowed:
                 continue
-            seen.add(channel)
-            model = web_app._get_field_pydantic_type(channel)
-            if model is None:
-                continue
-            if get_origin(model) is list:
-                model = get_args(model)[0]
             forms.append(
                 SendSpec(
                     channel=channel,
                     url=f"{web_app.settings.API_STR}/send/{channel}",
-                    model=model,
-                    keys=keys_by_channel.get(channel, []),
+                    model=descriptor.model,
+                    keys=descriptor.keys,
                     overrides=self._overrides_for(channel),
                 )
             )

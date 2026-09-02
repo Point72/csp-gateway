@@ -250,6 +250,14 @@ class TestSpadaySendFormDetails:
         assert "/api/v1/send/basket" in tree
         assert "send_key_basket" in tree
 
+    def test_send_channel_descriptors(self, client: TestClient, gateway):
+        descriptors = gateway.channels.send_channel_descriptors()
+
+        assert [(descriptor.channel, descriptor.model, descriptor.is_dict_basket, descriptor.keys) for descriptor in descriptors] == [
+            ("orders", Order, False, []),
+            ("basket", Order, True, ["A", "B"]),
+        ]
+
 
 class TestDefaultLayout:
     """The generated layout is a Perspective 5 whole-element config."""
