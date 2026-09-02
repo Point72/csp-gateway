@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field as _dc_field
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
@@ -513,7 +514,9 @@ class GatewayUI:
         Returns a single component (a ``display:contents`` wrapper holding the button and its
         dialog, which renders in the top layer), so it can be added to one region.
         """
-        dialog_id = f"gateway-confirm-{abs(hash((label, url))) % 100000}"
+        # Digest rather than hash(): string hashing is salted per process, so the rendered id -- and
+        # with it the whole page -- would change on every restart.
+        dialog_id = f"gateway-confirm-{sha256(f'{label}:{url}'.encode()).hexdigest()[:8]}"
         button = WaButton(variant=variant).text(label).on("click", Toggle(by_id(dialog_id), "open")).style(width="100%")
         dialog = (
             WaDialog(label=f"Confirm {label}")
@@ -684,6 +687,53 @@ class GatewayUI:
 
         return Column(selector, *channel_forms, status, gap="0.9rem").style(max_width="460px", margin="0 auto", padding="0.25rem")
 
+    def _main_content(self, workspace: Any, bottom_items: list, bottom_panels: list, bottom_tabbed: bool, bottom_label: str) -> Any:
+        """The main region: the workspace, plus any on-demand tabs opened beside it.
+
+        Registered tabs (`add_tab`) and the send panel behind "+" share a regular-layout whose
+        layout starts as just the workspace. Opening a tab inserts its frame; the chrome only
+        exists while more than one tab is open, which `regular-layout-update` tracks in
+        `main_tabbed` to drive the solo-mode class. With nothing registered the main region is
+        exactly the plain workspace it was before tabs existed.
+        """
+        tab_entries: list[tuple[str, str, Any, bool]] = [
+            (name, label, component, closeable) for _, name, label, component, closeable in sorted(self._tabs, key=lambda t: t[0])
+        ]
+        if bottom_items:
+            if bottom_tabbed:
+                send_tabs = Tabs()
+                for label, component in bottom_panels:
+                    send_tabs.tab(label, component)
+                send_body: Any = send_tabs
+            else:
+                send_body = Column(*bottom_items, gap="1rem")
+            tab_entries.append((_SEND_TAB, bottom_label, send_body.style(max_width="640px", margin="0 auto"), True))
+        if not tab_entries:
+            return workspace
+
+        # Nothing reopens a closed workspace, so its close control is hidden.
+        frames = [RegularLayoutFrame(workspace, name=_WORKSPACE_TAB).prop("data-no-close", "true")]
+        titles = [f'--regular-layout-{_WORKSPACE_TAB}--title: "Workspace"']
+        for name, label, component, closeable in tab_entries:
+            resolved = component() if callable(component) else component
+            frame = RegularLayoutFrame(resolved, name=name, style="box-sizing: border-box")
+            if not closeable:
+                frame = frame.prop("data-no-close", "true")
+            frames.append(frame)
+            titles.append(f"--regular-layout-{name}--title: {json.dumps(label)}")
+        open_count = cond(event_value("children"), 2, event_value("tabs.length"))
+        self._store_seeds.setdefault("main_tabbed", False)
+        return (
+            RegularLayout(*frames, layout={"type": "tab-layout", "tabs": [_WORKSPACE_TAB]})
+            .prop("id", _MAIN_LAYOUT_ID)
+            # Tabs open, select, and close, but drag-rearranging is disabled: the nested
+            # Perspective workspace is itself a regular-layout, which makes drags confusing.
+            .prop("locked", True)
+            .prop("style", "; ".join(titles))
+            .compute("class", cond(field("main_tabbed"), "spa", "spa spa-solo"))
+            .on("regular-layout-update", SetField("main_tabbed", not_(eq(open_count, 1))))
+        )
+
     def build_page(self) -> Any:
         """Assemble the full spaday page from the region registry plus the built-in shell chrome."""
         ui_config = getattr(self._web_app, "_ui_config_raw", None) or {}
@@ -755,51 +805,7 @@ class GatewayUI:
         else:
             workspace = Column(*main_items, gap="1rem").style(height="100%")
 
-        # On-demand main tabs: registered tabs (`add_tab`) plus the send panel behind "+". The
-        # workspace sits in a regular-layout whose layout starts as just the workspace tab; opening
-        # a tab inserts its frame (closeable, but not draggable -- the layout is locked below), and
-        # the chrome only exists while more
-        # than one tab is open — `regular-layout-update` keeps `main_tabbed` in sync, driving the
-        # solo-mode class. With no tabs registered and no send panel, the main region is exactly
-        # the plain workspace it always was.
-        registered_tabs = sorted(self._tabs, key=lambda t: t[0])
-        tab_entries: list[tuple[str, str, Any, bool]] = [
-            (name, label, component, closeable) for _, name, label, component, closeable in registered_tabs
-        ]
-        if bottom_drawer_items:
-            if bottom_tabbed:
-                send_tabs = Tabs()
-                for label, component in bottom_drawer_panels:
-                    send_tabs.tab(label, component)
-                send_body: Any = send_tabs
-            else:
-                send_body = Column(*bottom_drawer_items, gap="1rem")
-            tab_entries.append((_SEND_TAB, bottom_label, send_body.style(max_width="640px", margin="0 auto"), True))
-        if tab_entries:
-            # Nothing reopens a closed workspace, so its close control is hidden.
-            frames = [RegularLayoutFrame(workspace, name=_WORKSPACE_TAB).prop("data-no-close", "true")]
-            titles = [f'--regular-layout-{_WORKSPACE_TAB}--title: "Workspace"']
-            for name, label, component, closeable in tab_entries:
-                resolved = component() if callable(component) else component
-                frame = RegularLayoutFrame(resolved, name=name, style="box-sizing: border-box")
-                if not closeable:
-                    frame = frame.prop("data-no-close", "true")
-                frames.append(frame)
-                titles.append(f"--regular-layout-{name}--title: {json.dumps(label)}")
-            open_count = cond(event_value("children"), 2, event_value("tabs.length"))
-            main_content: Any = (
-                RegularLayout(*frames, layout={"type": "tab-layout", "tabs": [_WORKSPACE_TAB]})
-                .prop("id", _MAIN_LAYOUT_ID)
-                # Tabs open, select, and close, but drag-rearranging is disabled: the nested
-                # Perspective workspace is itself a regular-layout, which makes drags confusing.
-                .prop("locked", True)
-                .prop("style", "; ".join(titles))
-                .compute("class", cond(field("main_tabbed"), "spa", "spa spa-solo"))
-                .on("regular-layout-update", SetField("main_tabbed", not_(eq(open_count, 1))))
-            )
-            self._store_seeds.setdefault("main_tabbed", False)
-        else:
-            main_content = workspace
+        main_content = self._main_content(workspace, bottom_drawer_items, bottom_drawer_panels, bottom_tabbed, bottom_label)
 
         footer_logo_el = element("img", src=self.url(footer_logo), alt=title).style(height="1.2rem") if footer_logo else None
         footer_left = self._region(Region.FOOTER_LEFT, (-10, footer_logo_el))

@@ -555,7 +555,10 @@ class MountPerspectiveTables(GatewayModule):
             csp.schedule_alarm(alarm, self.update_interval, True)
 
     def _get_tables(self) -> dict[str, dict[str, str]]:
-        all_tables = {table_name: None for table_name in self._client.get_hosted_table_names() if table_name not in self._unused_tables}
+        # Sorted: tables are registered from a set, so the hosted order varies between runs and
+        # the generated layout would put panels in a different order on every restart.
+        names = sorted(name for name in self._client.get_hosted_table_names() if name not in self._unused_tables)
+        all_tables: dict[str, dict[str, str] | None] = {name: None for name in names}
         for table_name in all_tables:
             table = self._client.open_table(table_name)
             schema = table.schema()
