@@ -15,7 +15,7 @@ class ExampleModule(GatewayModule):
 
     def rest(self, app: "GatewayWebApp") -> None:
         # add APIs to `app`
-        # GatewayWebApp is a subclass of FastAPI
+        # GatewayWebApp wraps a FastAPI application
         ...
 
     def shutdown(self) -> None:
@@ -47,6 +47,43 @@ class ExampleModule(GatewayModule):
             return "hello world!"
 
 ```
+
+### Customizing the FastAPI application
+
+`GatewayWebApp` wraps the FastAPI application used by the gateway. A module can
+access that application from its `rest` hook with `get_fastapi()`. The hook runs
+while the web application is being built, before the server starts.
+
+For example, a module can add standard FastAPI middleware and application state:
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+
+
+class ExampleModule(GatewayModule):
+    def connect(self, channels: ExampleGatewayChannels):
+        pass
+
+    def rest(self, app: GatewayWebApp) -> None:
+        fastapi_app: FastAPI = app.get_fastapi()
+
+        fastapi_app.state.service_name = "example-gateway"
+        fastapi_app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=["example.com", "*.example.com"],
+        )
+```
+
+Prefer `app.get_router("api")` when adding gateway API routes, as in the
+previous example. Use the underlying FastAPI instance for customizations that
+are not exposed by `GatewayWebApp`, such as Starlette/FastAPI middleware or
+application state. The gateway owns the application's lifespan and router
+finalization, so customize the existing instance rather than replacing it.
+
+Metadata, CORS origins, and deployment paths should be configured through
+`GatewaySettings` when a corresponding setting is available (for example,
+`TITLE`, `DESCRIPTION`, `VERSION`, `BACKEND_CORS_ORIGINS`, and `ROOT_PATH`).
 
 ## Extending the UI
 
