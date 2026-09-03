@@ -26,6 +26,20 @@ from csp_gateway.testing.mock_validators import mock_api_key_validator_by_user
 pytest.importorskip("spaday")
 
 
+def _bare_ui():
+    """A `GatewayUI` with just the attributes the component builders touch.
+
+    The real one needs a running gateway; these tests only exercise tree construction.
+    """
+    from csp_gateway.server.web.spaday_ui import GatewayUI
+
+    ui = object.__new__(GatewayUI)
+    ui._store_seeds = {}
+    ui._settings = GatewaySettings()
+    ui._workspace_tables = []
+    return ui
+
+
 class Example(GatewayStruct):
     value: float
 
@@ -236,6 +250,14 @@ class TestSpadaySendFormDetails:
         assert "/api/v1/send/basket" in tree
         assert "send_key_basket" in tree
 
+    def test_send_channel_descriptors(self, client: TestClient, gateway):
+        descriptors = gateway.channels.send_channel_descriptors()
+
+        assert [(descriptor.channel, descriptor.model, descriptor.is_dict_basket, descriptor.keys) for descriptor in descriptors] == [
+            ("orders", Order, False, []),
+            ("basket", Order, True, ["A", "B"]),
+        ]
+
 
 class TestDefaultLayout:
     """The generated layout is a Perspective 5 whole-element config."""
@@ -296,25 +318,15 @@ class TestTableOptions:
     `client-server` table into a local worker instead of reading it off the websocket."""
 
     @staticmethod
-    def _bare_ui():
-        from csp_gateway.server.web.spaday_ui import GatewayUI
-
-        ui = object.__new__(GatewayUI)
-        ui._store_seeds = {}
-        ui._settings = GatewaySettings()
-        ui._workspace_tables = []
-        return ui
-
-    @staticmethod
     def _table_specs(panel):
         return panel.to_node()["bindings"]["config"]["compute"]["fields"]["tables"]["value"]
 
     def test_tables_without_options_stay_plain_names(self):
-        panel = self._bare_ui().perspective_panel(route="/perspective", tables=["orders"])
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
 
     def test_options_are_merged_into_the_table_spec(self):
-        panel = self._bare_ui().perspective_panel(
+        panel = _bare_ui().perspective_panel(
             route="/perspective",
             tables=["orders", "fills"],
             table_options={"orders": {"architecture": "client-server", "index": "id", "limit": 20}},
@@ -363,22 +375,12 @@ class TestActionFailureToast:
         finally:
             gateway.stop()
 
-    @staticmethod
-    def _bare_ui():
-        from csp_gateway.server.web.spaday_ui import GatewayUI
-
-        ui = object.__new__(GatewayUI)
-        ui._store_seeds = {}
-        ui._settings = GatewaySettings()
-        ui._workspace_tables = []
-        return ui
-
     def test_post_button_captures_the_result(self):
-        node = json.dumps(self._bare_ui().post_button("Go", "/api/v1/go").to_node())
+        node = json.dumps(_bare_ui().post_button("Go", "/api/v1/go").to_node())
         assert '"result": "action_result"' in node
 
     def test_confirm_button_captures_the_result(self):
-        node = json.dumps(self._bare_ui().confirm_button("Shutdown", "/api/v1/controls/shutdown").to_node())
+        node = json.dumps(_bare_ui().confirm_button("Shutdown", "/api/v1/controls/shutdown").to_node())
         assert '"result": "action_result"' in node
 
     def test_page_has_a_toast_that_only_fires_on_failure(self, client: TestClient):
@@ -393,32 +395,22 @@ class TestActionFailureToast:
 class TestWorkspaceSignals:
     """`perspective-error` reaches a toast, and `perspective-ready` gates the layout buttons."""
 
-    @staticmethod
-    def _bare_ui():
-        from csp_gateway.server.web.spaday_ui import GatewayUI
-
-        ui = object.__new__(GatewayUI)
-        ui._store_seeds = {}
-        ui._settings = GatewaySettings()
-        ui._workspace_tables = []
-        return ui
-
     def test_errors_are_reported_in_a_toast(self):
-        node = json.dumps(self._bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node())
+        node = json.dumps(_bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node())
 
         assert "perspective-error" in node and '"notify"' in node
         # The detail is an Error for JS failures and a bare string from Perspective itself.
         assert "detail.message" in node and '"path": "detail"' in node
 
     def test_ready_is_recorded_and_seeded_false(self):
-        ui = self._bare_ui()
+        ui = _bare_ui()
         node = json.dumps(ui.perspective_panel(route="/perspective", tables=["orders"]).to_node())
 
         assert "perspective-ready" in node
         assert ui._store_seeds["perspective_ready"] is False
 
     def test_layout_buttons_wait_for_the_workspace(self):
-        ui = self._bare_ui()
+        ui = _bare_ui()
         for button in (ui.save_layout_button(), ui.download_layout_button()):
             assert "perspective_ready" in json.dumps(button.to_node()["bindings"]["disabled"])
 
@@ -426,21 +418,11 @@ class TestWorkspaceSignals:
 class TestGraphFocus:
     """Clicking a channel in the graph shows that one table in the workspace."""
 
-    @staticmethod
-    def _bare_ui():
-        from csp_gateway.server.web.spaday_ui import GatewayUI
-
-        ui = object.__new__(GatewayUI)
-        ui._store_seeds = {}
-        ui._settings = GatewaySettings()
-        ui._workspace_tables = []
-        return ui
-
     def test_no_action_without_a_workspace(self):
-        assert self._bare_ui().focus_table_action() is None
+        assert _bare_ui().focus_table_action() is None
 
     def test_action_is_guarded_by_the_workspace_tables(self):
-        ui = self._bare_ui()
+        ui = _bare_ui()
         ui.perspective_panel(route="/perspective", tables=["orders", "fills"])
         action = ui.focus_table_action().to_dict()
 
@@ -451,16 +433,18 @@ class TestGraphFocus:
         assert '"openPanel"' in json.dumps(action["then"]) and '"workspace"' in json.dumps(action["then"])
 
     def test_layout_has_a_focus_branch_per_table(self):
-        ui = self._bare_ui()
+        ui = _bare_ui()
         node = json.dumps(ui.perspective_panel(route="/perspective", tables=["orders", "fills"]).to_node())
 
         assert node.count('"name": "graph_focus"') == 2
         assert ui._store_seeds["graph_focus"] == ""
 
     def test_selecting_a_layout_clears_the_focus(self):
-        node = json.dumps(self._bare_ui().layout_selector({}).to_node())
+        change = _bare_ui().layout_selector({}).to_node()["events"]["change"]
 
-        assert "graph_focus" in node
+        # Picking a layout has to drop the focus, or the focused table would outrank the choice.
+        cleared = [a for a in change["actions"] if a.get("field") == "graph_focus"]
+        assert cleared and cleared[0]["value"] == {"expr": "lit", "value": ""}
 
 
 class TestDarkBoot:

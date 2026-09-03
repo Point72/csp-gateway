@@ -69,6 +69,13 @@ class _StateSpec(NamedTuple):
     indexer: str | int | None = None
 
 
+class _SendChannelDescriptor(NamedTuple):
+    channel: str
+    model: Any
+    is_dict_basket: bool
+    keys: list[str]
+
+
 def _normalize_keyby(keyby: str | tuple[str, ...] | list) -> tuple[str, ...]:
     if isinstance(keyby, (list, tuple)):
         return tuple(keyby)
@@ -1046,6 +1053,41 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
 
         # register the trigger
         self._next_requests[field, indexer] = trigger
+
+    def send_channel_descriptors(self) -> list[_SendChannelDescriptor]:
+        """Return channel, form model, basket status, and keys for gateway UI builders."""
+        keys_by_channel: dict[str, list[str]] = {}
+        for channel, indexer in self._send_channels:
+            if indexer is not None and is_dict_basket(self.get_outer_type(channel)):
+                keys_by_channel.setdefault(channel, []).append(getattr(indexer, "name", None) or str(indexer))
+
+        descriptors = []
+        seen: set[str] = set()
+        for channel, _indexer in self._send_channels:
+            if channel in seen:
+                continue
+            seen.add(channel)
+
+            field_type = self.get_outer_type(channel)
+            dict_basket = is_dict_basket(field_type)
+            if dict_basket:
+                model = get_dict_basket_value_type(field_type)
+            elif isTsType(field_type):
+                model = field_type.typ
+            else:
+                continue
+            if get_origin(model) is list:
+                model = get_args(model)[0]
+
+            descriptors.append(
+                _SendChannelDescriptor(
+                    channel=channel,
+                    model=model,
+                    is_dict_basket=dict_basket,
+                    keys=keys_by_channel.get(channel, []),
+                )
+            )
+        return descriptors
 
     def add_send_channel(self, field: str, indexer: str | int | None = None) -> None:
         # TODO do we want this to happen automatically?

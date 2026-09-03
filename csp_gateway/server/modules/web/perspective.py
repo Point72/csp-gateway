@@ -26,7 +26,7 @@ from typing_extensions import TypeAliasType
 
 from csp_gateway.server import ChannelSelection, GatewayChannels, GatewayModule
 from csp_gateway.server.web import GatewayWebApp, get_default_responses
-from csp_gateway.utils import GatewayException, PickleableQueue, get_args, get_origin, get_thread
+from csp_gateway.utils import PickleableQueue, get_args, get_origin, get_thread
 
 if TYPE_CHECKING:
     from csp_gateway.server.web.spaday_ui import GatewayUI
@@ -58,17 +58,6 @@ _PSP_ARROW_MAP = {
 
 def psp_schema_to_arrow_schema(psp_schema):
     return pyarrow.schema([(k, _PSP_ARROW_MAP[v]) for k, v in psp_schema.items()])
-
-
-def perspective_thread(client: Client) -> None:
-    # Create event loop for perspective callbacks
-    psp_loop = asyncio.new_event_loop()
-
-    # Attach to manager
-    client.set_loop_callback(psp_loop.call_soon_threadsafe)
-
-    # Run the perspective callback loop
-    psp_loop.run_forever()
 
 
 def create_pyarrow_table(key_name, data, computed_index, arrow_schema, date_conversion_set):
@@ -451,6 +440,8 @@ class MountPerspectiveTables(GatewayModule):
 
         # Add server-defined views
         for new_table_name, view_config in self.server_views.items():
+            # Copy: `self.server_views` is user configuration and is read again on a reconnect.
+            view_config = dict(view_config)
             base_table = self._client.open_table(view_config.pop("table"))
             view = base_table.view(**view_config)
             self._table_insts[new_table_name] = self._client.table(view, name=new_table_name)
@@ -513,27 +504,6 @@ class MountPerspectiveTables(GatewayModule):
                     edge = channels.get_channel(channel)
                 self.push_to_perspective(edge, table_name)
 
-    def get_schema_from_field(self, channels: GatewayChannels, field: str):
-        edge = channels.get_channel(field)
-
-        if isinstance(edge, dict):
-            a_subfield = next(iter(edge.keys()))
-            edge = channels.get_channel(field, a_subfield)
-
-        ts_type = edge.tstype.typ
-
-        # if its a list of structs
-        if get_origin(ts_type) is list:
-            struct_type = get_args(ts_type)[0]
-        else:
-            struct_type = ts_type
-
-        if not hasattr(struct_type, "psp_schema"):
-            raise GatewayException(f"Type has no conversion to perspective: {struct_type}")
-
-        excluded_columns = self.excluded_table_columns.get(field, None)
-        return struct_type.psp_schema(excluded_columns)
-
     def add_table(self, field: str, schema, limit: int | None = None, index: str | None = None):
         if isinstance(index, list):
             # create a new computed index field
@@ -585,7 +555,10 @@ class MountPerspectiveTables(GatewayModule):
             csp.schedule_alarm(alarm, self.update_interval, True)
 
     def _get_tables(self) -> dict[str, dict[str, str]]:
-        all_tables = {table_name: None for table_name in self._client.get_hosted_table_names() if table_name not in self._unused_tables}
+        # Sorted: tables are registered from a set, so the hosted order varies between runs and
+        # the generated layout would put panels in a different order on every restart.
+        names = sorted(name for name in self._client.get_hosted_table_names() if name not in self._unused_tables)
+        all_tables: dict[str, dict[str, str] | None] = {name: None for name in names}
         for table_name in all_tables:
             table = self._client.open_table(table_name)
             schema = table.schema()

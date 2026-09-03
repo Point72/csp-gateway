@@ -16,7 +16,8 @@ from csp import ts
 
 from csp_gateway.server import GatewayChannels, GatewayModule
 
-# separate to avoid circular
+# Imported from the leaf module, not the `csp_gateway.server` package: that package re-exports
+# `.modules` before `.web`, so it is only partially initialized while this module is imported.
 from csp_gateway.server.web import GatewayWebApp
 from csp_gateway.utils import Controls
 
@@ -53,9 +54,9 @@ class MountControls(GatewayModule):
     def ui(self, app: "GatewayUI") -> None:
         # Add a guarded shutdown ("kill switch") to the spaday settings drawer, matching the
         # power button in the React UI. Only when the shutdown control is actually mounted.
-        if self.mount_shutdown:
-            from csp_gateway.server.web.spaday_ui import Region
+        from csp_gateway.server.web.spaday_ui import Region
 
+        if self.mount_shutdown:
             app.add(
                 Region.DRAWER_RIGHT,
                 app.confirm_button("Shutdown", f"{app.settings.API_STR}/controls/shutdown", variant="danger"),

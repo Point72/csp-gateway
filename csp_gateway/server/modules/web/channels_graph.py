@@ -6,7 +6,8 @@ from fastapi.responses import HTMLResponse
 
 from csp_gateway.server import GatewayChannels, GatewayModule
 
-# separate to avoid circular
+# Imported from the leaf module, not the `csp_gateway.server` package: that package re-exports
+# `.modules` before `.web`, so it is only partially initialized while this module is imported.
 from csp_gateway.server.web import GatewayWebApp
 
 if TYPE_CHECKING:
@@ -88,8 +89,11 @@ class MountChannelsGraph(GatewayModule):
 
     def ui(self, app: "GatewayUI") -> None:
         # The graph opens as a closeable tab in the main window, rendered by spaday-dagre (the
-        # legacy standalone page at `route` remains served for this release).
+        # legacy standalone page at `route` remains served for this release). Both imports are
+        # deferred because they belong to the optional spaday provider.
         from spaday_dagre import Dagre
+
+        from csp_gateway.server.web.spaday_ui import Region
 
         def graph_tab():
             # `spaday-dagre` has no intrinsic height (it draws into an absolutely positioned
@@ -106,6 +110,4 @@ class MountChannelsGraph(GatewayModule):
             return graph.on("dagre-node-click", focus) if focus else graph
 
         app.add_tab(_GRAPH_TAB, "Channels Graph", graph_tab)
-        from csp_gateway.server.web.spaday_ui import Region
-
         app.add(Region.DRAWER_RIGHT, app.tab_button("Channels Graph", _GRAPH_TAB))

@@ -7,7 +7,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import Field
 from starlette.status import HTTP_403_FORBIDDEN
 
-# separate to avoid circular
+# Imported from the leaf module, not the `csp_gateway.server` package: that package re-exports
+# `.modules` before `.web`, so it is only partially initialized while this module is imported.
 from ..settings import GatewaySettings
 from ..web import GatewayWebApp
 from .base import AuthenticationMiddleware
