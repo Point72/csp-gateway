@@ -106,6 +106,16 @@ def test_inherited_container_annotation_schema():
     assert schema["arr"] is int
 
 
+def test_csp_enum_schema():
+    class Status(csp.Enum):
+        READY = 1
+
+    class StructWithCspEnum(GatewayStruct):
+        status: Status
+
+    assert StructWithCspEnum.psp_schema()["status"] is str
+
+
 def test_inherited_ndarray_annotation_schema():
     # Base declares numpy array field with element type
     class BaseModelWithArray(BaseModel):

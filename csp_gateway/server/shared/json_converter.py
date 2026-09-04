@@ -1,14 +1,14 @@
 import logging
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import Enum as PyEnum
 from typing import Any, TypeVar
 
 import csp
 import numpy as np
 from ccflow import BaseModel
 from ccflow.serialization import make_ndarray_orjson_valid
-from csp import ts
+from csp import Enum as CspEnum, ts
 from csp.impl.types.tstype import isTsType
 from pydantic import BaseModel as PydanticBaseModel, Field, PrivateAttr, TypeAdapter
 
@@ -28,7 +28,7 @@ __all__ = (
 
 logger = logging.getLogger(__name__)
 
-_KEY_TYPE = str | Enum
+_KEY_TYPE = str | PyEnum | CspEnum
 T = TypeVar("T")
 K = TypeVar("K")
 
@@ -78,7 +78,7 @@ def _convert_orjson_compatible(obj: Any):
         return {_convert_orjson_compatible(k): _convert_orjson_compatible(v) for k, v in obj.items()}
     if isinstance(obj, (list, set, tuple)):
         return [_convert_orjson_compatible(val) for val in obj]
-    if isinstance(obj, Enum):
+    if isinstance(obj, (PyEnum, CspEnum)):
         return obj.name
     if isinstance(obj, timedelta):
         return obj.total_seconds()

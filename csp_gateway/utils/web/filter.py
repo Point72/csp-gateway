@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Literal
 
+from csp import Enum as CspEnum
 from pydantic import BaseModel, Field
 
 log = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ class Filter(BaseModel):
             if self.by.value is not None:
                 lhs = _get_nested_attr(obj, self.attr)
                 # Convert enums attrs to strings during filtering
-                if isinstance(lhs, PyEnum):
+                if isinstance(lhs, (PyEnum, CspEnum)):
                     lhs = lhs.name
                 log.info(f"Filtering: {lhs} {self.by.where} {self.by.value}")
                 return FilterWhereLambdaMap[self.by.where](lhs, self.by.value)

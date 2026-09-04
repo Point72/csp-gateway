@@ -24,6 +24,7 @@ from csp_gateway.server.shared.json_converter import (
     ChannelValueModel as CVM,
     _convert_orjson_compatible,
     _create_snapshot_dict,
+    _create_tuple_dict_basket,
 )
 from csp_gateway.testing.shared_helpful_classes import (
     MyEnum,
@@ -35,6 +36,11 @@ from csp_gateway.testing.shared_helpful_classes import (
 
 
 class MysteryClass: ...
+
+
+class MyCspEnum(csp.Enum):
+    ZERO = 0
+    ONE = 1
 
 
 # This is an example on how to annotate a new, custom class, for validation and ser/der via pydantic
@@ -287,6 +293,9 @@ def test_convert_orjson_compatible():
     enum = MyEnum.ONE
     assert _convert_orjson_compatible(enum) == enum.name
 
+    csp_enum = MyCspEnum.ONE
+    assert _convert_orjson_compatible(csp_enum) == csp_enum.name
+
     my_str = "hai"
     assert _convert_orjson_compatible(my_str) == my_str
 
@@ -300,6 +309,24 @@ def test_create_snapshot_dict_with_zero_valued_enum_key():
         [CVM(channel="enum_basket", value=value, dict_basket_key=ZeroBasedEnum.ZERO, timestamp=datetime(2020, 1, 1))]
     )
     assert snapshot_dict["enum_basket"] == {"ZERO": _convert_orjson_compatible(value)}
+
+
+def test_create_snapshot_dict_with_zero_valued_csp_enum_key():
+    value = MyStruct(foo=1.0)
+    snapshot_dict = _create_snapshot_dict([CVM(channel="enum_basket", value=value, dict_basket_key=MyCspEnum.ZERO, timestamp=datetime(2020, 1, 1))])
+    assert snapshot_dict["enum_basket"] == {"ZERO": _convert_orjson_compatible(value)}
+
+
+def test_create_tuple_dict_basket_with_csp_enum_key():
+    @csp.graph
+    def graph():
+        csp.add_graph_output(
+            "result",
+            _create_tuple_dict_basket("enum_basket", csp.const("value"), MyCspEnum.ZERO),
+        )
+
+    result = csp.run(graph, starttime=datetime(2020, 1, 1))
+    assert result["result"][0][1] == ("enum_basket", (MyCspEnum.ZERO, "value"))
 
 
 def test_parse_snapshot_dict():
