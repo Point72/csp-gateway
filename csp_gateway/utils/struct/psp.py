@@ -238,6 +238,7 @@ def psp_schema(cls, excluded_columns: ExcludedColumns | None = None) -> dict[str
                         raise KeyError(field)
 
                 # get arg type
+                annotation = _strip_annotated(annotation)
                 arg = get_args(annotation)[0]
 
                 # use this as type

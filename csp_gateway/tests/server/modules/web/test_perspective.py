@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum, auto
+from typing import Annotated
 from unittest.mock import MagicMock
 
 import csp
@@ -114,6 +115,19 @@ def test_csp_enum_schema():
         status: Status
 
     assert StructWithCspEnum.psp_schema()["status"] is str
+
+
+def test_annotated_csp_enum_array_schema():
+    class Status(csp.Enum):
+        READY = 1
+
+    class StructWithCspEnumArray(GatewayStruct):
+        statuses: Annotated[Numpy1DArray[Status], Field(description="Statuses")]
+        values: Annotated[Numpy1DArray[float], Field(description="Values")]
+
+    schema = StructWithCspEnumArray.psp_schema()
+    assert schema["statuses"] is str
+    assert schema["values"] is float
 
 
 def test_inherited_ndarray_annotation_schema():
