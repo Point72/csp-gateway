@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, date, datetime, timedelta
 from enum import Enum, auto
+from typing import Annotated
 from unittest.mock import MagicMock
 
 import csp
@@ -104,6 +105,40 @@ def test_inherited_container_annotation_schema():
     schema = ChildStruct.psp_schema()
     # Ensure container element type is preserved as int, not str
     assert schema["arr"] is int
+
+
+def test_csp_enum_schema():
+    class Status(csp.Enum):
+        READY = 1
+
+    class StructWithCspEnum(GatewayStruct):
+        status: Status
+
+    assert StructWithCspEnum.psp_schema()["status"] is str
+
+
+def test_annotated_csp_enum_array_schema():
+    class Status(csp.Enum):
+        READY = 1
+        DONE = 2
+
+    class StructWithCspEnumArray(GatewayStruct):
+        statuses: Annotated[Numpy1DArray[Status], Field(description="Statuses")]
+        values: Annotated[Numpy1DArray[float], Field(description="Values")]
+
+    schema = StructWithCspEnumArray.psp_schema()
+    assert schema["statuses"] is str
+    assert schema["values"] is float
+
+    value = StructWithCspEnumArray(statuses=np.array([Status.READY, Status.DONE], dtype=object))
+    assert [row["statuses"] for row in value.psp_flatten()] == ["READY", "DONE"]
+
+
+def test_optional_annotated_array_schema():
+    class StructWithOptionalArray(GatewayStruct):
+        values: Annotated[Numpy1DArray[float], Field(description="Values")] | None = None
+
+    assert StructWithOptionalArray.psp_schema()["values"] is float
 
 
 def test_inherited_ndarray_annotation_schema():

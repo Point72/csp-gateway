@@ -1,6 +1,14 @@
+import builtins
+import runpy
 import subprocess
 import sys
 import textwrap
+from enum import Enum
+from pathlib import Path
+
+import pytest
+
+FILTER_PATH = Path(__file__).parents[1] / "utils/web/filter.py"
 
 
 def _run_python(source: str) -> subprocess.CompletedProcess[str]:
@@ -65,3 +73,29 @@ def test_missing_server_dependency_is_suppressed():
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "OK\n"
+
+
+def test_filter_allows_missing_csp(monkeypatch):
+    original_import = builtins.__import__
+
+    def missing_csp(name, *args, **kwargs):
+        if name == "csp":
+            raise ModuleNotFoundError("No module named 'csp'", name="csp")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_csp)
+    namespace = runpy.run_path(FILTER_PATH)
+    assert namespace["_ENUM_TYPES"] == (Enum,)
+
+
+def test_filter_surfaces_broken_csp(monkeypatch):
+    original_import = builtins.__import__
+
+    def broken_csp(name, *args, **kwargs):
+        if name == "csp":
+            raise ImportError("csp internal dependency is broken", name="csp_internal")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", broken_csp)
+    with pytest.raises(ImportError, match="csp internal dependency is broken"):
+        runpy.run_path(FILTER_PATH)

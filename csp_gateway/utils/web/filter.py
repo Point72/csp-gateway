@@ -5,6 +5,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+# csp is a server-only dependency, but this module is imported by client-only installs.
+try:
+    from csp import Enum as CspEnum
+
+    _ENUM_TYPES = (PyEnum, CspEnum)
+except ModuleNotFoundError as error:
+    if error.name != "csp":
+        raise
+    _ENUM_TYPES = (PyEnum,)
+
 log = logging.getLogger(__name__)
 
 FilterWhere = Literal["==", "!=", "<", "<=", ">", ">="]
@@ -55,7 +65,7 @@ class Filter(BaseModel):
             if self.by.value is not None:
                 lhs = _get_nested_attr(obj, self.attr)
                 # Convert enums attrs to strings during filtering
-                if isinstance(lhs, PyEnum):
+                if isinstance(lhs, _ENUM_TYPES):
                     lhs = lhs.name
                 log.info(f"Filtering: {lhs} {self.by.where} {self.by.value}")
                 return FilterWhereLambdaMap[self.by.where](lhs, self.by.value)

@@ -1,6 +1,8 @@
 import json
 from datetime import datetime
+from types import SimpleNamespace
 
+import csp
 import pytest
 
 from csp_gateway.server.demo import ExampleData
@@ -124,6 +126,14 @@ class TestQuery:
 
         q = Query(filters=[Filter(attr="x", by=FilterCondition(value=0, where="=="))])
         assert q.calculate(DUMMY_STATE_DATA) == [d for d in DUMMY_STATE_DATA if d.x == 0]
+
+    def test_query_csp_enum_by_name(self):
+        class Status(csp.Enum):
+            READY = 1
+
+        item = SimpleNamespace(status=Status.READY)
+        q = Query(filters=[Filter(attr="status", by=FilterCondition(value="READY", where="=="))])
+        assert q.calculate([item]) == [item]
 
     def test_query_attr(self):
         q = Query(filters=[Filter(attr="id", by=FilterCondition(attr="y", where=">="))])
