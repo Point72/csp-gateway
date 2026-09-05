@@ -239,6 +239,8 @@ def psp_schema(cls, excluded_columns: ExcludedColumns | None = None) -> dict[str
 
                 # get arg type
                 annotation = _strip_annotated(annotation)
+                if _is_optional(annotation):
+                    annotation = _get_type_from_optional(annotation)
                 arg = get_args(annotation)[0]
 
                 # use this as type
@@ -318,7 +320,7 @@ class PerspectiveUtilityMixin:
                 return obj.tolist()
             elif isinstance(obj, set):
                 return list(obj)
-            elif isinstance(obj, PyEnum):
+            elif isinstance(obj, (PyEnum, CspEnum)):
                 return obj.name
             elif isinstance(obj, _thread.LockType):
                 return "<Lock>"

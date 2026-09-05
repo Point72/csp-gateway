@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Generic, get_args, get_origin
 
 from ccflow import BaseModel
+from csp import Enum as CspEnum
 from csp.impl.genericpushadapter import GenericPushAdapter
 from pydantic import Field
 
@@ -83,12 +84,13 @@ class ChannelsFactory(BaseModel, Generic[ChannelsType]):
 
         # Now wire in the signals
         # first pass is for any baskets
-        for (field, _indexer), push_adapter in channels._send_channels.items():
+        # Snapshot the items: add_send_channel below inserts the per-key entries into _send_channels.
+        for (field, _indexer), push_adapter in list(channels._send_channels.items()):
             if isinstance(push_adapter, tuple):
                 # dict basket, plug in now that we should know all the
                 # possible keys
                 key_type = get_dict_basket_key_type(channels.get_outer_type(field))
-                if isinstance(key_type, type) and issubclass(key_type, Enum):
+                if isinstance(key_type, type) and issubclass(key_type, (Enum, CspEnum)):
                     for enumfield in key_type:
                         channels.add_send_channel(field, enumfield)
 

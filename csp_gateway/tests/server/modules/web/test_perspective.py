@@ -120,6 +120,7 @@ def test_csp_enum_schema():
 def test_annotated_csp_enum_array_schema():
     class Status(csp.Enum):
         READY = 1
+        DONE = 2
 
     class StructWithCspEnumArray(GatewayStruct):
         statuses: Annotated[Numpy1DArray[Status], Field(description="Statuses")]
@@ -128,6 +129,16 @@ def test_annotated_csp_enum_array_schema():
     schema = StructWithCspEnumArray.psp_schema()
     assert schema["statuses"] is str
     assert schema["values"] is float
+
+    value = StructWithCspEnumArray(statuses=np.array([Status.READY, Status.DONE], dtype=object))
+    assert [row["statuses"] for row in value.psp_flatten()] == ["READY", "DONE"]
+
+
+def test_optional_annotated_array_schema():
+    class StructWithOptionalArray(GatewayStruct):
+        values: Annotated[Numpy1DArray[float], Field(description="Values")] | None = None
+
+    assert StructWithOptionalArray.psp_schema()["values"] is float
 
 
 def test_inherited_ndarray_annotation_schema():

@@ -1,16 +1,19 @@
 import logging
 from datetime import datetime
 from enum import Enum as PyEnum
-from importlib.util import find_spec
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-_ENUM_TYPES = (PyEnum,)
-if find_spec("csp") is not None:
+# csp is a server-only dependency, but this module is imported by client-only installs.
+try:
     from csp import Enum as CspEnum
 
-    _ENUM_TYPES += (CspEnum,)
+    _ENUM_TYPES = (PyEnum, CspEnum)
+except ModuleNotFoundError as error:
+    if error.name != "csp":
+        raise
+    _ENUM_TYPES = (PyEnum,)
 
 log = logging.getLogger(__name__)
 
