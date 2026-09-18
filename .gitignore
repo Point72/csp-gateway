@@ -124,12 +124,6 @@ docs/superpowers
 index.md
 
 # JS
-js/coverage
-js/dist
-js/node_modules
-js/test-results
-js/playwright-report
-js/*.tgz
 
 # Jupyter
 .ipynb_checkpoints
@@ -159,4 +153,3 @@ SPADAY.md
 .superpowers
 
 # JS Artifacts
-csp_gateway/server/build
