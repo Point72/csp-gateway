@@ -109,101 +109,39 @@ the time a `ui()` hook asks.
 `csp-gateway` is designed as an all-in-one application builder.
 However, sometimes it is convenient to white-label the frontend beyond what is currently exposed.
 
-There are two ways to customize the UI:
+There are two ways to customize the UI, neither of which needs a Javascript build:
 
-1. **Server-side configuration** (no Javascript build required) — set fields on `GatewaySettings`.
-1. **A custom Javascript bundle** — build your own app on top of the published `@point72/csp-gateway` library.
+1. **Server-side configuration** — set fields on `GatewaySettings`.
+1. **Component packages** — load your own spaday components alongside the ones the gateway ships.
 
 ### Server-side configuration
 
-The simplest way to white-label the UI is through settings. These require no Javascript build:
-the gateway templates the served `index.html` and exposes the configuration at `GET /ui-config`,
-which the default frontend reads on load.
+The simplest way to white-label the UI is through settings. The gateway renders the page from them
+and exposes the same values at `GET /ui-config`.
 
 - `TITLE`: Page title and header title.
 - `HEADER_LOGO` / `FOOTER_LOGO`: Logo image, given as an `http(s)` URL, a `data:` URI, an
   already-served URL path, or a local file path. Local files are served automatically.
 - `CUSTOM_CSS`: List of CSS files to inject (URLs or local file paths).
-- `CUSTOM_JS`: List of Javascript files to inject (URLs or local file paths), loaded after the
-  main bundle.
+- `CUSTOM_JS`: List of Javascript files to inject (URLs or local file paths), imported as ES modules
+  after the UI's own scripts.
 - `CUSTOM_STATIC_DIR`: A local directory served at `/custom`. The entire directory is exposed as
   public static content (useful for assets like logos, e.g. `/custom/logo.svg`); its top-level `*.js`
   and `*.css` files are additionally auto-injected into the UI in sorted filename order. Do not point
   this at a directory containing private files.
 - `UI_PACKAGES`: Extra spaday component packages to load, each given as the name a package registers
   under its spaday entry point or a dotted path to a `ComponentPackage` (or a callable returning
-  one). Adds to the packages the gateway ships rather than replacing them. Spaday provider only.
+  one). Adds to the packages the gateway ships rather than replacing them.
 - `ROOT_PATH`: URL path prefix the app is served under when behind a reverse proxy that strips the
   prefix (e.g. `/watchtower`). It is passed to the ASGI server as `root_path` and used to prefix all
-  server-rendered asset and API URLs (static bundle, logos, custom JS/CSS, `/ui-config`, docs) so the
+  server-rendered asset and API URLs (the UI runtime, logos, custom JS/CSS, `/ui-config`, docs) so the
   UI works under a sub-path. Leave empty when served at a domain root.
 
-Injected custom Javascript can register richer customizations (logos, loader, `processTables`,
-`shutdown`, the layout config name) on `window.__CSP_GATEWAY_CUSTOM__`, which the frontend reads
-on load. Frontend helpers (e.g. `getDefaultViewerConfig`) are available on `window.CSPGateway`,
-so no bundling is needed. For example, a `custom.js` served from `CUSTOM_STATIC_DIR`:
+### Component packages
 
-```javascript
-window.__CSP_GATEWAY_CUSTOM__ = {
-  layoutConfigName: "my_custom_layout",
-  // HTML strings are supported for logos and the loader (no JSX/build step):
-  footerLogoHtml: '<a href="https://example.com">My App</a>',
-  loaderHtml: "<svg>...</svg>",
-  // Functions can use helpers from window.CSPGateway:
-  processTables: function (toRestore, tables, theme) {
-    var getDefaultViewerConfig = window.CSPGateway.getDefaultViewerConfig;
-    // ...
-  },
-  shutdown: async function () {
-    /* ... */
-  },
-};
-```
-
-### Custom Javascript bundle
-
-For deeper customization, `csp-gateway` publishes its Javascript frontend as a library to
-[npmjs.com](https://www.npmjs.com/). You can extend the frontend with customizations like so:
-
-#### Install
-
-Install the Javascript library `@point72/csp-gateway` into your project.
-
-#### React
-
-Here is an example React app which replaces the default `csp-gateway` logo with a logo of a gate:
-
-```javascript
-import React from "react";
-import { createRoot } from "react-dom/client";
-import { FaToriiGate } from "react-icons/fa";
-
-import App from "@point72/csp-gateway";
-
-function HeaderLogo() {
-  return <FaToriiGate size={40} />;
-}
-
-window.addEventListener("load", () => {
-  const container = document.getElementById("gateway-root");
-  const root = createRoot(container);
-
-  root.render(<App headerLogo={<HeaderLogo />} />);
-});
-```
-
-#### Customization
-
-The Javascript application exposes a small number of customizations, provided as `props` to the `App` React component.
-We may extend these more in the future.
-
-- `headerLogo`: React component to replace the top bar logo
-- `footerLogo`: React component to add a bottom bar logo (bottom left)
-- `processTables`: Custom function to preprocess Perspective tables, e.g. to configure default views
-  - `processTables(default_perspective_layout_json, table_list, perspective_workspace, theme)`
-- `overrideSettingsButtons`: Customize [settings buttons](UI#Settings) in the right-hand settings drawer
-- `extraSettingsButtons`: Add additional settings buttons in the right-hand settings drawer
-- `shutdown`: Customize the function invoked when calling the [_"Big Red Button"_](UI#Settings)
+For deeper customization, point `UI_PACKAGES` at your own
+[spaday](https://github.com/1kbgz/spaday) component package. Its elements are then available to the
+page alongside the gateway's own, and a module's `ui()` hook can place them.
 
 ## Advanced Usage
 

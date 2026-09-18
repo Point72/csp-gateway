@@ -35,11 +35,15 @@ The rightmost top bar button opens the settings drawer. Depending on your server
 - Logs: if your server includes the [`MountOutputsFolder`](MountOutputsFolder) module, this will link to an integrated log and configuration viewer
 - Graph View: if your server includes the [`MountChannelsGraph`](MountChannelsGraph) module, this will link to an integrated graph viewer
 
-## Frontend providers
+## Frontend
 
-The UI above is served by [spaday](https://github.com/1kbgz/spaday), the default frontend provider. The legacy React/Perspective frontend is still available, selected per gateway with the `UI_PROVIDER` setting. Both render the same pieces from the same modules — the Perspective workspace, layout selector, theme toggle, and the settings-drawer actions (shutdown, logs, channels graph, email) — and the spaday provider adds a "send to a channel" form panel.
+The UI above is served by [spaday](https://github.com/1kbgz/spaday). It renders from the same
+modules that serve the REST API — the Perspective workspace, layout selector, theme toggle, the
+"send to a channel" form, and the settings-drawer actions (shutdown, logs, channels graph, email).
 
-Select a provider in your gateway configuration:
+The legacy React/Perspective frontend, selected with `UI_PROVIDER: default`, was removed after
+3.0.0, along with the bundled Javascript build it needed. `UI_PROVIDER` is kept, and only accepts
+`spaday`, so a configuration that names the provider still loads:
 
 ```yaml
 port: 8000
@@ -49,9 +53,9 @@ gateway:
     UI_PROVIDER: spaday
 ```
 
-`UI_PROVIDER` defaults to `spaday`; set it to `default` for the legacy React/Perspective UI, which requires the bundled Javascript build and is slated for removal. Everything else — modules, the REST API, authentication, and `ROOT_PATH` sub-path serving — behaves the same.
-
-The white-labeling settings (`TITLE`, `HEADER_LOGO`, `FOOTER_LOGO`, `CUSTOM_CSS`, `CUSTOM_JS`, `CUSTOM_STATIC_DIR`) apply to both providers, with one difference under spaday: `CUSTOM_JS` files are imported as ES modules rather than loaded as classic `<script>` tags, so a custom script cannot rely on being in global scope.
+The white-labeling settings (`TITLE`, `HEADER_LOGO`, `FOOTER_LOGO`, `CUSTOM_CSS`, `CUSTOM_JS`,
+`CUSTOM_STATIC_DIR`) all still apply. Note that `CUSTOM_JS` files are imported as ES modules rather
+than loaded as classic `<script>` tags, so a custom script cannot rely on being in global scope.
 
 The spaday UI takes its colours from the shell's own light and dark palettes, which are published as the `--spa-surface`, `--spa-surface-2`, `--spa-border` and `--spa-muted` custom properties at zero specificity. A `CUSTOM_CSS` file is linked after them, so redefining those properties is enough to rebrand the chrome:
 

@@ -1,7 +1,6 @@
 [build-system]
 requires = [
     "hatchling",
-    "hatch-js",
     "hatch-multi>=1",
 ]
 build-backend = "hatchling.build"
@@ -44,7 +43,6 @@ develop = [
     "bump-my-version",
     "check-dist",
     "codespell",
-    "hatch-js",
     "hatch-multi>=1",
     "hatchling",
     "mdformat",
@@ -152,11 +150,6 @@ search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
 [[tool.bumpversion.files]]
-filename = "js/package.json"
-search = '"version": "{current_version}"'
-replace = '"version": "{new_version}"'
-
-[[tool.bumpversion.files]]
 filename = "examples/Client.ipynb"
 search = '"version": "{current_version}"'
 replace = '"version": "{new_version}"'
@@ -177,24 +170,16 @@ exclude_also = [
 ignore_errors = true
 fail_under = 50
 
-[tool.hatch.build]
-artifacts = [
-    "csp_gateway/server/build/*"
-]
-
 [tool.hatch.build.sources]
 src = "/"
 
 [tool.hatch.build.targets.sdist]
 packages = [
     "csp_gateway",
-    "js",
 ]
 exclude = [
     "docs",
     "examples",
-    "js/dist",
-    "js/node_modules",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -204,20 +189,6 @@ packages = [
 exclude = [
     "docs",
     "examples",
-    # Leading slash anchors to build root — without it, `js` matches any
-    # directory named `js` at any depth, including `csp_gateway/server/web/
-    # templates/js/` where `common.js` lives and is referenced from
-    # `login.html.j2` / `logout.html.j2`.
-    "/js",
-]
-
-[tool.hatch.build.hooks.hatch-js]
-path = "js"
-build_cmd = "build"
-tool = "pnpm"
-targets = [
-    "csp_gateway/server/build/index.css",
-    "csp_gateway/server/build/main.js",
 ]
 
 [tool.hatch.metadata.hooks.hatch-multi]
