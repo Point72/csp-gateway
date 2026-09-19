@@ -102,7 +102,7 @@ server = [
     # Default frontend provider (Settings.UI_PROVIDER = "spaday"). 0.7 tracks perspective 5.
     # 0.9.0 added the inline tree the auth pages are served as, and `build_routes`, which hands
     # the gateway its routes to register rather than mounting them without auth dependencies.
-    "spaday>=0.9.0",
+    "spaday>=0.9.0,<1",
     # 0.1.2 added the channels graph's pan/zoom controls; 0.2.3 fits the graph when its tab opens.
     "spaday-dagre>=0.2.3",
     "spaday-perspective>=0.7.0",
