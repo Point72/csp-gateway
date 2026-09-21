@@ -91,6 +91,11 @@ server = [
     "fastapi>=0.110",
     "fsspec",
     "httpx2",
+    # The configuration framework, preferred over hydra because hydra 1.3 does not run on Python
+    # 3.14; see `csp_gateway/_config_framework.py`.
+    "lerna",
+    # Still declared: it is what `_config_framework` falls back to, and ccflow composes the config
+    # through it either way.
     "hydra-core",
     "janus",
     "omegaconf",

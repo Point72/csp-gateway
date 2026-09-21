@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
-from hydra.core.hydra_config import HydraConfig
 from pydantic import Field
 
 try:
@@ -15,6 +14,7 @@ except ImportError:
 
 from pydantic import BaseModel
 
+from csp_gateway._config_framework import HydraConfig
 from csp_gateway.server import GatewayChannels, GatewayModule
 
 # Imported from the leaf module, not the `csp_gateway.server` package: that package re-exports
