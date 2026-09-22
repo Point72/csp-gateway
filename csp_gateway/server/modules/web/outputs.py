@@ -170,13 +170,9 @@ class MountOutputsFolder(GatewayModule):
                 base_path = str(request.url.path).rstrip("/")
                 query_suffix = f"?{request.url.query}" if request.url.query else ""
                 files_paths = sorted([f"{base_path}/{f}{query_suffix}".replace("outputs//", "outputs/") for f in files])
-                # The spaday UI browses these through `_tree` and reads them through `_chunk`,
-                # so the directory page is only rendered for the legacy frontend.
-                if app.ui is not None:
-                    return JSONResponse({"files": files_paths})
-                return app.templates.TemplateResponse(
-                    request, "files.html.j2", context={"files": files_paths, "pid": os.getpid()}, media_type="text/html"
-                )
+                # The UI browses these through `_tree` and reads them through `_chunk`; a caller
+                # asking for the directory itself gets the same listing as data.
+                return JSONResponse({"files": files_paths})
 
             def iterfile():
                 with open(file_or_dir, "rb") as fp:
