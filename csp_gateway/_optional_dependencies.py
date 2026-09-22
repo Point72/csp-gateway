@@ -22,19 +22,15 @@ SERVER_OPTIONAL_IMPORTS = frozenset(
     {
         "atomic_counter",
         "ccflow",
-        "colorlog",
         "csp",
         "deprecation",
         "duckdb",
         "fastapi",
-        "fsspec",
         "httpx2",
         "hydra",
         "janus",
-        "omegaconf",
         "orjson",
         "perspective",
-        "psutil",
         "pyarrow",
         "pydantic",
         "spaday",
@@ -44,7 +40,6 @@ SERVER_OPTIONAL_IMPORTS = frozenset(
         "spaday_trees",
         "spaday_webawesome",
         "uvicorn",
-        "uvloop",
         "websockets",
     }
 )

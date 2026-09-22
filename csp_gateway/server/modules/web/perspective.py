@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from io import BytesIO
@@ -15,7 +14,6 @@ import csp
 import orjson
 import pyarrow
 import pyarrow.json
-import uvloop
 from csp import ts
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from perspective import Client, Server, Table
@@ -39,8 +37,6 @@ __all__ = (
 )
 
 T = TypeVar("T")
-
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 log = getLogger(__name__)
 
