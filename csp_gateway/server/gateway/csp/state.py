@@ -16,6 +16,7 @@ import duckdb
 import duckdb.sqltypes
 import numpy
 import orjson
+import pyarrow
 from atomic_counter import Counter
 from ccflow.enums import BaseEnum as CoreBaseEnum, Enum as CoreEnum
 from csp import ts
@@ -242,8 +243,8 @@ class DuckDBState:
     # We use DuckDB here for its strong analytics capabilities. Row by row insertions into DuckDB are not
     # recommended and will cause major slow downs, instead we bulk load new records into duckdb at certain
     # events: on query call, <more to be added>. This ensures that insert path is fast.
-    # For bulk loading, we buffer json versions of the records in memory. When a bulk loading event occurs,
-    # the buffer is handed to DuckDB as a single JSON array parameter and cleared.
+    # For bulk loading, we buffer the records in memory. When a bulk loading event occurs, the batch is
+    # handed to DuckDB as an Arrow table and parsed there, then cleared.
 
     # Counter for creating new tables ids for the same type object. This is needed to create an independent
     # table for each instance of the DuckDBState class for any particular type
@@ -314,8 +315,9 @@ class DuckDBState:
                 ({self._id_name} BIGINT PRIMARY KEY, {self._col_name} {duckdb_type})"
         )
 
-        # DuckDB JSON structure describing a bulk-load batch: a list of {id, record} objects
-        self._row_structure = orjson.dumps([{self._id_name: "BIGINT", self._col_name: duckdb_type}]).decode()
+        # Name the bulk-load batch is registered under. Temp views are per-cursor and each state owns
+        # its cursor, but the table name keeps it unambiguous when debugging a shared instance.
+        self._batch_name = f"batch_{self._table_name}"
 
     # TODO: Improve this to support querying dicts and lists as well, currently it only
     # works with structs and primitive types
@@ -404,29 +406,33 @@ class DuckDBState:
                     log.warning(f"Type({type(obj)}) cannot be json serialized please provide serializer: {obj} serializing to '' for now")
                     return ""
 
-            rows = []
+            ids = []
+            docs = []
             for id, record in buffer.items():
                 # Insert into object store
                 self._obj_store[id] = record
 
-                # Convert the record to json
-                record_json_str = record.to_json(default)
-                record_json = orjson.loads(record_json_str)
-                json_dict = {self._id_name: id, self._col_name: record_json}
-                json_str = orjson.dumps(json_dict)
+                ids.append(id)
+                docs.append(record.to_json(default))
 
-                # Collect into a batch instead of inserting row by row, which DuckDB is slow at
-                rows.append(json_str)
-
-            # Upsert the whole batch. The payload is bound as a parameter rather than interpolated,
-            # so record contents can never be parsed as SQL.
-            payload = b"[" + b",".join(rows) + b"]"
-            self._con.execute(
-                f"INSERT OR REPLACE INTO {self._table_name} \
-                            SELECT batch.entry.{self._id_name}, batch.entry.{self._col_name} \
-                            FROM (SELECT unnest(from_json(?, '{self._row_structure}')) AS entry) AS batch",
-                [payload.decode()],
+            # Hand the batch over as an Arrow table and let DuckDB parse the records across its worker
+            # threads. Parsing per row beats parsing one concatenated blob, and the record JSON goes
+            # over as data rather than as SQL text.
+            batch = pyarrow.table(
+                {
+                    self._id_name: pyarrow.array(ids, type=pyarrow.int64()),
+                    "doc": pyarrow.array(docs, type=pyarrow.string()),
+                }
             )
+            self._con.register(self._batch_name, batch)
+            try:
+                self._con.execute(
+                    f"INSERT OR REPLACE INTO {self._table_name} \
+                                SELECT {self._id_name}, json_transform(doc, '{self._schema_str}') \
+                                FROM {self._batch_name}"
+                )
+            finally:
+                self._con.unregister(self._batch_name)
 
     @override
     def query(self, query: "Query" = None) -> list[Any]:
