@@ -14,9 +14,9 @@ from typing import Any
 import csp
 import duckdb
 import duckdb.sqltypes
-import fsspec
 import numpy
 import orjson
+import pyarrow
 from atomic_counter import Counter
 from ccflow.enums import BaseEnum as CoreBaseEnum, Enum as CoreEnum
 from csp import ts
@@ -94,9 +94,6 @@ def _get_duckdb_cursor() -> "duckdb.DuckDBPyConnection":
     with _DUCKDB_SHARED_CONNECTION_LOCK:
         if _DUCKDB_SHARED_CONNECTION is None:
             _DUCKDB_SHARED_CONNECTION = duckdb.connect(config={"threads": _DUCKDB_THREADS_CURRENT})
-            # The memory filesystem (used for bulk loading) is registered on the shared instance and is
-            # visible to every cursor, so it must be registered exactly once here rather than per state.
-            _DUCKDB_SHARED_CONNECTION.register_filesystem(fsspec.filesystem("memory"))
         return _DUCKDB_SHARED_CONNECTION.cursor()
 
 
@@ -246,8 +243,8 @@ class DuckDBState:
     # We use DuckDB here for its strong analytics capabilities. Row by row insertions into DuckDB are not
     # recommended and will cause major slow downs, instead we bulk load new records into duckdb at certain
     # events: on query call, <more to be added>. This ensures that insert path is fast.
-    # For bulk loading, we push json versions of the records into a memory base file. When a bulk loading
-    # event occurs, we load the data from the memory file and truncate it.
+    # For bulk loading, we buffer the records in memory. When a bulk loading event occurs, the batch is
+    # handed to DuckDB as an Arrow table and parsed there, then cleared.
 
     # Counter for creating new tables ids for the same type object. This is needed to create an independent
     # table for each instance of the DuckDBState class for any particular type
@@ -278,8 +275,6 @@ class DuckDBState:
         self._keyby = keyby
         # ID generator for new records. We cannot rely on the id in the record as that might or might not exist
         self._obj_id_generator = Counter(1)
-        # Memory filename to use for bulk loading data into DuckDB
-        self._mem_file_name = f"{self._table_name}.json"
         # Tree like structure to store the ids for records using the keys in self._keyby
         self._key_to_id = {}
         # Temporary structure to buffer records before bulk loading into DuckDB
@@ -320,11 +315,9 @@ class DuckDBState:
                 ({self._id_name} BIGINT PRIMARY KEY, {self._col_name} {duckdb_type})"
         )
 
-        # Construct column structure for json parsing
-        self._columns_duckdb = str(f"{{'{self._id_name}':'BIGINT','{self._col_name}':'{duckdb_type}'}}")
-
-        # Open the memory file for buffering data before bulk loading
-        self._mem_file = fsspec.filesystem("memory").open(self._mem_file_name, "wb")
+        # Name the bulk-load batch is registered under. Temp views are per-cursor and each state owns
+        # its cursor, but the table name keeps it unambiguous when debugging a shared instance.
+        self._batch_name = f"batch_{self._table_name}"
 
     # TODO: Improve this to support querying dicts and lists as well, currently it only
     # works with structs and primitive types
@@ -413,33 +406,33 @@ class DuckDBState:
                     log.warning(f"Type({type(obj)}) cannot be json serialized please provide serializer: {obj} serializing to '' for now")
                     return ""
 
+            ids = []
+            docs = []
             for id, record in buffer.items():
                 # Insert into object store
                 self._obj_store[id] = record
 
-                # Convert the record to json
-                record_json_str = record.to_json(default)
-                record_json = orjson.loads(record_json_str)
-                json_dict = {self._id_name: id, self._col_name: record_json}
-                json_str = orjson.dumps(json_dict)
+                ids.append(id)
+                docs.append(record.to_json(default))
 
-                # Write to buffer instead of DuckDB because single row inserts are slow
-                # by buffering we can bulk load the data making it much faster
-                self._mem_file.write(json_str)
-
-            # Flush memory buffer
-            self._mem_file.flush()
-
-            # Upsert data into the table
-            self._con.sql(
-                f"INSERT OR REPLACE INTO {self._table_name}\
-                            SELECT * FROM read_json_auto('memory://{self._mem_file_name}',\
-                                                        columns = {self._columns_duckdb})"
+            # Hand the batch over as an Arrow table and let DuckDB parse the records across its worker
+            # threads. Parsing per row beats parsing one concatenated blob, and the record JSON goes
+            # over as data rather than as SQL text.
+            batch = pyarrow.table(
+                {
+                    self._id_name: pyarrow.array(ids, type=pyarrow.int64()),
+                    "doc": pyarrow.array(docs, type=pyarrow.string()),
+                }
             )
-
-            # Clear data from the memory file
-            self._mem_file.seek(0)
-            self._mem_file.truncate(0)
+            self._con.register(self._batch_name, batch)
+            try:
+                self._con.execute(
+                    f"INSERT OR REPLACE INTO {self._table_name} \
+                                SELECT {self._id_name}, json_transform(doc, '{self._schema_str}') \
+                                FROM {self._batch_name}"
+                )
+            finally:
+                self._con.unregister(self._batch_name)
 
     @override
     def query(self, query: "Query" = None) -> list[Any]:
@@ -447,7 +440,7 @@ class DuckDBState:
         # Build the query to run
         query_str = self.construct_query(query)
         with self._query_lock:
-            # Bulk load data from the memory file
+            # Bulk load the buffered records
             self.load_data()
 
             # Run query
