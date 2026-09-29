@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Annotated, Any, ClassVar, Literal, Optional, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, Optional, Self, TypeVar
 
 from pydantic import BaseModel, ConfigDict, ValidationInfo, field_serializer, model_serializer, model_validator
 from pydantic_core import core_schema
@@ -447,7 +447,7 @@ class GatewayStruct(
     timestamp: datetime | None = None
 
     @classmethod
-    def from_stream_fields(cls: type[T], **fields: Any) -> T:
+    def from_stream_fields(cls, **fields: Any) -> Self:
         """Validate stream fields without generating identities or registering model instances.
 
         Explicit identities and declared defaults are preserved. The same policy applies to
