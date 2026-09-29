@@ -45,6 +45,9 @@ _validator_registry_version = 0
 # validator tell direct construction from ingress validation. See ``GatewayLookupMixin.__init__``.
 _constructing: ContextVar[bool] = ContextVar("csp_gateway_struct_constructing", default=False)
 
+# Stream-built messages, including nested models, do not need generated identities or lookup retention.
+_stream_construction: ContextVar[bool] = ContextVar("csp_gateway_stream_construction", default=False)
+
 # Core-schema metadata key marking a schema this class has already wrapped.
 _WRAPPED_MARKER = "csp_gateway_validated"
 
@@ -110,7 +113,7 @@ class GatewayLookupMixin:
         Minting into the input also lands both fields in ``model_fields_set``, so ``to_dict`` still
         reports them under ``exclude_unset``.
         """
-        if not isinstance(data, dict):
+        if _stream_construction.get() or not isinstance(data, dict):
             return data
         fields = cls.model_fields
         missing = {}
@@ -127,7 +130,7 @@ class GatewayLookupMixin:
 
     def model_post_init(self, context: Any, /) -> None:
         super().model_post_init(context)
-        if getattr(type(self), "_include_in_lookup", True):
+        if not _stream_construction.get() and getattr(type(self), "_include_in_lookup", True):
             id = getattr(self, "id", None)
             if id is not None:
                 _global_registry[id] = self
@@ -443,6 +446,19 @@ class GatewayStruct(
     id: IdType | None = None
     timestamp: datetime | None = None
 
+    @classmethod
+    def from_stream_fields(cls: type[T], **fields: Any) -> T:
+        """Validate stream fields without generating identities or registering model instances.
+
+        Explicit identities and declared defaults are preserved. The same policy applies to
+        nested models constructed during validation; existing model instances are unchanged.
+        """
+        token = _stream_construction.set(True)
+        try:
+            return cls(**fields)
+        finally:
+            _stream_construction.reset(token)
+
     @field_serializer("timestamp", when_used="json")
     def _serialize_timestamp(self, value: datetime | None, info) -> str | None:
         # csp emitted naive UTC, and clients parse that shape. ``to_json`` is the exception: it stands
@@ -516,9 +532,15 @@ class GatewayStruct(
         """Fields that only exist because ``_relax_required_fields`` gave them a default.
 
         These are csp's "never set" fields, so they stay out of serialization. A field with a default
-        the author actually declared is a different thing and is always reported.
+        the author actually declared is a different thing and is always reported. Identity fields
+        also stay absent if neither supplied nor generated; an explicit None is still reported.
         """
-        return type(self).__gateway_implicit_fields__ - self.model_fields_set
+        implicit = type(self).__gateway_implicit_fields__ | {
+            name
+            for name in ("id", "timestamp")
+            if type(self).model_fields[name].default is None and type(self).model_fields[name].default_factory is None
+        }
+        return implicit - self.model_fields_set
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema_, handler):
