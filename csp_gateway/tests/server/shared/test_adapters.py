@@ -14,12 +14,15 @@ from csp_gateway.server import poll_sql_for_pandas_df, sql_polling_adapter_def
 def test_sql_polling_adapter_error(caplog_level, caplog):
     failed_poll_msg = "Failed to poll, TESTING"
 
+    def failing_poll(connection: str, query: str, logger_name: str):
+        raise RuntimeError("poll failed")
+
     caplog.set_level(caplog_level, logger="my_logger")
     my_poll = sql_polling_adapter_def(
         interval=timedelta(seconds=1),
         connection="MY_MOCK_CONNECTION",
         query="MY_MOCK_QUERY",
-        poll=None,
+        poll=failing_poll,
         callback=None,
         logger_name="my_logger",
         failed_poll_msg=failed_poll_msg,
@@ -152,6 +155,52 @@ def test_sql_polling_adapter_poll_timeout():
         query,
         "my_logger",
     )
+
+
+@pytest.mark.parametrize(
+    ("connection_timeout_seconds", "query_timeout_seconds", "expected_connection_timeout", "expected_query_timeout"),
+    [
+        (5, 10, 5, 10),
+        (0, 0, None, None),
+    ],
+)
+def test_sql_polling_adapter_poll_timeout_forwarded_to_5arg_poll(
+    connection_timeout_seconds,
+    query_timeout_seconds,
+    expected_connection_timeout,
+    expected_query_timeout,
+):
+    def custom_poll(
+        connection: str,
+        query: str,
+        logger_name: str,
+        connection_timeout_seconds: int | None = None,
+        query_timeout_seconds: int | None = None,
+    ):
+        return (connection, query, logger_name, connection_timeout_seconds, query_timeout_seconds)
+
+    connection = "MY_MOCK_CONNECTION"
+    query = "MY_MOCK_QUERY"
+
+    my_poll = sql_polling_adapter_def(
+        interval=timedelta(seconds=1),
+        connection=connection,
+        query=query,
+        poll=custom_poll,
+        callback=None,
+        logger_name="my_logger",
+        failed_poll_msg="Failed to poll, TESTING",
+        connection_timeout_seconds=connection_timeout_seconds,
+        query_timeout_seconds=query_timeout_seconds,
+    )
+    out = csp.run(
+        my_poll,
+        starttime=datetime.now(UTC),
+        endtime=timedelta(seconds=1),
+        realtime=True,
+    )
+    # Timeouts forwarded positionally (0 becomes None); connection string left unmodified
+    assert out[0][0][1] == (connection, query, "my_logger", expected_connection_timeout, expected_query_timeout)
 
 
 def test_sql_polling_adapter_poll_with_callback():

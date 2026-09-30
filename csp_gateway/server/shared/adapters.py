@@ -1,3 +1,4 @@
+import inspect
 import logging
 import time
 from collections.abc import Callable
@@ -60,7 +61,7 @@ class PollingSQLAdapterImpl(PushInputAdapter):
         interval: timedelta,
         connection: str,
         query: str,
-        poll: Callable[[str, str, logging.Logger], Any],
+        poll: Callable[[str, str, str], Any] | Callable[[str, str, str, int | None, int | None], Any],
         callback: Callable[[Any], Any] | None = None,
         logger_name: str = __name__,
         failed_poll_msg: str = "Failed to poll sql database",
@@ -69,16 +70,23 @@ class PollingSQLAdapterImpl(PushInputAdapter):
     ):
         self._interval = interval
         self._connection = connection
-        if connection_timeout_seconds:
-            self._connection += f";timeout={connection_timeout_seconds}"
-
-        if query_timeout_seconds:
-            self._connection += f";commandTimeout={query_timeout_seconds}"
-
         self._query = query
         self._callback = callback
         self._last_update = 0
-        self._poll = poll
+
+        poll_params = inspect.signature(poll).parameters
+        if len(poll_params) == 3:
+            # Legacy code path preserved for backwards compatibility: encode timeouts in the
+            # connection string for poll callables that don't accept timeout parameters.
+            if connection_timeout_seconds:
+                self._connection += f";timeout={connection_timeout_seconds}"
+            if query_timeout_seconds:
+                self._connection += f";commandTimeout={query_timeout_seconds}"
+            self._poll = poll
+        else:
+            self._poll = lambda conn, query, logger_name: poll(
+                conn, query, logger_name, connection_timeout_seconds or None, query_timeout_seconds or None
+            )
         self._logger_name = logger_name
         self._failed_poll_msg = failed_poll_msg
 
