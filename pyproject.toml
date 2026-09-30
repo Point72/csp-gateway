@@ -81,7 +81,7 @@ develop = [
     "packaging",
     "polars",
     "pandas",
-    "logfire",
+    "logfire>=5",
     "opentelemetry-instrumentation-fastapi",
 ]
 server = [
