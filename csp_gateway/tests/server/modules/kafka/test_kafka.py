@@ -118,6 +118,155 @@ def _published_encodings(printed):
     return "".join(encodings)
 
 
+def _published_encoding_list(printed: str) -> list[str]:
+    """Return each captured Kafka message payload, unwrapping engine envelopes."""
+    encodings = []
+    messages = (line.partition("val_check:")[2] for line in printed.splitlines())
+    for message in filter(None, messages):
+        encoding = _decode_envelope(message).encoding if _ENVELOPE_TIMESTAMP_FIELD in message else message
+        assert encoding is not None
+        encodings.append(encoding)
+    return encodings
+
+
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+@pytest.mark.parametrize("encoding_with_engine_timestamps", [False, True])
+@pytest.mark.parametrize("publish_elements", [None, False, True])
+def test_kafka_publish_elements_list_channel(
+    mock_object,
+    encoding_with_engine_timestamps,
+    publish_elements,
+    capsys,
+):
+    def capture_publish(*args, **kwargs):
+        csp.print("val_check", kwargs["x"])
+
+    mock_object.return_value.publish.side_effect = capture_publish
+    mock_object.return_value.subscribe.side_effect = lambda *args, **kwargs: csp.null_ts(kwargs["ts_type"])
+
+    setter = MySetModule(
+        my_data=csp.const(MyStruct(foo=1.0, time=timedelta(0))),
+        my_data2=csp.const(MyStruct(foo=2.0, time=timedelta(0))),
+        my_list_data=csp.const([MyStruct(foo=1.0, time=timedelta(0)), MyStruct(foo=2.0, time=timedelta(0))]),
+    )
+    writer_kwargs = {}
+    if publish_elements is not None:
+        writer_kwargs["publish_elements"] = publish_elements
+    writer = ReadWriteKafka(
+        config=KafkaConfiguration(broker="kafka-broker:9093"),
+        publish_channel_to_topic_and_key={
+            MyGatewayChannels.my_list_channel: {"kafka_topic": "list"},
+        },
+        encoding_with_engine_timestamps=encoding_with_engine_timestamps,
+        **writer_kwargs,
+    )
+
+    csp.run(
+        MyGateway(modules=[setter, writer], channels=MyGatewayChannels()).graph,
+        starttime=datetime.now(UTC),
+        endtime=timedelta(seconds=1),
+    )
+
+    printed = capsys.readouterr().out
+    raw_messages = [line.partition("val_check:")[2] for line in printed.splitlines() if "val_check:" in line]
+    assert all((_ENVELOPE_TIMESTAMP_FIELD in message) is encoding_with_engine_timestamps for message in raw_messages)
+
+    messages = [orjson.loads(value) for value in _published_encoding_list(printed)]
+    if publish_elements is True:
+        assert [message["foo"] for message in messages] == [1.0, 2.0]
+    else:
+        assert [[item["foo"] for item in message] for message in messages] == [[1.0, 2.0]]
+
+
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+def test_kafka_publish_elements_processor_receives_each_element(mock_object, capsys):
+    def capture_publish(*args, **kwargs):
+        csp.print("val_check", kwargs["x"])
+
+    mock_object.return_value.publish.side_effect = capture_publish
+    mock_object.return_value.subscribe.side_effect = lambda *args, **kwargs: csp.null_ts(kwargs["ts_type"])
+
+    setter = MySetModule(
+        my_data=csp.const(MyStruct(foo=1.0, time=timedelta(0))),
+        my_data2=csp.const(MyStruct(foo=2.0, time=timedelta(0))),
+        my_list_data=csp.const([MyStruct(foo=1.0, time=timedelta(0)), MyStruct(foo=2.0, time=timedelta(0))]),
+    )
+    processor = FloatKafkaChannelProcessor(goal_float=7.0, key="list")
+    writer = ReadWriteKafka(
+        config=KafkaConfiguration(broker="kafka-broker:9093"),
+        publish_channel_to_topic_and_key={MyGatewayChannels.my_list_channel: {"kafka_topic": "list"}},
+        publish_channel_processors={MyGatewayChannels.my_list_channel: processor},
+        publish_elements=True,
+    )
+
+    csp.run(
+        MyGateway(modules=[setter, writer], channels=MyGatewayChannels()).graph,
+        starttime=datetime.now(UTC),
+        endtime=timedelta(seconds=1),
+    )
+
+    messages = [orjson.loads(value) for value in _published_encoding_list(capsys.readouterr().out)]
+    assert [message["foo"] for message in messages] == [7.0, 7.0]
+
+
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+def test_kafka_publish_elements_scalar_channel_is_unchanged(mock_object, capsys):
+    def capture_publish(*args, **kwargs):
+        csp.print("val_check", kwargs["x"])
+
+    mock_object.return_value.publish.side_effect = capture_publish
+    mock_object.return_value.subscribe.side_effect = lambda *args, **kwargs: csp.null_ts(kwargs["ts_type"])
+
+    setter = MySetModule(
+        my_data=csp.const(MyStruct(foo=1.0, time=timedelta(0))),
+        my_data2=csp.const(MyStruct(foo=2.0, time=timedelta(0))),
+        my_list_data=csp.const([MyStruct(foo=1.0, time=timedelta(0)), MyStruct(foo=2.0, time=timedelta(0))]),
+    )
+    writer = ReadWriteKafka(
+        config=KafkaConfiguration(broker="kafka-broker:9093"),
+        publish_channel_to_topic_and_key={MyGatewayChannels.my_channel: {"kafka_topic": "scalar"}},
+        publish_elements=True,
+    )
+
+    csp.run(
+        MyGateway(modules=[setter, writer], channels=MyGatewayChannels()).graph,
+        starttime=datetime.now(UTC),
+        endtime=timedelta(seconds=1),
+    )
+
+    messages = [orjson.loads(value) for value in _published_encoding_list(capsys.readouterr().out)]
+    assert [message["foo"] for message in messages] == [1.0]
+
+
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+def test_kafka_publish_elements_empty_list_emits_nothing(mock_object, capsys):
+    def capture_publish(*args, **kwargs):
+        csp.print("val_check", kwargs["x"])
+
+    mock_object.return_value.publish.side_effect = capture_publish
+    mock_object.return_value.subscribe.side_effect = lambda *args, **kwargs: csp.null_ts(kwargs["ts_type"])
+
+    empty_list = csp.apply(csp.const(True), lambda _: [], [MyStruct])
+    setter = MySetModule(
+        my_data=csp.const(MyStruct(foo=1.0, time=timedelta(0))),
+        my_data2=csp.const(MyStruct(foo=2.0, time=timedelta(0))),
+        my_list_data=empty_list,
+    )
+    writer = ReadWriteKafka(
+        config=KafkaConfiguration(broker="kafka-broker:9093"),
+        publish_channel_to_topic_and_key={MyGatewayChannels.my_list_channel: {"kafka_topic": "list"}},
+        publish_elements=True,
+    )
+
+    csp.run(
+        MyGateway(modules=[setter, writer], channels=MyGatewayChannels()).graph,
+        starttime=datetime.now(UTC),
+        endtime=timedelta(seconds=1),
+    )
+
+    assert _published_encoding_list(capsys.readouterr().out) == []
+
+
 @mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
 @pytest.mark.parametrize("by_key", [True, False])
 def test_kafka_engine_replay_write(mock_object, by_key):
