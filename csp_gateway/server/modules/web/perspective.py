@@ -187,9 +187,26 @@ def migrate_perspective_layout(layout: str) -> str:
     root = (parsed.get("detail") or {}).get("main")
     if root is not None:
         migrated["layout"] = _migrate_layout_node(root)
-    masters = (parsed.get("master") or {}).get("widgets") or []
+    master = parsed.get("master") or {}
+    masters = master.get("widgets") or []
     if masters:
         migrated["masters"] = list(masters)
+        # Filter-source panels also need a place in the layout; the viewer removes unplaced panels.
+        master_layout = {
+            "type": "split-layout",
+            "orientation": "vertical",
+            "sizes": list(master.get("sizes") or [1] * len(masters)),
+            "children": [{"type": "tab-layout", "tabs": [name], "selected": 0} for name in masters],
+        }
+        if root is None:
+            migrated["layout"] = master_layout
+        else:
+            migrated["layout"] = {
+                "type": "split-layout",
+                "orientation": "horizontal",
+                "sizes": list(parsed.get("sizes") or [1, 1]),
+                "children": [master_layout, migrated["layout"]],
+            }
     return orjson.dumps(migrated).decode()
 
 

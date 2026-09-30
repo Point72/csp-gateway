@@ -800,7 +800,7 @@ class TestLayoutMigration:
 
     V4_LAYOUT = json.dumps(
         {
-            "sizes": [1],
+            "sizes": [0.2, 0.8],
             "detail": {
                 "main": {
                     "type": "split-area",
@@ -812,18 +812,22 @@ class TestLayoutMigration:
                     ],
                 }
             },
-            "master": {"sizes": [], "widgets": ["A"]},
+            "master": {"sizes": [1], "widgets": ["M"]},
             "mode": "globalFilters",
             "viewers": {
                 "A": {"table": "example", "plugin": "Datagrid"},
                 "B": {"table": "example", "plugin": "Treemap"},
                 "C": {"table": "other", "plugin": "Datagrid"},
+                "M": {"table": "example", "plugin": "Datagrid", "group_by": ["id"]},
             },
         }
     )
 
     def test_widget_tree_becomes_layout_tree(self):
-        migrated = json.loads(migrate_perspective_layout(self.V4_LAYOUT))
+        layout = json.loads(self.V4_LAYOUT)
+        del layout["master"]
+        del layout["viewers"]["M"]
+        migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
         assert migrated["layout"] == {
             "type": "split-layout",
             "orientation": "vertical",
@@ -836,12 +840,44 @@ class TestLayoutMigration:
 
     def test_viewers_become_panels_and_masters_are_kept(self):
         migrated = json.loads(migrate_perspective_layout(self.V4_LAYOUT))
-        assert sorted(migrated["panels"]) == ["A", "B", "C"]
+        assert sorted(migrated["panels"]) == ["A", "B", "C", "M"]
         assert migrated["panels"]["B"] == {"table": "example", "plugin": "Treemap"}
-        assert migrated["masters"] == ["A"]
+        assert migrated["masters"] == ["M"]
         # The v4-only envelope keys do not survive.
         assert "viewers" not in migrated
         assert "detail" not in migrated
+
+    @pytest.mark.parametrize("master_count", [1, 2])
+    @pytest.mark.parametrize("with_detail", [True, False])
+    def test_master_panels_are_placed_in_layout(self, master_count, with_detail):
+        layout = json.loads(self.V4_LAYOUT)
+        if master_count == 2:
+            layout["master"] = {"sizes": [0.3, 0.7], "widgets": ["M", "N"]}
+            layout["viewers"]["N"] = {"table": "other", "plugin": "Datagrid"}
+        if not with_detail:
+            del layout["detail"]
+            layout["viewers"] = {name: layout["viewers"][name] for name in layout["master"]["widgets"]}
+
+        migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
+
+        master_layout = {
+            "type": "split-layout",
+            "orientation": "vertical",
+            "sizes": layout["master"]["sizes"],
+            "children": [{"type": "tab-layout", "tabs": [name], "selected": 0} for name in layout["master"]["widgets"]],
+        }
+        if with_detail:
+            assert migrated["layout"]["type"] == "split-layout"
+            assert migrated["layout"]["orientation"] == "horizontal"
+            assert migrated["layout"]["sizes"] == [0.2, 0.8]
+            assert migrated["layout"]["children"][0] == master_layout
+            assert migrated["layout"]["children"][1]["children"] == [
+                {"type": "tab-layout", "tabs": ["A"], "selected": 0},
+                {"type": "tab-layout", "tabs": ["B", "C"], "selected": 1},
+            ]
+        else:
+            assert migrated["layout"] == master_layout
+        assert migrated["masters"] == layout["master"]["widgets"]
 
     def test_already_migrated_layout_is_untouched(self):
         once = migrate_perspective_layout(self.V4_LAYOUT)
