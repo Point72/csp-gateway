@@ -28,6 +28,7 @@ permissions:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     strategy:
       matrix:
@@ -42,7 +43,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           version: ${{ matrix.python-version }}
 
@@ -83,7 +84,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -92,13 +93,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Test wheel
-        uses: actions-ext/python/test-wheel@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/test-wheel@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           module: csp_gateway
         if: matrix.os == 'ubuntu-latest'
 
       - name: Test source distribution
-        uses: actions-ext/python/test-sdist@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/test-sdist@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           module: csp_gateway
         if: matrix.os == 'ubuntu-latest'
@@ -125,7 +126,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           version: ${{ matrix.python-version }}
 
@@ -162,7 +163,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
 
       - name: Upload coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -181,7 +182,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           version: 3.11
 
