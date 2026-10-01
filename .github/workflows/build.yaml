@@ -92,7 +92,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Test wheel
-        uses: actions-ext/python/test-wheel@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/test-wheel@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           module: csp_gateway
         if: matrix.os == 'ubuntu-latest'
