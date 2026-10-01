@@ -51,7 +51,7 @@ importers:
         version: 4.1.5
       prettier:
         specifier: ^3.8.3
-        version: 3.9.6
+        version: 3.9.9
       react:
         specifier: 19.2.6
         version: 19.2.6
@@ -878,8 +878,8 @@ packages:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
 
-  prettier@3.9.6:
-    resolution: {integrity: sha512-OpN0zzVdiaiAhxpuuj5efpIS4sY9j7bY6uR5mnj5yPzGkdkjNKSJeUThPb60Jw29QuAZgA4o+/iB49kFiaBX6g==}
+  prettier@3.9.9:
+    resolution: {integrity: sha512-Z/CJHIkdujO/OtN7nXUii0Rf3VT5SRuhjBA82Xvu2XhBUgX3nhP67T0LHceBdQLex7OOFGTox+Q5Yg8Jk2Qivg==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -2022,7 +2022,7 @@ snapshots:
 
   possible-typed-array-names@1.1.0: {}
 
-  prettier@3.9.6: {}
+  prettier@3.9.9: {}
 
   pro_self_extracting_wasm@0.0.9(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0):
     dependencies:
