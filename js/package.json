@@ -33,7 +33,7 @@
     "npm-run-all": "^4.1.5",
     "prettier": "^3.8.3",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.3.0"
   },
   "peerDependencies": {
     "@perspective-dev/client": "~5.3.0",
@@ -43,6 +43,6 @@
     "@perspective-dev/viewer-charts": "~5.3.0",
     "@perspective-dev/viewer-datagrid": "~5.3.0",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.3.0"
   }
 }
