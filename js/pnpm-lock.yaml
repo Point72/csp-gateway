@@ -23,8 +23,8 @@ importers:
         specifier: ~5.3.0
         version: 5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@perspective-dev/react':
-        specifier: ~5.3.0
-        version: 5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+        specifier: ~5.5.1
+        version: 5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@perspective-dev/server':
         specifier: ~5.3.0
         version: 5.3.0
@@ -232,11 +232,17 @@ packages:
   '@perspective-dev/client@5.3.0':
     resolution: {integrity: sha512-41ITlb3PsgnmcG+icZWb+O+eyUnY2zyqrKJZFclCiEHOQXw9Yde1Ou/wVo3CLViPwM3OQQtT1BLuuG0zQdDy+A==}
 
-  '@perspective-dev/react@5.3.0':
-    resolution: {integrity: sha512-mS8Ws7LOBHLzWifskTMPTgrube27Yuxf6dU4OwkGR3wP26VaW7QRqv4Y3K3IvutDRAqrpEBEKy8sd+CEofDRrw==}
+  '@perspective-dev/client@5.5.1':
+    resolution: {integrity: sha512-q/U/WLfOq/t2T5Urtwr8pwk9zwU6Ss3Fm4qtNRq/ZBjeOq8uRidyCgbigPI3DYPapkp0lrta2S1YGw1M/+rKug==}
+
+  '@perspective-dev/react@5.5.1':
+    resolution: {integrity: sha512-QSSpPD2H7EK1y7uH6l4w85LA+xIf+afebisGGAZFzEUBFl+hueynEUKSSbEvj4mVkXFuOjN9pQYLsA9UrQhTFg==}
 
   '@perspective-dev/server@5.3.0':
     resolution: {integrity: sha512-CcPb05fVGGQu90JZSL7Y+JVAqE6VEVatz4JR5T1Fb8qjbDnOAEleygx60ce5lUIHfOQfYXR/cDglSR7BtiFcFQ==}
+
+  '@perspective-dev/server@5.5.1':
+    resolution: {integrity: sha512-JBBdRLzg7yxm/WEhaif6dsAx3IFn1Qi172AswGtb0vb5ElBf7hv5ZOtCEP99Y/OBxz4xF9uNLkg1laNDKb8bqw==}
 
   '@perspective-dev/viewer-charts@5.3.0':
     resolution: {integrity: sha512-EOCpgqqyUm3oQOuXuAdG057QFEqjJkiAfnHmfAQwFuQ1wO/m/2B6CoFSdKb3/NwyXMJCUR4QldgMkr1fy8oDDw==}
@@ -246,6 +252,9 @@ packages:
 
   '@perspective-dev/viewer@5.3.0':
     resolution: {integrity: sha512-5h7++op0aJ7DOCyfBKc5B3y2Q+uq9hLS9ttooilRuvA+fFXWxtfInWPWA1Y8TWV0kH4dZQXiEBHfSfZibq8Jug==}
+
+  '@perspective-dev/viewer@5.5.1':
+    resolution: {integrity: sha512-0GXp/FYFFH8CKnUlrog98ihkMZBQuCeTa3RHATPZc1n+FehRycnkf4uPB8FNbT4CHCRvzDQ2JRsSdGFo9sHvZw==}
 
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
@@ -1258,10 +1267,22 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@perspective-dev/react@5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
+  '@perspective-dev/client@5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
-      '@perspective-dev/client': 5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
-      '@perspective-dev/viewer': 5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+      '@perspective-dev/server': 5.5.1
+      pro_self_extracting_wasm: 0.0.9(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+      stoppable: 1.1.0
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
+  '@perspective-dev/react@5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
+    dependencies:
+      '@perspective-dev/client': 5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+      '@perspective-dev/viewer': 5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       '@types/react': 19.2.15
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
@@ -1272,6 +1293,8 @@ snapshots:
       - utf-8-validate
 
   '@perspective-dev/server@5.3.0': {}
+
+  '@perspective-dev/server@5.5.1': {}
 
   '@perspective-dev/viewer-charts@5.3.0': {}
 
@@ -1289,6 +1312,17 @@ snapshots:
   '@perspective-dev/viewer@5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
     dependencies:
       '@perspective-dev/client': 5.3.0(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+      pro_self_extracting_wasm: 0.0.9(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
+      regular-layout: 0.6.1
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
+  '@perspective-dev/viewer@5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)':
+    dependencies:
+      '@perspective-dev/client': 5.5.1(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       pro_self_extracting_wasm: 0.0.9(debug@4.4.3(supports-color@7.2.0))(supports-color@7.2.0)
       regular-layout: 0.6.1
     transitivePeerDependencies:
