@@ -104,7 +104,7 @@ server = [
     "spaday-regular-layout>=0.2.6",
     "spaday-trees>=0.2.3",
     "spaday-webawesome>=0.4.0",
-    "uvicorn>=0.28.1,<0.53",
+    "uvicorn>=0.28.1,<0.54",
     "websockets",
 ]
 client = [
