@@ -46,7 +46,6 @@ from spaday.actions import (
     NamedJs,
     Sequence,
     SetField,
-    SetStorage,
     Toggle,
     ToggleField,
     all_,
@@ -282,6 +281,7 @@ class GatewayUI:
         self._tab_actions: dict[str, Any] = {}
         self._store_seeds: dict[str, Any] = {"main_tab": ""}
         self._url_fields: dict[str, str] = {"main_tab": "tab"}
+        self._store_persistence: dict[str, str] = {}
         # Tables the workspace can show, recorded by `perspective_panel` so later contributions
         # (the channels graph) can drive it without knowing how it was configured.
         self._workspace_tables: list[str] = []
@@ -383,6 +383,10 @@ class GatewayUI:
         """Map signal-store fields to shareable URL query parameters."""
         self._url_fields.update(fields)
 
+    def persist_store(self, **keys: str) -> None:
+        """Bind store fields to browser localStorage keys, loading them before the page mounts."""
+        self._store_persistence.update(keys)
+
     def package(self, package: Any) -> None:
         """Load an extra spaday component package into the page.
 
@@ -479,6 +483,7 @@ class GatewayUI:
         schemas: dict[str, dict[str, str]] | None = None,
         default_layout: dict[str, Any] | None = None,
         table_options: dict[str, dict[str, Any]] | None = None,
+        channels: dict[str, dict[str, Any]] | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
 
@@ -488,7 +493,8 @@ class GatewayUI:
         ``tables``. ``schemas`` (table name -> column name -> type) lets the generated layout apply
         per-table defaults (timestamp sort, hidden id column). ``table_options`` carries each table's
         ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
-        worker rather than reading it off the websocket. Add it to `Region.MAIN`.
+        worker rather than reading it off the websocket. ``channels`` supplies configurations for
+        channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
         """
         tables = list(tables or [])
         self._workspace_tables = list(tables)
@@ -522,13 +528,15 @@ class GatewayUI:
             layout_expr = cond(eq(field(_GRAPH_FOCUS), name), self._default_layout([name], schemas=schemas), layout_expr)
         self._store_seeds.setdefault(_GRAPH_FOCUS, "")
         self._store_seeds.setdefault(_PERSPECTIVE_READY, False)
+        self._store_seeds.setdefault("saved_layout", None)
+        self.persist_store(saved_layout=_CUSTOM_LAYOUT_STORAGE_KEY)
 
         return (
             PerspectivePanel()
             .prop("id", _WORKSPACE_ID)
             .style(height="100%", display="block", overflow="hidden")
             .compute("theme", cond(field("dark"), "dark", "light"))
-            .compute("config", obj({"ws_url": self.url(route), "tables": table_specs, "layout": layout_expr}))
+            .compute("config", obj({"ws_url": self.url(route), "tables": table_specs, "layout": layout_expr, "channels": channels or {}}))
             # Applying a config can fail (a saved layout that no longer matches the tables); the
             # panel reports it and otherwise nothing would. The detail is whatever was thrown --
             # an Error for JS failures, a bare string for the ones raised inside Perspective.
@@ -587,20 +595,29 @@ class GatewayUI:
         """A header button that saves the current Perspective workspace in the browser.
 
         `saveClean` strips the transient fields (theme, column size overrides) before the layout is
-        persisted to localStorage; writing `result="custom_layout"` updates the store field the
-        workspace's layout expression reads, and selecting the custom layout re-renders it.
+        persisted to localStorage. Only a successful save updates the saved layout and selects it.
         """
         return (
             WaButton(appearance="plain", title="Save current layout")
-            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
+            .compute("disabled", any_(not_(field(_PERSPECTIVE_READY)), field("layout_busy")))
             .on(
                 "click",
                 Sequence(
-                    Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
-                    SetStorage(_CUSTOM_LAYOUT_STORAGE_KEY, field("custom_layout")),
-                    SetField(_GRAPH_FOCUS, ""),
-                    SetField("view", _CUSTOM_LAYOUT_NAME),
-                    SetField("layout_view", _CUSTOM_LAYOUT_NAME),
+                    SetField("layout_busy", True),
+                    SetField("pending_layout", None),
+                    Invoke(by_id(_WORKSPACE_ID), "saveClean", result="pending_layout"),
+                    If(
+                        field("pending_layout"),
+                        Sequence(
+                            SetField("custom_layout", field("pending_layout")),
+                            SetField("saved_layout", field("pending_layout")),
+                            SetField(_GRAPH_FOCUS, ""),
+                            SetField("view", _CUSTOM_LAYOUT_NAME),
+                            SetField("layout_view", _CUSTOM_LAYOUT_NAME),
+                        ),
+                        Invoke(by_id(_TOAST_ID), "notify", {"message": "Unable to save layout", "tone": "danger"}),
+                    ),
+                    SetField("layout_busy", False),
                 ),
             )
             .child(WaIcon(name="floppy-disk"))
@@ -613,12 +630,19 @@ class GatewayUI:
         """
         return (
             WaButton(appearance="plain", title="Download layout")
-            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
+            .compute("disabled", any_(not_(field(_PERSPECTIVE_READY)), field("layout_busy")))
             .on(
                 "click",
                 Sequence(
+                    SetField("layout_busy", True),
+                    SetField("download_layout", None),
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="download_layout"),
-                    Download("layout.json", field("download_layout")),
+                    If(
+                        field("download_layout"),
+                        Download("layout.json", field("download_layout")),
+                        Invoke(by_id(_TOAST_ID), "notify", {"message": "Unable to download layout", "tone": "danger"}),
+                    ),
+                    SetField("layout_busy", False),
                 ),
             )
             .child(WaIcon(name="download"))
@@ -1210,6 +1234,8 @@ class GatewayUI:
                 )
                 return Response(source, media_type="text/javascript")
 
+        favicon = self.url(getattr(self._settings, "FAVICON", None))
+        favicon_head = f'<link rel="icon" href="{escape(favicon, quote=True)}">' if favicon else ""
         # Only wire a transports model when a module actually declared live state; otherwise the page is a
         # static tree and no websocket is served.
         wire: Any = None
@@ -1238,10 +1264,10 @@ class GatewayUI:
             # prefers-color-scheme detection), and a manual toggle is persisted per browser and takes
             # precedence on later loads.
             store={"dark": Js('matchMedia("(prefers-color-scheme: dark)").matches'), **self._store_seeds},
-            persist={"dark": "csp-gateway:dark"},
+            persist={"dark": "csp-gateway:dark", **self._store_persistence},
             url=self._url_fields,
             scripts=scripts,
-            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head,
+            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head + favicon_head,
             title=title,
             prefix=root,
             lifecycle=Lifecycle(elements=elements),
