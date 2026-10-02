@@ -41,6 +41,7 @@ def _bare_ui():
 
     ui = object.__new__(GatewayUI)
     ui._store_seeds = {}
+    ui._store_persistence = {}
     ui._settings = GatewaySettings()
     ui._workspace_tables = []
     return ui
@@ -203,7 +204,7 @@ class TestSpadayRootPath:
         return Gateway(
             modules=[SendableModule(), MountRestRoutes(force_mount_all=True), MountSendForm()],
             channels=ExampleChannels(),
-            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday", ROOT_PATH="/watchtower"),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday", ROOT_PATH="/watchtower", FAVICON='/custom/icon.svg?x="a"&y=1'),
         )
 
     @pytest.fixture(scope="class")
@@ -217,6 +218,7 @@ class TestSpadayRootPath:
     def test_page_assets_prefixed(self, client: TestClient):
         # The page's own runtime/asset URLs (/js, wasm) carry the ROOT_PATH prefix.
         assert "/watchtower/js" in client.get("/").text
+        assert '<link rel="icon" href="/watchtower/custom/icon.svg?x=&quot;a&quot;&amp;y=1">' in client.get("/").text
 
     def test_module_urls_prefixed(self, client: TestClient):
         # A module-generated action URL (the send POST) is prefixed in the component tree.
@@ -335,6 +337,7 @@ class TestDefaultLayout:
 
         ui = object.__new__(GatewayUI)
         ui._store_seeds = {}
+        ui._store_persistence = {}
         ui._settings = GatewaySettings()
         custom = {
             "layout": {"type": "tab-layout", "tabs": ["custom"]},
@@ -362,6 +365,15 @@ class TestTableOptions:
     def test_tables_without_options_stay_plain_names(self):
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
+
+    def test_channel_defaults_and_storage_are_configured_from_python(self):
+        ui = _bare_ui()
+        channels = {"orders": {"table": "orders", "columns": ["quantity"]}}
+        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels)
+        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["channels"]["value"] == channels
+        assert ui._store_persistence == {"saved_layout": "csp_gateway_demo_config"}
+        ui.persist_store(legacy_layout="old-layout")
+        assert ui._store_persistence["legacy_layout"] == "old-layout"
 
     def test_options_are_merged_into_the_table_spec(self):
         panel = _bare_ui().perspective_panel(
@@ -551,14 +563,24 @@ class TestSpadayPerspectiveLayoutActions:
         assert client.get("/components/csp-gateway/actions.js").status_code == 404
         tree = client.get("/tree.json").text
         # save: clean-save the workspace, persist it, and switch the selector to the custom layout
-        assert '"target": {"ref": "id", "id": "gateway-workspace"}, "method": "saveClean", "result": "custom_layout"' in tree
-        assert '"kind": "set-storage", "key": "csp_gateway_demo_config", "value": {"expr": "field", "name": "custom_layout"}' in tree
+        assert '"target": {"ref": "id", "id": "gateway-workspace"}, "method": "saveClean", "result": "pending_layout"' in tree
+        assert '"kind": "set-field", "field": "saved_layout", "value": {"expr": "field", "name": "pending_layout"}' in tree
         assert '"kind": "set-field", "field": "layout_view", "value": {"expr": "lit", "value": "Custom Layout"}' in tree
         # download: clean-save, then offer the result as a client-side file
         assert '"method": "saveClean", "result": "download_layout"' in tree
         assert (
             '"kind": "download", "filename": {"expr": "lit", "value": "layout.json"}, "value": {"expr": "field", "name": "download_layout"}' in tree
         )
+
+    @pytest.mark.parametrize("method,result", [("save_layout_button", "pending_layout"), ("download_layout_button", "download_layout")])
+    def test_failed_export_cannot_persist_a_previous_result(self, method, result):
+        action = getattr(_bare_ui(), method)().to_node()["events"]["click"]["actions"]
+        assert action[0]["field"] == "layout_busy" and action[0]["value"]["value"] is True
+        assert action[1] == {"kind": "set-field", "field": result, "value": {"expr": "lit", "value": None}}
+        assert action[2]["result"] == result
+        assert action[3]["kind"] == "if" and action[3]["cond"] == {"expr": "field", "name": result}
+        assert action[3]["else"]["method"] == "notify"
+        assert action[4]["field"] == "layout_busy" and action[4]["value"]["value"] is False
 
     def test_layout_download_is_a_same_origin_attachment(self, client: TestClient):
         layout = {"layout": {"type": "tab-layout", "tabs": []}, "panels": {}}
