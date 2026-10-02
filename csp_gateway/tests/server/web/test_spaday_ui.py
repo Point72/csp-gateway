@@ -675,24 +675,14 @@ class TestSpadayPerspectiveLayoutActions:
         assert client.get("/components/csp-gateway/actions.js").status_code == 404
         tree = client.get("/tree.json").text
         # save: clean-save the workspace, persist it, and switch the selector to the custom layout
-        assert '"target": {"ref": "id", "id": "gateway-workspace"}, "method": "saveClean", "result": "pending_layout"' in tree
-        assert '"kind": "set-field", "field": "saved_layout", "value": {"expr": "field", "name": "pending_layout"}' in tree
+        assert '"target": {"ref": "id", "id": "gateway-workspace"}, "method": "saveClean", "result": "custom_layout"' in tree
+        assert '"kind": "set-field", "field": "saved_layout", "value": {"expr": "field", "name": "custom_layout"}' in tree
         assert '"kind": "set-field", "field": "layout_view", "value": {"expr": "lit", "value": "Custom Layout"}' in tree
         # download: clean-save, then offer the result as a client-side file
         assert '"method": "saveClean", "result": "download_layout"' in tree
         assert (
             '"kind": "download", "filename": {"expr": "lit", "value": "layout.json"}, "value": {"expr": "field", "name": "download_layout"}' in tree
         )
-
-    @pytest.mark.parametrize("method,result", [("save_layout_button", "pending_layout"), ("download_layout_button", "download_layout")])
-    def test_failed_export_cannot_persist_a_previous_result(self, method, result):
-        action = getattr(_bare_ui(), method)().to_node()["events"]["click"]["actions"]
-        assert action[0]["field"] == "layout_busy" and action[0]["value"]["value"] is True
-        assert action[1] == {"kind": "set-field", "field": result, "value": {"expr": "lit", "value": None}}
-        assert action[2]["result"] == result
-        assert action[3]["kind"] == "if" and action[3]["cond"] == {"expr": "field", "name": result}
-        assert action[3]["else"]["method"] == "notify"
-        assert action[4]["field"] == "layout_busy" and action[4]["value"]["value"] is False
 
     def test_layout_download_is_a_same_origin_attachment(self, client: TestClient):
         layout = {"layout": {"type": "tab-layout", "tabs": []}, "panels": {}}

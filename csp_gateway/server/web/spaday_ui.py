@@ -595,29 +595,19 @@ class GatewayUI:
         """A header button that saves the current Perspective workspace in the browser.
 
         `saveClean` strips the transient fields (theme, column size overrides) before the layout is
-        persisted to localStorage. Only a successful save updates the saved layout and selects it.
+        persisted to localStorage. Saving updates the custom layout and selects it.
         """
         return (
             WaButton(appearance="plain", title="Save current layout")
-            .compute("disabled", any_(not_(field(_PERSPECTIVE_READY)), field("layout_busy")))
+            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
             .on(
                 "click",
                 Sequence(
-                    SetField("layout_busy", True),
-                    SetField("pending_layout", None),
-                    Invoke(by_id(_WORKSPACE_ID), "saveClean", result="pending_layout"),
-                    If(
-                        field("pending_layout"),
-                        Sequence(
-                            SetField("custom_layout", field("pending_layout")),
-                            SetField("saved_layout", field("pending_layout")),
-                            SetField(_GRAPH_FOCUS, ""),
-                            SetField("view", _CUSTOM_LAYOUT_NAME),
-                            SetField("layout_view", _CUSTOM_LAYOUT_NAME),
-                        ),
-                        Invoke(by_id(_TOAST_ID), "notify", {"message": "Unable to save layout", "tone": "danger"}),
-                    ),
-                    SetField("layout_busy", False),
+                    Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
+                    SetField("saved_layout", field("custom_layout")),
+                    SetField(_GRAPH_FOCUS, ""),
+                    SetField("view", _CUSTOM_LAYOUT_NAME),
+                    SetField("layout_view", _CUSTOM_LAYOUT_NAME),
                 ),
             )
             .child(WaIcon(name="floppy-disk"))
@@ -630,19 +620,12 @@ class GatewayUI:
         """
         return (
             WaButton(appearance="plain", title="Download layout")
-            .compute("disabled", any_(not_(field(_PERSPECTIVE_READY)), field("layout_busy")))
+            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
             .on(
                 "click",
                 Sequence(
-                    SetField("layout_busy", True),
-                    SetField("download_layout", None),
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="download_layout"),
-                    If(
-                        field("download_layout"),
-                        Download("layout.json", field("download_layout")),
-                        Invoke(by_id(_TOAST_ID), "notify", {"message": "Unable to download layout", "tone": "danger"}),
-                    ),
-                    SetField("layout_busy", False),
+                    Download("layout.json", field("download_layout")),
                 ),
             )
             .child(WaIcon(name="download"))
