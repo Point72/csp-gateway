@@ -279,6 +279,19 @@ class GatewayClientConfig(BaseModel):
     def __hash__(self):
         return hash(self.model_dump_json())
 
+    def _streaming_session(self):
+        from aiohttp import ClientSession, TraceConfig
+
+        if not self.bearer_token:
+            return ClientSession()
+        trace = TraceConfig()
+
+        async def reject_redirect(session, context, parameters):
+            raise RuntimeError("Credentialed WebSocket redirects are not followed")
+
+        trace.on_request_redirect.append(reject_redirect)
+        return ClientSession(headers={"Authorization": f"Bearer {self.bearer_token}"}, trace_configs=[trace])
+
 
 class ResponseWrapper(BaseModel):
     json_data: Any
@@ -454,6 +467,7 @@ class BaseGatewayClient(BaseModel):
             headers = self.http_args.get("headers", {}).copy()
             headers["Authorization"] = f"Bearer {self.config.bearer_token}"
             self.http_args["headers"] = headers
+            self.http_args["follow_redirects"] = False
 
         if self._event_loop is None:
             self._event_loop = _get_or_new_event_loop()
@@ -840,9 +854,7 @@ class BaseGatewayClient(BaseModel):
 
     def _aiohttp_session(self) -> "ClientSession":
         try:
-            from aiohttp import ClientSession
-
-            return ClientSession()
+            return self.config._streaming_session()
         except ImportError:
             log.exception("Must have aiohttp installed to use async WebSocket streaming")
             raise

@@ -20,6 +20,16 @@ You can also pass string values (e.g., `return_type="wrapper"`) which will be au
 
 The `ResponseWrapper` object contains additional type information which will create column names and utilize the correct data type for the constructed dataframes. It also provides an `as_struct()` method to convert JSON back to the original struct types.
 
+### Bearer credentials
+
+Use `bearer_token` for an existing bearer credential and configure an HTTPS hostname. Bearer credentials are sent in the
+Authorization header for REST, ordinary WebSocket streaming and `stream_csp`; they are not appended to URL query strings.
+Do not set both `bearer_token` and the legacy `api_key` field. The latter retains its existing query-key protocol.
+
+Bearer clients do not follow REST redirects, and their WebSocket sessions reject redirects before following them. Configure
+the canonical application endpoint rather than relying on a redirect to forward a credential. Server verification and
+operation permissions remain the server's responsibility.
+
 ### API version
 
 Requests go to `/{api_prefix}/{api_version}`, `/api/v1` by default. Point the client at a different
