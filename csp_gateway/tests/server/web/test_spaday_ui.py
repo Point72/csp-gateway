@@ -93,6 +93,14 @@ class TestSpadayAuth:
         assert "spa-app" not in client.get("/").text
         assert not client.get("/tree.json").headers["content-type"].startswith("application/json")
 
+    def test_authenticated_page_declares_lifecycle_and_root_cleanup(self, client: TestClient):
+        page = client.get("/?token=alice_key")
+        assert page.status_code == 200
+        assert "notify('mounted')" in page.text
+        assert "notify('ready')" in page.text
+        assert "onDispose: cleanup" in page.text
+        assert "bootstrap timed out" in page.text
+
     def test_authenticated_serves_spaday(self, client: TestClient):
         # With a valid key the page renders (200) and the tree is JSON — the provider-gated smoke test.
         page = client.get("/?token=alice_key")
@@ -512,7 +520,10 @@ class TestDarkBoot:
         # A manual toggle is stored and overrides the browser preference on the next load (legacy parity).
         page = client.get("/").text
         assert 'localStorage.getItem("csp-gateway:dark")' in page
-        assert 'store.subscribe("dark", (v) => { try { localStorage.setItem("csp-gateway:dark", JSON.stringify(v)); } catch {} });' in page
+        assert (
+            'cleanups.push(store.subscribe("dark", (v) => { try { localStorage.setItem("csp-gateway:dark", JSON.stringify(v)); } catch {} }));'
+            in page
+        )
 
 
 class TestSpadayPerspectiveLayoutActions:

@@ -61,7 +61,7 @@ from spaday.actions import (
     obj,
 )
 from spaday.backends.starlette import build_routes as _spaday_build_routes
-from spaday.bootstrap import bootstrap
+from spaday.bootstrap import Lifecycle, bootstrap
 from spaday.components.shell import AppShell, Column, Region, Row, Show, Toast
 from spaday.packages import ComponentPackage
 from spaday_perspective import PerspectivePanel
@@ -1211,6 +1211,7 @@ class GatewayUI:
             head=PAGE_CSS + MAIN_PAGE_CSS,
             title=title,
             prefix=root,
+            lifecycle=Lifecycle(elements=("wa-button", "wa-tab-group", "wa-tab-panel")),
         )
         app_router = self._web_app.get_router("app")
 

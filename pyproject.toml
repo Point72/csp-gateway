@@ -97,7 +97,7 @@ server = [
     "perspective-python>=5.2,<6",
     "pyarrow",
     "pydantic>=2",
-    "spaday>=0.9.0,<1",
+    "spaday>=0.12.0,<1",
     "spaday-dagre>=0.2.3",
     "spaday-perspective>=0.7.0",
     "spaday-regular-layout>=0.2.6",
