@@ -195,7 +195,7 @@ def migrate_perspective_layout(layout: str) -> str:
         master_layout = {
             "type": "split-layout",
             "orientation": "vertical",
-            "sizes": list(master.get("sizes") or [1] * len(masters)),
+            "sizes": list(master.get("sizes") or [1 / len(masters)] * len(masters)),
             "children": [{"type": "tab-layout", "tabs": [name], "selected": 0} for name in masters],
         }
         if root is None:
@@ -204,7 +204,7 @@ def migrate_perspective_layout(layout: str) -> str:
             migrated["layout"] = {
                 "type": "split-layout",
                 "orientation": "horizontal",
-                "sizes": list(parsed.get("sizes") or [1, 1]),
+                "sizes": list(parsed.get("sizes") or [0.25, 0.75]),
                 "children": [master_layout, migrated["layout"]],
             }
     return orjson.dumps(migrated).decode()

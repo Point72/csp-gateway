@@ -879,6 +879,22 @@ class TestLayoutMigration:
             assert migrated["layout"] == master_layout
         assert migrated["masters"] == layout["master"]["widgets"]
 
+    @pytest.mark.parametrize("empty_sizes", [False, True])
+    def test_missing_master_sizes_use_normalized_defaults(self, empty_sizes):
+        layout = json.loads(self.V4_LAYOUT)
+        layout["master"] = {"widgets": ["M", "N"]}
+        layout["viewers"]["N"] = {"table": "other", "plugin": "Datagrid"}
+        if empty_sizes:
+            layout["sizes"] = []
+            layout["master"]["sizes"] = []
+        else:
+            del layout["sizes"]
+
+        migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
+
+        assert migrated["layout"]["sizes"] == [0.25, 0.75]
+        assert migrated["layout"]["children"][0]["sizes"] == [0.5, 0.5]
+
     def test_already_migrated_layout_is_untouched(self):
         once = migrate_perspective_layout(self.V4_LAYOUT)
         assert migrate_perspective_layout(once) == once

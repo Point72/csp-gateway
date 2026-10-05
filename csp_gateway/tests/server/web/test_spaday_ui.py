@@ -672,6 +672,10 @@ class TestSpadayPerspectiveLayoutActions:
         assert "actions.js" not in page
         assert "cspGatewayCustomLayout" not in page
         assert 'localStorage.getItem("csp_gateway_demo_config")' in page
+        assert (
+            'store.subscribe("saved_layout", (v) => { try { localStorage.setItem("csp_gateway_demo_config", JSON.stringify(v)); } catch {} });'
+            in page
+        )
         assert client.get("/components/csp-gateway/actions.js").status_code == 404
         tree = client.get("/tree.json").text
         # save: clean-save the workspace, persist it, and switch the selector to the custom layout
