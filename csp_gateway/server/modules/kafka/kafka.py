@@ -197,6 +197,12 @@ class ReadWriteKafka(GatewayModule):
             "If the procesing function returns None for a tick, that tick is not published to Kafka"
         ),
     )
+    publish_elements: bool = Field(
+        default=False,
+        description=(
+            "Whether list-valued publish channels emit one Kafka message per element. Publish processors receive individual elements when enabled."
+        ),
+    )
     subscribe_channel_processors: dict[str, KafkaChannelProcessor] = Field(
         default={},
         description=(
@@ -341,13 +347,21 @@ class ReadWriteKafka(GatewayModule):
         for channel_name, topic_to_key in self.publish_channel_to_topic_and_key.items():
             channel = channels.get_channel(channel_name)
             channel_type = channels.get_outer_type(channel_name).typ
+            normalized_type = ContainerTypeNormalizer.normalize_type(channel_type)
+
+            publish_value = channel
+            publish_type = channel_type
+            if self.publish_elements and get_origin(normalized_type) is list:
+                publish_type = get_args(normalized_type)[0]
+                publish_value = csp.unroll(channel)
+
             channel_processor = self.publish_channel_processors.get(channel_name)
 
             for topic, key in topic_to_key.items():
                 if channel_processor is not None:
-                    raw_value = channel_processor.apply_process(channel_type, channel, topic, key)
+                    raw_value = channel_processor.apply_process(publish_type, publish_value, topic, key)
                 else:
-                    raw_value = channel
+                    raw_value = publish_value
 
                 if self.encoding_with_engine_timestamps:
                     encoded_value = self.serialize_with_engine_timestamp_csp(raw_value)
