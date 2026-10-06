@@ -145,6 +145,7 @@ class TestSpadayAuth:
         # default UI), so an unauthenticated request never receives the spaday app or its tree.
         assert "spa-app" not in client.get("/").text
         assert not client.get("/tree.json").headers["content-type"].startswith("application/json")
+        assert "installClipboardHandlers" not in client.get("/gateway-perspective.mjs").text
 
     def test_authenticated_page_declares_lifecycle_and_root_cleanup(self, client: TestClient):
         page = client.get("/?token=alice_key")
@@ -211,6 +212,10 @@ class TestSpadayAuth:
         tree = client.get("/tree.json?token=alice_key")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
+        script = client.get("/gateway-perspective.mjs?token=alice_key")
+        assert script.status_code == 200
+        assert script.headers["content-type"].startswith("text/javascript")
+        assert "installClipboardHandlers" in script.text
 
     def test_session_cookie_serves_the_tree(self, client: TestClient):
         # The browser only carries a token on the request that logs it in. Every fetch the page then
@@ -219,6 +224,7 @@ class TestSpadayAuth:
         client.cookies.clear()
         client.get("/login?token=alice_key")
         assert client.cookies.get("token"), "login should leave a session cookie behind"
+        assert "installClipboardHandlers" in client.get("/gateway-perspective.mjs").text
         tree = client.get("/tree.json")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
@@ -327,6 +333,8 @@ class TestSpadayRootPath:
     def test_page_assets_prefixed(self, client: TestClient):
         # The page's own runtime/asset URLs (/js, wasm) carry the ROOT_PATH prefix.
         assert "/watchtower/js" in client.get("/").text
+        assert "/watchtower/gateway-perspective.mjs" in client.get("/").text
+        assert "installClipboardHandlers" in client.get("/watchtower/gateway-perspective.mjs").text
         assert '<link rel="icon" href="/watchtower/custom/icon.svg?x=&quot;a&quot;&amp;y=1">' in client.get("/").text
 
     def test_module_urls_prefixed(self, client: TestClient):
@@ -411,6 +419,10 @@ class TestSpadaySendFormDetails:
 class TestDefaultLayout:
     """The generated layout is a Perspective 5 whole-element config."""
 
+    def test_panel_keeps_views_active_for_hidden_theme_changes(self):
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
+        assert panel.to_node()["props"]["autopause"] == {"Bool": False}
+
     def test_one_datagrid_panel_per_table(self):
         from csp_gateway.server.web.spaday_ui import GatewayUI
 
@@ -475,11 +487,13 @@ class TestTableOptions:
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
 
-    def test_channel_defaults_and_storage_are_configured_from_python(self):
+    @pytest.mark.parametrize("master_theme", [None, "Sidebar"])
+    def test_channel_defaults_and_storage_are_configured_from_python(self, master_theme):
         ui = _bare_ui()
         channels = {"orders": {"table": "orders", "columns": ["quantity"]}}
-        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels)
+        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels, master_theme=master_theme)
         assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["channels"]["value"] == channels
+        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["master_theme"]["value"] == master_theme
         assert ui._store_persistence == {"saved_layout": "csp_gateway_demo_config"}
         ui.persist_store(legacy_layout="old-layout")
         assert ui._store_persistence["legacy_layout"] == "old-layout"
@@ -555,9 +569,15 @@ class TestWorkspaceSignals:
     """`perspective-error` reaches a toast, and `perspective-ready` gates the layout buttons."""
 
     def test_errors_are_reported_in_a_toast(self):
-        node = json.dumps(_bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node())
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node()
+        node = json.dumps(panel)
 
         assert "perspective-error" in node and '"notify"' in node
+        assert panel["events"]["perspective-error"]["actions"][0] == {
+            "kind": "set-field",
+            "field": "perspective_error",
+            "value": {"expr": "lit", "value": True},
+        }
         # The detail is an Error for JS failures and a bare string from Perspective itself.
         assert "detail.message" in node and '"path": "detail"' in node
 
@@ -567,6 +587,11 @@ class TestWorkspaceSignals:
 
         assert "perspective-ready" in node
         assert ui._store_seeds["perspective_ready"] is False
+        assert ui._store_seeds["perspective_error"] is False
+        assert json.loads(node)["events"]["perspective-ready"]["actions"] == [
+            {"kind": "set-field", "field": name, "value": {"expr": "lit", "value": value}}
+            for name, value in [("perspective_error", False), ("perspective_ready", True)]
+        ]
 
     def test_layout_buttons_wait_for_the_workspace(self):
         ui = _bare_ui()
@@ -823,6 +848,8 @@ class TestMainTabs:
 
     def test_plus_and_graph_buttons_open_tabs(self, client: TestClient):
         tree = client.get("/tree.json").text
+        assert '"name": {"Str": "bars"}' in tree
+        assert "\\u2630" not in tree
         assert '"data-tab": {"Str": "send"}' in tree
         assert '"data-tab": {"Str": "channels-graph"}' in tree
         # the bottom drawer is gone in the spaday provider (send lives in a tab now)
