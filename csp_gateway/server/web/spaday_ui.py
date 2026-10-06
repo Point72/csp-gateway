@@ -19,12 +19,13 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
+from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from starlette.requests import Request
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, Response
 from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocket
 
@@ -61,9 +62,9 @@ from spaday.actions import (
     obj,
 )
 from spaday.backends.starlette import build_routes as _spaday_build_routes
-from spaday.bootstrap import bootstrap
+from spaday.bootstrap import Lifecycle, bootstrap
 from spaday.components.shell import AppShell, Column, Region, Row, Show, Toast
-from spaday.packages import ComponentPackage
+from spaday.packages import ComponentPackage, resolve_component_packages
 from spaday_perspective import PerspectivePanel
 from spaday_regular_layout import RegularLayout, RegularLayoutFrame
 from spaday_webawesome import (
@@ -440,8 +441,7 @@ class GatewayUI:
 
         Both are resolved by `GatewayWebApp._resolve_ui_assets` first, so local paths have already
         been mounted and turned into URLs, and anything discovered under ``CUSTOM_STATIC_DIR`` is
-        included. Scripts are handed to spaday as ES modules rather than the classic ``<script>``
-        tags the default UI emits.
+        included. Scripts are loaded as optional ES modules before mounting the main page.
         """
         ui_config = getattr(self._web_app, "_ui_config_raw", None) or {}
         stylesheets = [self.url(href) for href in ui_config.get("customCss") or []]
@@ -1174,6 +1174,42 @@ class GatewayUI:
         title = getattr(self._settings, "TITLE", "Gateway")
         root = getattr(self._settings, "ROOT_PATH", "") or ""
         custom_css, custom_scripts = self._custom_assets()
+        error_head = """<script>
+    document.addEventListener('spaday:error', event => {
+      if (event.detail.target != null || document.getElementById('gateway-startup-error')) return;
+      const panel = document.createElement('section');
+      panel.id = 'gateway-startup-error'; panel.setAttribute('role', 'alert');
+      const message = document.createElement('p');
+      message.textContent = 'The interface could not finish loading. Reload to try again.';
+      const reload = document.createElement('a');
+      reload.href = ''; reload.textContent = 'Reload page';
+      panel.append(message, reload); document.body.append(panel);
+    });
+    </script>"""
+
+        elements = tuple(
+            sorted(
+                {
+                    component.tag
+                    for package in resolve_component_packages(self._page_packages())
+                    if package.name == "webawesome"
+                    for component in package.components
+                }
+            )
+        )
+        custom_head = "".join(f'<link rel="stylesheet" href="{escape(url, quote=True)}">' for url in custom_css)
+        scripts = [self.url("/spaday-navigation.js")]
+        if custom_scripts:
+            scripts.append(self.url("/spaday-custom-scripts.js"))
+
+            @self._web_app.get_router("app").get("/spaday-custom-scripts.js", include_in_schema=False)
+            async def custom_script_loader():
+                source = (
+                    f"await Promise.all({json.dumps(custom_scripts)}.map(url => import(url)"
+                    ".catch(() => console.error('Optional custom module unavailable'))));"
+                )
+                return Response(source, media_type="text/javascript")
+
         # Only wire a transports model when a module actually declared live state; otherwise the page is a
         # static tree and no websocket is served.
         wire: Any = None
@@ -1204,13 +1240,11 @@ class GatewayUI:
             store={"dark": Js('matchMedia("(prefers-color-scheme: dark)").matches'), **self._store_seeds},
             persist={"dark": "csp-gateway:dark"},
             url=self._url_fields,
-            # Emitted after the component packages' own CSS, so a custom stylesheet can override the
-            # shell palette, and before `head`, which carries only document resets.
-            stylesheets=custom_css,
-            scripts=[self.url("/spaday-navigation.js"), *custom_scripts],
-            head=PAGE_CSS + MAIN_PAGE_CSS,
+            scripts=scripts,
+            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head,
             title=title,
             prefix=root,
+            lifecycle=Lifecycle(elements=elements),
         )
         app_router = self._web_app.get_router("app")
 
