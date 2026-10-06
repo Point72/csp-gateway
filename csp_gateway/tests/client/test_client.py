@@ -25,6 +25,65 @@ def test_bearer_clients_do_not_follow_redirects_or_put_credentials_in_urls():
     assert client._buildroute("state/example")[1] == {}
 
 
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_bearer_schema_redirect_reports_status_without_following_or_leaking_token(monkeypatch, status):
+    from importlib import import_module
+
+    import httpx
+
+    from csp_gateway import ServerUnknownException
+
+    requests = []
+
+    def redirect(url, **options):
+        requests.append((url, options))
+        return httpx.Response(status, text="redirect", headers={"Location": "https://elsewhere.example.org/?token=test-credential"})
+
+    monkeypatch.setattr(import_module("csp_gateway.client.client"), "GET", redirect)
+    client = GatewayClient(protocol="https", host="app.example.org", port=None, bearer_token="test-credential")
+    with pytest.raises(ServerUnknownException, match=f"HTTP {status}") as failure:
+        client._initialize()
+    assert "test-credential" not in str(failure.value)
+    assert len(requests) == 1
+    assert requests[0][1]["follow_redirects"] is False
+
+
+@pytest.mark.parametrize("host", ["app.example.org", "192.0.2.1", "localhost.example.org"])
+def test_remote_plaintext_bearer_websocket_is_rejected_before_session_creation(monkeypatch, host):
+    def forbidden_session(**options):
+        pytest.fail("A token-bearing plaintext session must not be created")
+
+    monkeypatch.setattr("aiohttp.ClientSession", forbidden_session)
+    config = ClientConfig(protocol="http", host=host, bearer_token="test-credential")
+    with pytest.raises(ValueError, match="HTTPS"):
+        config._streaming_session()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+async def test_loopback_bearer_websocket_remains_available_for_local_tests(host):
+    config = ClientConfig(protocol="http", host=host, bearer_token="test-credential")
+    async with config._streaming_session() as session:
+        assert session.headers["Authorization"] == "Bearer test-credential"
+
+
+@pytest.mark.parametrize("settings", [{"protocol": "https", "host": "app.example.org", "port": 80}, {"host": "https://app.example.org", "port": 80}])
+def test_bearer_guard_uses_resolved_wire_scheme_not_declared_protocol(settings):
+    config = ClientConfig(bearer_token="test-credential", **settings)
+    with pytest.raises(ValueError, match="HTTPS"):
+        config._streaming_session()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "settings", [{"protocol": "http", "host": "app.example.org", "port": 443}, {"protocol": "http", "host": "127.0.0.1:8443", "port": None}]
+)
+async def test_bearer_guard_accepts_resolved_secure_or_loopback_endpoints(settings):
+    config = ClientConfig(bearer_token="test-credential", **settings)
+    async with config._streaming_session() as session:
+        assert session.headers["Authorization"] == "Bearer test-credential"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("csp_stream", [False, True])
 async def test_bearer_credentials_reach_both_websocket_clients(monkeypatch, csp_stream):

@@ -30,6 +30,10 @@ Bearer clients do not follow REST redirects, and their WebSocket sessions reject
 the canonical application endpoint rather than relying on a redirect to forward a credential. Server verification and
 operation permissions remain the server's responsibility.
 
+Bearer WebSocket connections require HTTPS for non-loopback hosts. Plain HTTP is retained only for localhost/numeric
+loopback development endpoints. Construct a new client when replacing credentials; mutating the configured token is not
+a coordinated refresh of existing REST or WebSocket connections.
+
 ### API version
 
 Requests go to `/{api_prefix}/{api_version}`, `/api/v1` by default. Point the client at a different

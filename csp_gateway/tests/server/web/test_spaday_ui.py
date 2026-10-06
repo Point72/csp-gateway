@@ -46,6 +46,58 @@ def _bare_ui():
     return ui
 
 
+@pytest.mark.parametrize("failed_asset", [False, True])
+@pytest.mark.parametrize("custom_asset", [None, "js", "css"])
+def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, custom_asset, tmp_path):
+    from types import SimpleNamespace
+
+    from spaday import element
+    from spaday.components.shell import Region
+
+    from csp_gateway.server.web.app import GatewayWebApp
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    options = {f"CUSTOM_{custom_asset.upper()}": [f"/missing-custom.{custom_asset}"]} if custom_asset else {}
+    web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday", **options), ui=True)
+    web.ui.add(Region.MAIN, element("wa-input", label="Ready control"))
+    web._finalize()
+    client = TestClient(web.app)
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(headless=True)
+        except playwright.Error as failure:
+            if "Executable doesn't exist" in str(failure):
+                pytest.skip("Chromium is not installed")
+            raise
+        page = browser.new_page()
+        page.add_init_script(
+            "window.lifecycleEvents = []; for (const name of ['ready', 'error']) document.addEventListener('spaday:' + name, () => lifecycleEvents.push(name));"
+        )
+
+        def serve(route):
+            if failed_asset and "/components/webawesome/cdn/" in route.request.url:
+                route.abort()
+                return
+            response = client.get(route.request.url)
+            route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+        page.route("http://csp-review.test/**", serve)
+        try:
+            page.goto("http://csp-review.test/", wait_until="commit")
+            if failed_asset:
+                playwright.expect(page.locator("#gateway-startup-error")).to_be_visible(timeout=12000)
+                playwright.expect(page.get_by_role("link", name="Reload page")).to_be_visible()
+                assert page.evaluate("lifecycleEvents") == ["error"]
+            else:
+                page.wait_for_function("lifecycleEvents.includes('ready')")
+                playwright.expect(page.locator("wa-input")).to_be_visible()
+                assert page.locator("wa-input").evaluate("element => !!element.shadowRoot")
+                assert page.locator("#gateway-startup-error").count() == 0
+            page.screenshot(path=str(tmp_path / "lifecycle.png"), full_page=True)
+        finally:
+            browser.close()
+
+
 class Example(GatewayStruct):
     value: float
 
@@ -100,6 +152,55 @@ class TestSpadayAuth:
         assert "notify('ready')" in page.text
         assert "onDispose: cleanup" in page.text
         assert "bootstrap timed out" in page.text
+        assert "spaday:error" in page.text
+        assert "Reload page" in page.text
+
+    def test_lifecycle_waits_for_actual_authored_webawesome_controls(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from spaday import element
+        from spaday.components.shell import Region
+
+        from csp_gateway.server.web.app import GatewayWebApp
+
+        captured = {}
+        original = spaday_ui._spaday_build_routes
+
+        def capture(*args, **options):
+            captured.update(options)
+            return original(*args, **options)
+
+        monkeypatch.setattr(spaday_ui, "_spaday_build_routes", capture)
+        web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday"), ui=True)
+        web.ui.add(Region.MAIN, element("div", element("wa-input"), element("wa-select"), element("wa-option"), element("optional-widget")))
+        web.ui.mount()
+        required = set(captured["lifecycle"].elements)
+        assert {"wa-button", "wa-icon", "wa-input", "wa-select", "wa-option"} <= required
+        assert "optional-widget" not in required
+
+    def test_lifecycle_setup_does_not_evaluate_contributions_or_require_unknown_wa_tags(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from spaday import element
+        from spaday.components.shell import Region
+
+        from csp_gateway.server.web.app import GatewayWebApp
+
+        captured = {}
+
+        def capture(*args, **options):
+            captured.update(options)
+            return []
+
+        def contribution():
+            pytest.fail("Page contributions must stay lazy until a request")
+
+        monkeypatch.setattr(spaday_ui, "_spaday_build_routes", capture)
+        web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday"), ui=True)
+        web.ui.add(Region.MAIN, contribution)
+        web.ui.add(Region.MAIN, element("wa-not-defined"))
+        web.ui.mount()
+        assert "wa-not-defined" not in captured["lifecycle"].elements
 
     def test_authenticated_serves_spaday(self, client: TestClient):
         # With a valid key the page renders (200) and the tree is JSON — the provider-gated smoke test.
