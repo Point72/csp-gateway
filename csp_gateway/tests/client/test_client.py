@@ -29,7 +29,7 @@ def test_bearer_clients_do_not_follow_redirects_or_put_credentials_in_urls():
 def test_bearer_schema_redirect_reports_status_without_following_or_leaking_token(monkeypatch, status):
     from importlib import import_module
 
-    import httpx
+    import httpx2
 
     from csp_gateway import ServerUnknownException
 
@@ -37,7 +37,7 @@ def test_bearer_schema_redirect_reports_status_without_following_or_leaking_toke
 
     def redirect(url, **options):
         requests.append((url, options))
-        return httpx.Response(status, text="redirect", headers={"Location": "https://elsewhere.example.org/?token=test-credential"})
+        return httpx2.Response(status, text="redirect", headers={"Location": "https://elsewhere.example.org/?token=test-credential"})
 
     monkeypatch.setattr(import_module("csp_gateway.client.client"), "GET", redirect)
     client = GatewayClient(protocol="https", host="app.example.org", port=None, bearer_token="test-credential")
