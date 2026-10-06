@@ -19,10 +19,12 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from starlette.requests import Request
+from starlette.responses import FileResponse
 from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocket
 
@@ -40,6 +42,7 @@ from spaday.actions import (
     Download,
     If,
     Invoke,
+    NamedJs,
     Sequence,
     SetField,
     SetStorage,
@@ -275,7 +278,9 @@ class GatewayUI:
         self._settings = settings
         self._regions: dict[Region, list[_Contribution]] = {}
         self._tabs: list[tuple[int, str, str, Any, bool]] = []
-        self._store_seeds: dict[str, Any] = {}
+        self._tab_actions: dict[str, Any] = {}
+        self._store_seeds: dict[str, Any] = {"main_tab": ""}
+        self._url_fields: dict[str, str] = {"main_tab": "tab"}
         # Tables the workspace can show, recorded by `perspective_panel` so later contributions
         # (the channels graph) can drive it without knowing how it was configured.
         self._workspace_tables: list[str] = []
@@ -337,7 +342,7 @@ class GatewayUI:
         """
         self._regions.setdefault(Region(region), []).append(_Contribution(component=component, order=order, label=label))
 
-    def add_tab(self, name: str, label: str, component: Any, *, order: int = 0, closeable: bool = True) -> None:
+    def add_tab(self, name: str, label: str, component: Any, *, order: int = 0, closeable: bool = True, on_open: Any = None) -> None:
         """Register a tab for the main window's tab layout.
 
         The main region always shows the workspace; registered tabs open on demand (via a
@@ -347,31 +352,35 @@ class GatewayUI:
         region contributions. ``name`` is the frame identity (also what a `tab_button`
         opens); ``label`` is the tab text. ``closeable=False`` hides the tab's close
         control for tabs nothing could reopen (the workspace is always non-closeable).
+        ``on_open`` runs when the tab is activated, including through a shared URL.
         """
         if any(existing == name for _, existing, _, _, _ in self._tabs):
             raise ValueError(f"main tab already registered: {name}")
         self._tabs.append((order, name, label, component, closeable))
+        if on_open is not None:
+            self._tab_actions[name] = on_open
 
     def tab_button(self, label: str, tab: str, *, icon: str | None = None, appearance: str = "outlined", action: Any = None) -> Any:
         """A button that opens (or focuses) a registered main tab. Add it to any region.
 
-        ``action`` runs after the tab opens -- the place to load a panel's data on demand. A tab's
-        frame is not laid out while it is closed, so a component that measures itself (a virtualized
-        list) renders nothing if its data arrives before it is on screen; fetching here rather than
-        on page load keeps that ordering right, and keeps a closed tab off the wire entirely.
+        ``action`` runs on this button's click. Use ``add_tab(on_open=...)`` for data loading
+        that must also run when the tab opens through a shared URL.
         """
         open_tab = Invoke(by_id(_MAIN_LAYOUT_ID), "openPanel", event_prop("currentTarget.dataset.tab"))
-        button = (
-            WaButton(appearance=appearance, title=label)
-            .prop("data-tab", tab)
-            .on("click", Sequence(open_tab, action) if action is not None else open_tab)
-        )
+        actions = [NamedJs("gateway-tab-repeat"), open_tab]
+        if action is not None:
+            actions.append(action)
+        button = WaButton(appearance=appearance, title=label).prop("data-tab", tab).on("click", Sequence(*actions))
         button = button.child(WaIcon(name=icon)) if icon else button.text(label).style(width="100%")
         return button
 
     def seed_store(self, **fields: Any) -> None:
         """Seed initial values into the page's reactive signal store (merged across callers)."""
         self._store_seeds.update(fields)
+
+    def bind_url(self, **fields: str) -> None:
+        """Map signal-store fields to shareable URL query parameters."""
+        self._url_fields.update(fields)
 
     def package(self, package: Any) -> None:
         """Load an extra spaday component package into the page.
@@ -842,12 +851,18 @@ class GatewayUI:
         return (
             RegularLayout(*frames, layout={"type": "tab-layout", "tabs": [_WORKSPACE_TAB]})
             .prop("id", _MAIN_LAYOUT_ID)
+            .compute("data-active-tab", field("main_tab"))
             # Tabs open, select, and close, but drag-rearranging is disabled: the nested
             # Perspective workspace is itself a regular-layout, which makes drags confusing.
             .prop("locked", True)
             .prop("style", "; ".join(titles))
             .compute("class", cond(field("main_tabbed"), "spa", "spa spa-solo"))
-            .on("regular-layout-update", SetField("main_tabbed", not_(eq(open_count, 1))))
+            .on("regular-layout-update", Sequence(SetField("main_tabbed", not_(eq(open_count, 1))), NamedJs("gateway-tabs")))
+            .on("gateway-tab-change", SetField("main_tab", event_value("tab")))
+            .on(
+                "gateway-tab-open",
+                Sequence(*[If(eq(event_value("tab"), tab), action) for tab, action in self._tab_actions.items()]),
+            )
         )
 
     def build_page(self) -> Any:
@@ -1188,15 +1203,20 @@ class GatewayUI:
             # precedence on later loads.
             store={"dark": Js('matchMedia("(prefers-color-scheme: dark)").matches'), **self._store_seeds},
             persist={"dark": "csp-gateway:dark"},
+            url=self._url_fields,
             # Emitted after the component packages' own CSS, so a custom stylesheet can override the
             # shell palette, and before `head`, which carries only document resets.
             stylesheets=custom_css,
-            scripts=custom_scripts,
+            scripts=[self.url("/spaday-navigation.js"), *custom_scripts],
             head=PAGE_CSS + MAIN_PAGE_CSS,
             title=title,
             prefix=root,
         )
         app_router = self._web_app.get_router("app")
+
+        @app_router.get("/spaday-navigation.js", include_in_schema=False)
+        async def navigation_script():
+            return FileResponse(Path(__file__).with_name("spaday-navigation.js"), media_type="text/javascript")
 
         def _authed_route(endpoint):
             async def _serve(request: Request):

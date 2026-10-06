@@ -586,6 +586,25 @@ class TestSpadayPerspectiveLayoutActions:
 class TestMainTabs:
     """The main window's tab layout: workspace + on-demand closeable tabs (graph, send)."""
 
+    def test_tab_buttons_do_not_depend_on_registration_order(self):
+        from spaday import element
+        from spaday.actions import SetField
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        before = ui.tab_button("Logs", "logs").to_node()
+        ui.add_tab("logs", "Logs", element("div"), on_open=SetField("loaded", True))
+        after = ui.tab_button("Logs", "logs").to_node()
+        assert before["events"]["click"] == after["events"]["click"]
+
+    def test_buttons_for_one_tab_keep_their_own_actions(self):
+        from spaday.actions import SetField
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        first = ui.tab_button("First", "logs", action=SetField("choice", "first")).to_node()
+        second = ui.tab_button("Second", "logs", action=SetField("choice", "second")).to_node()
+        assert first["events"]["click"]["actions"][-1]["value"] == {"expr": "lit", "value": "first"}
+        assert second["events"]["click"]["actions"][-1]["value"] == {"expr": "lit", "value": "second"}
+
     @pytest.fixture(scope="class")
     def gateway(self, free_port):
         from csp_gateway import MountChannelsGraph

@@ -1,6 +1,9 @@
+import codecs
+import mimetypes
 import os
 import os.path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
@@ -73,6 +76,36 @@ class MountOutputsFolder(GatewayModule):
             raise HTTPException(status_code=404, detail=f"Not found: {relative}")
         return target
 
+    @staticmethod
+    def _file_type(target: str) -> tuple[str, str]:
+        if target.lower().endswith((".log", ".txt", ".yaml", ".yml", ".toml", ".ini", ".jsonl")):
+            return "text/plain", "text"
+        media_type, encoding = mimetypes.guess_type(target)
+        if encoding:
+            compressed_type = {"gzip": "application/gzip", "bzip2": "application/x-bzip2", "xz": "application/x-xz"}
+            return compressed_type.get(encoding, "application/octet-stream"), "download"
+        if not media_type:
+            with open(target, "rb") as stream:
+                sample = stream.read(4096)
+            if b"\x00" not in sample:
+                try:
+                    codecs.getincrementaldecoder("utf-8")().decode(sample, final=False)
+                except UnicodeDecodeError:
+                    pass
+                else:
+                    return "text/plain", "text"
+        if not media_type and Magic:
+            media_type = Magic(mime=True).from_file(target)
+        media_type = media_type or "application/octet-stream"
+        if media_type.startswith("text/") or media_type in ("application/json", "application/xml", "application/javascript"):
+            return media_type, "text"
+        if media_type == "application/pdf":
+            return media_type, "pdf"
+        for kind in ("image", "audio", "video"):
+            if media_type.startswith(f"{kind}/"):
+                return media_type, kind
+        return media_type, "download"
+
     def _read_chunk(self, path: str, start: int | None, end: int | None) -> dict:
         """One byte range of one output file, defaulting to the last `chunk_bytes` of it.
 
@@ -85,6 +118,10 @@ class MountOutputsFolder(GatewayModule):
             raise HTTPException(status_code=404, detail=f"Not a file: {path}")
 
         size = os.path.getsize(target)
+        media_type, kind = self._file_type(target)
+        metadata = {"path": path, "size": size, "media_type": media_type, "kind": kind, "url": f"outputs/{quote(path, safe='/')}"}
+        if kind != "text":
+            return {**metadata, "start": 0, "end": 0, "text": ""}
         if start is None and end is None:
             start, end = max(0, size - self.chunk_bytes), size
         elif start is None:
@@ -99,8 +136,7 @@ class MountOutputsFolder(GatewayModule):
             fp.seek(start)
             raw = fp.read(max(0, end - start))
         return {
-            "path": path,
-            "size": size,
+            **metadata,
             "start": start,
             "end": start + len(raw),
             "text": raw.decode("utf-8", "replace"),
@@ -115,7 +151,6 @@ class MountOutputsFolder(GatewayModule):
 
     def rest(self, app: GatewayWebApp) -> None:
         app_router = app.get_router("app")
-        mime = Magic(mime=True) if Magic else None
 
         # Registered before the catch-all below, which would otherwise swallow them as file names.
         @app_router.get("/outputs/_tree", tags=["Utility"])
@@ -153,7 +188,7 @@ class MountOutputsFolder(GatewayModule):
             # selection emits none at all. Neither is an error, so both answer with an empty window
             # rather than the 404 the GET route owes a caller that asked for a file by name.
             if not path or os.path.isdir(self._resolve(path)):
-                return {"path": "", "size": 0, "start": 0, "end": 0, "text": ""}
+                return {"path": "", "size": 0, "start": 0, "end": 0, "text": "", "kind": "", "media_type": "", "url": ""}
             return self._read_chunk(path, body.start, body.end)
 
         # TODO subselect
@@ -182,14 +217,7 @@ class MountOutputsFolder(GatewayModule):
                 with open(file_or_dir, "rb") as fp:
                     yield from fp
 
-            if file_or_dir.endswith((".log", ".txt")):
-                # NOTE: so viewable in browser, magic is guessing wrong type
-                media_type = "text/plain; charset=utf-8"
-            elif mime:
-                media_type = mime.from_file(file_or_dir)
-            else:
-                media_type = None
-
+            media_type, _ = self._file_type(file_or_dir)
             return StreamingResponse(iterfile(), media_type=media_type)
 
     def ui(self, app: "GatewayUI") -> None:
@@ -199,9 +227,10 @@ class MountOutputsFolder(GatewayModule):
         provider's log page and this replaces the drawer link that used to navigate away from it.
         """
         from spaday import element
-        from spaday.actions import CallEndpoint, Sequence, SetField, concat, event_value, field, obj
+        from spaday.actions import CallEndpoint, If, NamedJs, Sequence, SetField, all_, arr, concat, cond, eq, event_value, field, not_, obj
+        from spaday.components.shell import Show
         from spaday_trees import Tree
-        from spaday_webawesome import WaButton
+        from spaday_webawesome import WaButton, WaCallout, WaIcon
 
         from csp_gateway.server.web.spaday_ui import Region
 
@@ -212,27 +241,54 @@ class MountOutputsFolder(GatewayModule):
         # through `.body`. `logs` is the open file's window; `logs_older` receives the chunk before it,
         # which the Older gesture folds onto the front of the window rather than replacing it.
         app.seed_store(
-            logs={"ok": True, "body": {"path": "", "text": "", "start": 0, "end": 0, "size": 0}},
+            log_path="",
+            logs={"ok": True, "body": {"path": "", "text": "", "start": 0, "end": 0, "size": 0, "kind": "", "url": ""}},
             logs_tree={"ok": True, "body": {"paths": [], "truncated": False}},
             logs_older={"ok": True, "body": {"text": "", "start": 0}},
         )
+        app.bind_url(log_path="file")
 
         load_tree = CallEndpoint("GET", tree_url, result="logs_tree")
-        open_selected = CallEndpoint("POST", chunk_url, event_value(), result="logs")
+        open_selected = Sequence(
+            CallEndpoint("POST", chunk_url, obj({"path": event_value("path")}), result="logs_read"),
+            If(eq(field("log_path"), event_value("path")), SetField("logs", field("logs_read"))),
+        )
         # Growing the window backwards: fetch the range ending where it currently starts, then prepend.
         # At `start` 0 the whole file is loaded and the fetch returns nothing to add.
         load_older = Sequence(
             CallEndpoint("POST", chunk_url, obj({"path": field("logs.body.path"), "end": field("logs.body.start")}), result="logs_older"),
-            SetField("logs.body.text", concat(field("logs_older.body.text"), field("logs.body.text"))),
-            SetField("logs.body.start", field("logs_older.body.start")),
+            If(
+                all_(
+                    field("logs_older.ok"),
+                    eq(field("log_path"), field("logs_older.body.path")),
+                    eq(field("logs.body.path"), field("logs_older.body.path")),
+                    eq(field("logs.body.start"), field("logs_older.body.end")),
+                ),
+                Sequence(
+                    SetField("logs.body.text", concat(field("logs_older.body.text"), field("logs.body.text"))),
+                    SetField("logs.body.start", field("logs_older.body.start")),
+                ),
+            ),
         )
-        load_newer = CallEndpoint("POST", chunk_url, obj({"path": field("logs.body.path"), "start": field("logs.body.start")}), result="logs")
+        load_newer = Sequence(
+            CallEndpoint("POST", chunk_url, obj({"path": field("logs.body.path"), "start": field("logs.body.start")}), result="logs_newer"),
+            If(
+                all_(
+                    field("logs_newer.ok"),
+                    eq(field("log_path"), field("logs_newer.body.path")),
+                    eq(field("logs.body.path"), field("logs_newer.body.path")),
+                    eq(field("logs.body.start"), field("logs_newer.body.start")),
+                ),
+                SetField("logs", field("logs_newer")),
+            ),
+        )
 
         def panel():
             tree = (
                 Tree(id="gateway-log-tree")
                 .compute("paths", field("logs_tree.body.paths"))
-                .on("selection-change", open_selected)
+                .compute("selected_paths", cond(field("log_path"), arr(field("log_path")), []))
+                .on("selection-change", NamedJs("gateway-log-selection"))
                 # The tree virtualizes its rows against its measured height, so it needs to be a flex
                 # child of a column that has one. That is also why the listing is fetched when the tab
                 # opens (see the `tab_button` action below) rather than on page load: a closed tab is
@@ -241,17 +297,34 @@ class MountOutputsFolder(GatewayModule):
             )
             toolbar = (
                 element("div")
-                .style(display="flex", gap="0.5rem", align_items="center", padding="0.5rem")
-                .child(element("strong").bind("textContent", "logs.body.path"))
+                .style(display="flex", gap="0.5rem", align_items="center", flex_wrap="wrap", padding="0.5rem")
+                .child(element("strong").bind("textContent", "logs.body.path").style(min_width="0", overflow_wrap="anywhere"))
                 # The HTML log page has always shown the serving process's pid beside its heading;
                 # keep it here so the tab identifies the process whose logs these are.
                 .child(element("span").style(color="var(--spa-muted)").text(f"pid[{os.getpid()}]"))
                 .child(element("span").style(flex="1"))
-                .child(WaButton(appearance="outlined", size="s").text("Older").on("click", load_older))
-                .child(WaButton(appearance="outlined", size="s").text("Newer").on("click", load_newer))
+                .child(
+                    WaButton(appearance="outlined", size="s")
+                    .text("Older")
+                    .compute("hidden", not_(eq(field("logs.body.kind"), "text")))
+                    .on("click", load_older)
+                )
+                .child(
+                    WaButton(appearance="outlined", size="s")
+                    .text("Newer")
+                    .compute("hidden", not_(eq(field("logs.body.kind"), "text")))
+                    .on("click", load_newer)
+                )
                 .child(WaButton(appearance="outlined", size="s").text("Reload").on("click", load_tree))
+                .child(
+                    WaButton(appearance="plain", title="Download file")
+                    .compute("href", concat(app.url("/"), field("logs.body.url")))
+                    .compute("hidden", not_(field("logs.body.url")))
+                    .prop("download", "")
+                    .child(WaIcon(name="download"))
+                )
             )
-            reader = (
+            text = (
                 element("pre")
                 .bind("textContent", "logs.body.text")
                 .style(
@@ -263,8 +336,47 @@ class MountOutputsFolder(GatewayModule):
                     font_family="ui-monospace, monospace",
                 )
             )
+            file_url = concat(app.url("/"), field("logs.body.url"))
+            reader = (
+                element("div")
+                .style(height="100%", overflow="auto")
+                .child(Show(text, when=eq(field("logs.body.kind"), "text")))
+                .child(
+                    Show(
+                        element("img", alt="Output image")
+                        .compute("src", cond(eq(field("logs.body.kind"), "image"), file_url, ""))
+                        .style(max_width="100%", max_height="100%", object_fit="contain"),
+                        when=eq(field("logs.body.kind"), "image"),
+                    )
+                )
+                .child(
+                    Show(
+                        element("iframe", title="Output document")
+                        .compute("src", cond(eq(field("logs.body.kind"), "pdf"), file_url, "about:blank"))
+                        .style(width="100%", height="100%", border="0"),
+                        when=eq(field("logs.body.kind"), "pdf"),
+                    )
+                )
+                .child(
+                    Show(
+                        element("audio", controls=True).compute("src", cond(eq(field("logs.body.kind"), "audio"), file_url, "")),
+                        when=eq(field("logs.body.kind"), "audio"),
+                    ),
+                    Show(
+                        element("video", controls=True)
+                        .compute("src", cond(eq(field("logs.body.kind"), "video"), file_url, ""))
+                        .style(max_width="100%", max_height="100%"),
+                        when=eq(field("logs.body.kind"), "video"),
+                    ),
+                    Show(WaCallout(variant="danger").text("File could not be opened."), when=not_(field("logs.ok"))),
+                )
+            )
             return (
                 element("div")
+                .prop("id", "gateway-log-panel")
+                .compute("data-log-path", field("log_path"))
+                .on("gateway-log-path", SetField("log_path", event_value("path")))
+                .on("gateway-log-open", open_selected)
                 .style(display="flex", flex_direction="column", height="100%")
                 .child(toolbar)
                 .child(
@@ -274,6 +386,8 @@ class MountOutputsFolder(GatewayModule):
                         element("div")
                         .style(
                             width="20rem",
+                            max_width="40%",
+                            min_width="0",
                             display="flex",
                             flex_direction="column",
                             min_height="0",
@@ -286,5 +400,5 @@ class MountOutputsFolder(GatewayModule):
                 )
             )
 
-        app.add_tab("logs", "Logs", panel)
-        app.add(Region.DRAWER_RIGHT, app.tab_button("Logs", "logs", action=load_tree))
+        app.add_tab("logs", "Logs", panel, on_open=Sequence(load_tree, NamedJs("gateway-logs")))
+        app.add(Region.DRAWER_RIGHT, app.tab_button("Logs", "logs"))

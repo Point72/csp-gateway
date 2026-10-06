@@ -1,7 +1,11 @@
 """Tests for `MountOutputsFolder`'s listing and chunk endpoints (the spaday log viewer's backend)."""
 
+import json
 import os
+from base64 import b64decode
 from datetime import timedelta
+from gzip import compress
+from urllib.parse import urlsplit
 
 import csp
 import pytest
@@ -14,6 +18,7 @@ from csp_gateway import (
     GatewayModule,
     GatewaySettings,
     GatewayStruct,
+    MountChannelsGraph,
     MountOutputsFolder,
 )
 
@@ -68,6 +73,55 @@ def client(outputs_dir, free_port):
 
 
 class TestOutputsApi:
+    @pytest.mark.parametrize(
+        ("name", "content", "media_type", "kind", "text"),
+        [
+            ("app.log.gz", compress(b"log line\n"), "application/gzip", "download", ""),
+            ("app.log.1", b"log line\n", "text/plain", "text", "log line\n"),
+            ("stdout", b"log line\n", "text/plain", "text", "log line\n"),
+            ("notes.md", b"# Notes\n", "text/plain", "text", "# Notes\n"),
+            ("job.err", b"error\n", "text/plain", "text", "error\n"),
+            ("capture", b"\x00\xff\x01", "application/octet-stream", "download", ""),
+        ],
+    )
+    def test_file_types_without_libmagic(self, client, outputs_dir, monkeypatch, name, content, media_type, kind, text):
+        from csp_gateway.server.modules.web import outputs as outputs_module
+
+        monkeypatch.setattr(outputs_module, "Magic", None)
+        if name == "notes.md":
+            monkeypatch.setattr(outputs_module.mimetypes, "guess_type", lambda _: (None, None))
+        path = outputs_dir / name
+        path.write_bytes(content)
+        try:
+            body = client.get("/outputs/_chunk", params={"path": name}).json()
+            assert body["media_type"] == media_type
+            assert body["kind"] == kind
+            assert body["text"] == text
+            raw = client.get(f"/outputs/{name}")
+            assert raw.headers["content-type"].split(";")[0] == media_type
+            assert raw.content == content
+        finally:
+            path.unlink()
+
+    def test_png_is_not_decoded_as_text(self, client, outputs_dir, monkeypatch):
+        from csp_gateway.server.modules.web import outputs as outputs_module
+
+        monkeypatch.setattr(outputs_module, "Magic", None)
+        image = b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jWZkAAAAASUVORK5CYII=")
+        path = outputs_dir / "plot with spaces.png"
+        path.write_bytes(image)
+        try:
+            body = client.get("/outputs/_chunk", params={"path": path.name}).json()
+            assert body["media_type"] == "image/png"
+            assert body["kind"] == "image"
+            assert body["text"] == ""
+            assert body["url"] == "outputs/plot%20with%20spaces.png"
+            raw = client.get("/outputs/plot%20with%20spaces.png")
+            assert raw.headers["content-type"] == "image/png"
+            assert raw.content == image
+        finally:
+            path.unlink()
+
     def test_lists_relative_paths(self, client):
         body = client.get("/outputs/_tree").json()
         assert body["paths"] == ["run/app.log", "run/nested/config.yaml"]
@@ -123,13 +177,13 @@ class TestOutputsApi:
 class TestSpadayViewer:
     """The spaday provider gets the in-page viewer instead of the link that navigated away."""
 
-    @pytest.fixture(scope="class")
-    def client(self, outputs_dir, free_port):
+    @pytest.fixture(scope="class", params=["", "/gateway"])
+    def client(self, outputs_dir, free_port, request):
         pytest.importorskip("spaday")
         gateway = Gateway(
-            modules=[ExampleModule(), MountOutputsFolder(dir=str(outputs_dir))],
+            modules=[ExampleModule(), MountOutputsFolder(dir=str(outputs_dir), chunk_bytes=256), MountChannelsGraph()],
             channels=ExampleChannels(),
-            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday"),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday", ROOT_PATH=request.param),
         )
         gateway.start(rest=True, ui=True, _in_test=True)
         try:
@@ -152,6 +206,99 @@ class TestSpadayViewer:
         # The drawer button opens the registered tab; nothing should link out to the HTML browser.
         assert '"logs"' in tree
         assert '"href": "/outputs"' not in tree
+
+    def test_shared_log_url_restores_the_file(self, client, outputs_dir, tmp_path):
+        playwright_api = pytest.importorskip("playwright.sync_api")
+        with playwright_api.sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except playwright_api.Error as exc:
+                if "Executable doesn't exist" in str(exc):
+                    pytest.skip("Playwright Chromium is not installed")
+                raise
+            try:
+                page = browser.new_page(viewport={"width": 1280, "height": 720})
+                page.set_default_timeout(5000)
+                held_reads = []
+                held_field = None
+
+                def serve(route):
+                    url = urlsplit(route.request.url)
+                    response = client.request(
+                        route.request.method,
+                        url.path + (f"?{url.query}" if url.query else ""),
+                        content=route.request.post_data_buffer,
+                        headers={"content-type": route.request.headers.get("content-type", ""), "accept-encoding": "identity"},
+                    )
+                    if held_field and route.request.post_data and held_field in json.loads(route.request.post_data):
+                        held_reads.append((route, response))
+                        return
+                    route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+                page.route("http://gateway.test/**", serve)
+                base = f"http://gateway.test{client.app.root_path}"
+                page.goto(f"{base}/?tab=logs&file=run/nested/config.yaml")
+                playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
+                assert page.locator("#gateway-main-layout").evaluate("layout => layout.save().tabs[layout.save().selected]") == "logs"
+                assert page.locator("#gateway-log-tree").evaluate("tree => tree.selected_paths") == ["run/nested/config.yaml"]
+                page.locator("#gateway-log-tree").click(position={"x": 150, "y": 145})
+                page.wait_for_function("new URL(location.href).searchParams.get('file') === 'run/app.log'")
+                playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
+                page.go_back()
+                playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
+                page.go_forward()
+                playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
+                page.reload()
+                playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
+                for control, held_field in (("Older", "end"), ("Newer", "start")):
+                    page.goto(f"{base}/?tab=logs&file=run/app.log")
+                    playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
+                    page.get_by_role("button", name=control, exact=True).click()
+                    page.locator("#gateway-log-panel").evaluate(
+                        "panel => panel.dispatchEvent(new CustomEvent('gateway-log-path', {detail: {path: 'run/nested/config.yaml'}, bubbles: true}))"
+                    )
+                    playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
+                    assert len(held_reads) == 1
+                    route, response = held_reads.pop()
+                    with page.expect_response(lambda reply, request_field=held_field: request_field in json.loads(reply.request.post_data or "{}")):
+                        route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+                    page.evaluate("() => new Promise(requestAnimationFrame)")
+                    playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
+                    playwright_api.expect(page.locator("#gateway-log-panel strong")).to_have_text("run/nested/config.yaml")
+                held_field = None
+                page.goto(f"{base}/?tab=channels-graph")
+                page.wait_for_function(
+                    "document.querySelector('#gateway-main-layout')?.save().tabs[document.querySelector('#gateway-main-layout').save().selected] === 'channels-graph'"
+                )
+                playwright_api.expect(page.locator("spaday-dagre")).to_be_visible()
+                page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('workspace')")
+                page.wait_for_function("!new URL(location.href).searchParams.has('tab')")
+                page.go_back()
+                page.wait_for_function(
+                    "document.querySelector('#gateway-main-layout').save().tabs[document.querySelector('#gateway-main-layout').save().selected] === 'channels-graph'"
+                )
+                image_path = outputs_dir / "plot #?.png"
+                image_path.write_bytes(b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jWZkAAAAASUVORK5CYII="))
+                try:
+                    page.goto(f"{base}/?tab=logs&file=plot%20%23%3F.png")
+                    preview = page.locator("#gateway-log-panel img")
+                    playwright_api.expect(preview).to_be_visible()
+                    page.wait_for_function("document.querySelector('#gateway-log-panel img').naturalWidth === 1")
+                    playwright_api.expect(page.locator("#gateway-log-panel pre")).not_to_be_visible()
+                    assert preview.get_attribute("src") == f"{client.app.root_path}/outputs/plot%20%23%3F.png"
+                    page.screenshot(path=str(tmp_path / "logs-image-desktop.png"))
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    playwright_api.expect(preview).to_be_visible()
+                    page.screenshot(path=str(tmp_path / "logs-image-mobile.png"))
+                    page.locator("#gateway-log-panel").evaluate(
+                        "panel => panel.dispatchEvent(new CustomEvent('gateway-log-path', {detail: {path: 'run/nested/config.yaml'}, bubbles: true}))"
+                    )
+                    playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
+                    playwright_api.expect(preview).not_to_be_visible()
+                finally:
+                    image_path.unlink()
+            finally:
+                browser.close()
 
 
 class TestChunkWindowing:
@@ -187,7 +334,11 @@ class TestChunkWindowing:
         assert body["end"] == size
 
     def test_posting_an_empty_selection_is_not_an_error(self, client):
-        assert client.post("/outputs/_chunk", json={"paths": []}).json()["text"] == ""
+        body = client.post("/outputs/_chunk", json={"paths": []}).json()
+        assert body["text"] == ""
+        assert body["kind"] == ""
+        assert body["media_type"] == ""
+        assert body["url"] == ""
 
     def test_posting_a_directory_selection_is_not_an_error(self, client):
         """Expanding a directory in the tree emits a selection; it must not read as a failure."""
