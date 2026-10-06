@@ -49,6 +49,7 @@ develop = [
     "hatchling",
     "mdformat",
     "mdformat-tables>=1",
+    "playwright",
     "pytest",
     "pytest-aiohttp",
     "pytest-asyncio",
