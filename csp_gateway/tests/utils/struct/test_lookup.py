@@ -1,6 +1,12 @@
+import asyncio
+import gc
+import json
+import weakref
 from datetime import datetime
+from typing import ClassVar
 
-from pydantic import BaseModel
+import pytest
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from csp_gateway import GatewayStruct as Base
 from csp_gateway.utils.struct import (
@@ -19,6 +25,154 @@ class NoLookupModel(Base):
 
 
 NoLookupModel.omit_from_lookup(True)
+
+
+@pytest.mark.parametrize("identity", [{}, {"id": None, "timestamp": None}, {"id": "stream-only", "timestamp": datetime(2020, 1, 1)}])
+def test_stream_fields_validate_without_identity_or_lookup(identity):
+    class Message(Base):
+        quantity: int = Field(gt=0)
+        label: str = "default"
+
+    message = Message.from_field_values(quantity="2", **identity)
+    assert message.quantity == 2
+    expected = {"quantity": 2, "label": "default", **identity}
+    assert message.to_dict() == expected
+    json_expected = {**expected}
+    if isinstance(json_expected.get("timestamp"), datetime):
+        json_expected["timestamp"] = json_expected["timestamp"].isoformat()
+    assert json.loads(message.to_json()) == json_expected
+    assert message.model_fields_set == {"quantity", *identity}
+    assert Message.lookup(message.id) is None
+    assert global_lookup(message.id) is None
+
+    # Copying preserves omission; later assignment makes the supplied field visible.
+    copied = message.copy()
+    assert copied.to_dict() == expected
+    copied.id = "assigned"
+    assert copied.to_dict()["id"] == "assigned"
+
+    with pytest.raises(ValidationError):
+        Message.from_field_values(quantity=-1)
+    ordinary = Message(quantity=3)
+    assert ordinary.id is not None and ordinary.timestamp is not None
+    assert Message.lookup(ordinary.id) is ordinary
+
+    reference = weakref.ref(message)
+    del message
+    gc.collect()
+    assert reference() is None
+
+
+def test_stream_fields_nested_messages_and_declared_identity_defaults():
+    class Child(Base):
+        quantity: int
+
+    class Parent(Base):
+        child: Child
+
+    message = Parent.from_field_values(child={"quantity": "2"})
+    assert message.to_dict() == {"child": {"quantity": 2}}
+    assert message.child.id is None
+    assert message.child.quantity == 2
+
+    class NamedMessage(Base):
+        id: str = "default-id"
+
+    named = NamedMessage.from_field_values()
+    assert named.to_dict() == {"id": "default-id"}
+    assert NamedMessage.lookup(named.id) is None
+    ordinary_child = Child(quantity=3)
+    assert Child.lookup(ordinary_child.id) is ordinary_child
+    parent = Parent.from_field_values(child=ordinary_child)
+    assert parent.child is ordinary_child
+    assert Child.lookup(ordinary_child.id) is ordinary_child
+    fields = {"id": "same-fields", "timestamp": datetime(2020, 1, 1), "quantity": 3}
+    ordinary = Child(**fields)
+    assert Child.from_field_values(**fields) == ordinary
+    assert Child.lookup(ordinary.id) is ordinary
+    assert Child.model_construct(quantity=2).to_dict() == {"quantity": 2}
+
+
+@pytest.mark.parametrize("serialize_by_alias", [False, True])
+def test_field_values_omit_aliased_identities(serialize_by_alias):
+    class Message(Base):
+        model_config = ConfigDict(serialize_by_alias=serialize_by_alias)
+        id: str = Field(default=None, alias="record_id")
+        timestamp: datetime | None = Field(default=None, serialization_alias="event_time")
+        quantity: int
+
+    class Parent(Base):
+        child: Message
+
+    message = Message.from_field_values(quantity=2)
+    assert message.model_dump(by_alias=True) == {"quantity": 2}
+    assert message.model_dump() == {"quantity": 2}
+    assert json.loads(message.model_dump_json(by_alias=True)) == {"quantity": 2}
+    assert Message.from_field_values(**message.model_dump(by_alias=True)) == message
+    parent = Parent.from_field_values(child={"quantity": 2})
+    assert parent.model_dump(by_alias=True) == {"child": {"quantity": 2}}
+    explicit = Message.from_field_values(quantity=2, timestamp=None)
+    assert explicit.model_dump(by_alias=True) == {"event_time": None, "quantity": 2}
+
+
+def test_serialization_without_id_field():
+    class Message(Base):
+        id: ClassVar[None] = None
+        quantity: int
+
+    timestamp = datetime(2020, 1, 1)
+    message = Message(quantity=2, timestamp=timestamp)
+    assert message.to_dict() == {"timestamp": timestamp, "quantity": 2}
+    assert json.loads(message.to_json()) == {"timestamp": "2020-01-01T00:00:00", "quantity": 2}
+
+
+def test_field_values_preserve_unrelated_construction():
+    created = []
+
+    class Audit(Base):
+        quantity: int
+
+    class Message(Base):
+        quantity: int
+
+        @field_validator("quantity")
+        @classmethod
+        def audit_quantity(cls, value):
+            created.append(Audit(quantity=value))
+            return value
+
+    message = Message.from_field_values(quantity=2)
+    assert message.id is None
+    audit = created[0]
+    assert audit.id is not None
+    assert audit.timestamp is not None
+    assert Audit.lookup(audit.id) is audit
+
+
+@pytest.mark.asyncio
+async def test_field_values_policy_does_not_leak_into_tasks():
+    tasks = []
+
+    class Audit(Base):
+        quantity: int
+
+    async def make_audit(quantity):
+        return Audit(quantity=quantity)
+
+    class Message(Base):
+        quantity: int
+
+        @field_validator("quantity")
+        @classmethod
+        def schedule_audit(cls, value):
+            tasks.append(asyncio.create_task(make_audit(value)))
+            return value
+
+    Message.from_field_values(quantity=2)
+    audit = await tasks[0]
+    assert audit.id is not None
+    assert audit.timestamp is not None
+    assert Audit.lookup(audit.id) is audit
 
 
 def test_automatic_id_generation():
