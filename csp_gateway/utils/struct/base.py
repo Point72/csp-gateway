@@ -17,6 +17,8 @@ ValidatorFn = Callable[[Any], Any]
 #: Accepted ``mode`` arguments; "pre"/"post" are aliases for "before"/"after".
 ValidatorMode = Literal["before", "pre", "after", "post"]
 
+_TYPE_ADAPTERS: dict = {}
+
 __all__ = (
     "GatewayLookupMixin",
     "GatewayPydanticMixin",
@@ -27,6 +29,7 @@ __all__ = (
     "ValidatorMode",
     "global_lookup",
     "is_gateway_struct_like",
+    "type_adapter_for",
 )
 
 T = TypeVar("T")
@@ -574,3 +577,35 @@ def is_gateway_struct_like(cls) -> bool:
         )
     except TypeError:
         return False
+
+
+def type_adapter_for(obj):
+    """Return a pydantic ``TypeAdapter`` able to serialize ``obj``.
+
+    ``GatewayStruct`` carries its own cached ``type_adapter``, but a channel is
+    free to carry a plain pydantic model, and those do not. Falling back to an
+    adapter built from the model's own type lets such a channel be served over
+    REST instead of failing inside the response path.
+
+    The fallback is deliberately limited to pydantic models. Anything else
+    still raises ``AttributeError``, because reaching this function with, say,
+    a ``str`` means a caller mishandled a container, and serializing it would
+    turn that mistake into quietly wrong output.
+    """
+    own = getattr(obj, "type_adapter", None)
+    if callable(own):
+        return own()
+
+    from pydantic import BaseModel, TypeAdapter
+
+    if not isinstance(obj, BaseModel):
+        # AttributeError, not TypeError: this is the error callers already see
+        # and the response path already documents, so the contract is kept.
+        raise AttributeError(f"{type(obj).__name__!r} object has no attribute 'type_adapter'")  # noqa: TRY004
+
+    cls = type(obj)
+    cached = _TYPE_ADAPTERS.get(cls)
+    if cached is None:
+        cached = TypeAdapter(cls)
+        _TYPE_ADAPTERS[cls] = cached
+    return cached

@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from csp_gateway.utils import NoProviderException
+from csp_gateway.utils.struct.base import type_adapter_for
 
 from ..utils import get_default_responses
 
@@ -29,7 +30,7 @@ def _serialize_staging_result(result: dict[str, list]) -> Response:
     """Serialize a staging result dict (staging_id -> list of structs) to JSON Response."""
     serialized = {}
     for sid, items in result.items():
-        serialized[sid] = [json.loads(item.type_adapter().dump_json(item)) for item in items]
+        serialized[sid] = [json.loads(type_adapter_for(item).dump_json(item)) for item in items]
     return Response(
         content=json.dumps(serialized),
         media_type="application/json",
