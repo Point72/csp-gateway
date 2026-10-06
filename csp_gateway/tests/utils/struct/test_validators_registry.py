@@ -701,6 +701,46 @@ def test_force_new_id_honored_for_instance_input():
     assert out is not inst  # rebuilt rather than mutated, so the caller's object is untouched
 
 
+def test_validation_context_reaches_nested_models():
+    observed = []
+
+    class Child(GatewayStruct):
+        value: int
+
+        def model_post_init(self, context):
+            super().model_post_init(context)
+            observed.append(context)
+
+    class Parent(GatewayStruct):
+        child: Child
+
+    context = {"request": "nested-validation"}
+    Parent.model_validate({"child": {"value": 2}}, context=context)
+    assert observed == [{"request": "nested-validation"}]
+    assert context == {"request": "nested-validation"}
+
+
+def test_force_new_identity_for_nested_instance_input():
+    class Child(GatewayStruct):
+        value: int
+
+    class Parent(GatewayStruct):
+        child: Child
+
+    child = Child(value=2)
+    parent = Parent(child=child)
+    original_id = child.id
+    original_timestamp = child.timestamp
+    rebuilt = Parent.model_validate(parent, context={"force_new_id": True, "force_new_timestamp": True})
+    assert rebuilt.id != parent.id
+    assert rebuilt.child.id != original_id
+    assert rebuilt.child.timestamp != original_timestamp
+    assert child.id == original_id
+    assert child.timestamp == original_timestamp
+    assert Child.lookup(original_id) is child
+    assert Child.lookup(rebuilt.child.id) is rebuilt.child
+
+
 def test_instance_input_passes_through_without_a_force_context():
     class S(GatewayStruct):
         a: int = 0
