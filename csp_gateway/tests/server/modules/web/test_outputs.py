@@ -219,6 +219,7 @@ class TestSpadayViewer:
             try:
                 page = browser.new_page(viewport={"width": 1280, "height": 720})
                 page.set_default_timeout(5000)
+                page.add_init_script("window.gatewayReady = false; document.addEventListener('spaday:ready', () => { window.gatewayReady = true; });")
                 held_reads = []
                 held_field = None
 
@@ -267,6 +268,7 @@ class TestSpadayViewer:
                     playwright_api.expect(page.locator("#gateway-log-panel strong")).to_have_text("run/nested/config.yaml")
                 held_field = None
                 page.goto(f"{base}/?tab=channels-graph")
+                page.wait_for_function("window.gatewayReady", timeout=12000)
                 page.wait_for_function(
                     "document.querySelector('#gateway-main-layout')?.save().tabs[document.querySelector('#gateway-main-layout').save().selected] === 'channels-graph'"
                 )
