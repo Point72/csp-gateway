@@ -49,7 +49,8 @@ def _bare_ui():
 
 @pytest.mark.parametrize("failed_asset", [False, True])
 @pytest.mark.parametrize("custom_asset", [None, "js", "css"])
-def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, custom_asset, tmp_path):
+@pytest.mark.parametrize("loading_image", [None, "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"])
+def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, custom_asset, loading_image, tmp_path):
     from types import SimpleNamespace
 
     from spaday import element
@@ -59,7 +60,9 @@ def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, cust
 
     playwright = pytest.importorskip("playwright.sync_api")
     options = {f"CUSTOM_{custom_asset.upper()}": [f"/missing-custom.{custom_asset}"]} if custom_asset else {}
-    web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday", **options), ui=True)
+    web = GatewayWebApp(
+        SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday", LOADING_IMAGE=loading_image, **options), ui=True
+    )
     web.ui.add(Region.MAIN, element("wa-input", label="Ready control"))
     web._finalize()
     client = TestClient(web.app)
@@ -74,8 +77,12 @@ def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, cust
         page.add_init_script(
             "window.lifecycleEvents = []; for (const name of ['ready', 'error']) document.addEventListener('spaday:' + name, () => lifecycleEvents.push(name));"
         )
+        pending = []
 
         def serve(route):
+            if loading_image and route.request.url.endswith("/js/cdn/index.js"):
+                pending.append(route)
+                return
             if failed_asset and "/components/webawesome/cdn/" in route.request.url:
                 route.abort()
                 return
@@ -85,6 +92,16 @@ def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, cust
         page.route("http://csp-review.test/**", serve)
         try:
             page.goto("http://csp-review.test/", wait_until="commit")
+            loader = page.locator("#gateway-startup-loader")
+            if loading_image:
+                playwright.expect(loader).to_be_visible()
+                page.wait_for_function("document.readyState !== 'loading'")
+                assert page.locator("spa-app").count() == 0
+                assert page.evaluate("lifecycleEvents") == []
+                assert pending
+                for route in pending:
+                    response = client.get(route.request.url)
+                    route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
             if failed_asset:
                 playwright.expect(page.locator("#gateway-startup-error")).to_be_visible(timeout=12000)
                 playwright.expect(page.get_by_role("link", name="Reload page")).to_be_visible()
@@ -94,7 +111,79 @@ def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, cust
                 playwright.expect(page.locator("wa-input")).to_be_visible()
                 assert page.locator("wa-input").evaluate("element => !!element.shadowRoot")
                 assert page.locator("#gateway-startup-error").count() == 0
+            playwright.expect(loader).to_have_count(0)
             page.screenshot(path=str(tmp_path / "lifecycle.png"), full_page=True)
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize("case", ["workspace", "early-ready", "error", "logs"])
+def test_startup_loader_waits_for_workspace_only_in_chromium(case):
+    from types import SimpleNamespace
+
+    from spaday import element
+    from spaday.components.shell import Region
+
+    from csp_gateway.server.web.app import GatewayWebApp
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    settings = GatewaySettings(UI=True, LOADING_IMAGE="/loader.svg", ROOT_PATH="/prefix", TITLE='A "B" <C>')
+    web = GatewayWebApp(SimpleNamespace(modules=[]), None, settings, ui=True)
+    web.ui.add(Region.MAIN, element("perspective-panel"))
+    web.ui.add_tab("logs", "Logs", element("p").text("Log contents"))
+    web._finalize()
+    client = TestClient(web.app)
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(headless=True)
+        except playwright.Error as failure:
+            if "Executable doesn't exist" in str(failure):
+                pytest.skip("Chromium is not installed")
+            raise
+        page = browser.new_page(color_scheme="light")
+        page.add_init_script(
+            "localStorage.setItem('csp-gateway:dark', 'true'); window.shellReady = false; document.addEventListener('spaday:ready', () => shellReady = true)"
+        )
+        pending = []
+
+        def respond(route):
+            response = client.get(route.request.url)
+            route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+        def serve(route):
+            if route.request.url.endswith("/js/cdn/index.js"):
+                pending.append(route)
+            else:
+                respond(route)
+
+        page.route("http://csp-review.test/**", serve)
+        try:
+            page.goto(f"http://csp-review.test/prefix/?tab={'logs' if case == 'logs' else ''}", wait_until="commit")
+            loader = page.locator("#gateway-startup-loader")
+            playwright.expect(loader).to_be_visible()
+            playwright.expect(loader).to_have_attribute("aria-label", 'Loading A "B" <C>')
+            playwright.expect(loader.locator("img")).to_have_attribute("src", "/prefix/loader.svg")
+            assert loader.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(36, 37, 38)"
+            assert loader.bounding_box() == {"x": 0, "y": 0, "width": 1280, "height": 720}
+            page.wait_for_function("document.readyState !== 'loading'")
+            if case == "early-ready":
+                page.evaluate("document.dispatchEvent(new CustomEvent('perspective-ready'))")
+                playwright.expect(loader).to_be_visible()
+            assert pending
+            for route in pending:
+                respond(route)
+            page.wait_for_function("shellReady")
+            if case in {"workspace", "error"}:
+                playwright.expect(loader).to_be_visible()
+                if case == "error":
+                    page.evaluate("document.dispatchEvent(new CustomEvent('perspective-error', {detail: new Error('Test failure')}))")
+                    playwright.expect(page.get_by_role("link", name="Reload page")).to_be_visible()
+                    playwright.expect(loader).to_have_count(0)
+                page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready'))")
+            playwright.expect(loader).to_have_count(0)
+            playwright.expect(page.locator("#gateway-startup-error")).to_have_count(0)
+            page.evaluate("document.dispatchEvent(new CustomEvent('perspective-error'))")
+            playwright.expect(page.locator(".gateway-startup")).to_have_count(0)
         finally:
             browser.close()
 

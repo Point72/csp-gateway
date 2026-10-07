@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from starlette.requests import Request
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, Response
 from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocket
 
@@ -1211,16 +1211,59 @@ class GatewayUI:
         root = getattr(self._settings, "ROOT_PATH", "") or ""
         custom_css, custom_scripts = self._custom_assets()
         error_head = """<script>
-    document.addEventListener('spaday:error', event => {
-      if (event.detail.target != null || document.getElementById('gateway-startup-error')) return;
+    (() => {
+    let shellReady = false, workspaceReady = false;
+    const finish = () => {
+      const tab = document.getElementById('gateway-main-layout')?.dataset.activeTab;
+      if (!shellReady || (!workspaceReady && document.querySelector('perspective-panel') && (!tab || tab === 'workspace'))) return;
+      document.getElementById('gateway-startup-loader')?.remove();
+      document.getElementById('gateway-startup-error')?.remove();
+    };
+    const fail = event => {
+      if (event.detail?.target != null || document.getElementById('gateway-startup-error')) return;
+      const loader = document.getElementById('gateway-startup-loader');
       const panel = document.createElement('section');
       panel.id = 'gateway-startup-error'; panel.setAttribute('role', 'alert');
+      if (loader) panel.className = 'gateway-startup';
       const message = document.createElement('p');
       message.textContent = 'The interface could not finish loading. Reload to try again.';
       const reload = document.createElement('a');
       reload.href = ''; reload.textContent = 'Reload page';
       panel.append(message, reload); document.body.append(panel);
+      loader?.remove();
+    };
+    document.addEventListener('spaday:error', fail);
+    document.addEventListener('spaday:ready', event => {
+      if (event.detail.target != null) return;
+      shellReady = true; finish();
     });
+    document.addEventListener('perspective-ready', () => { workspaceReady = true; finish(); }, true);
+    document.addEventListener('perspective-error', event => {
+      if (document.getElementById('gateway-startup-loader')) fail(event);
+    }, true);
+    })();
+    </script>"""
+        loading_image = self.url(getattr(self._settings, "LOADING_IMAGE", None))
+        loader_body = ""
+        if loading_image:
+            loader_body = f"""<style>
+    .gateway-startup {{
+      position: fixed; inset: 0; z-index: 100000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color-scheme: light; background: light-dark(#fff, #242526); color: light-dark(#161616, #fff);
+    }}
+    :root.wa-dark .gateway-startup {{ color-scheme: dark; }}
+    #gateway-startup-loader img {{ width: 100%; height: 100%; object-fit: contain; }}
+    </style>
+    <div id="gateway-startup-loader" class="gateway-startup" role="status" aria-label="Loading {escape(title, quote=True)}">
+      <img src="{escape(loading_image, quote=True)}" alt="">
+    </div>
+    <script>
+    (() => {{
+      let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      try {{ dark = JSON.parse(localStorage.getItem('csp-gateway:dark')) ?? dark; }} catch {{}}
+      document.documentElement.classList.toggle('wa-dark', !!dark);
+    }})();
     </script>"""
 
         elements = tuple(
@@ -1292,7 +1335,12 @@ class GatewayUI:
 
         def _authed_route(endpoint):
             async def _serve(request: Request):
-                return await endpoint(request)
+                response = await endpoint(request)
+                if loader_body and isinstance(response, HTMLResponse):
+                    # The loader must precede Spaday's module downloads and tree mount.
+                    response.body = response.body.replace(b"<body>", b"<body>" + loader_body.encode(), 1)
+                    response.headers["content-length"] = str(len(response.body))
+                return response
 
             return _serve
 
