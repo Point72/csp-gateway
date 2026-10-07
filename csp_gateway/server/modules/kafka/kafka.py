@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin
 
 import csp
 import orjson
@@ -38,6 +38,11 @@ __all__ = (
 #: Wire field names of the envelope a message is wrapped in when engine timestamps are included.
 _ENVELOPE_ENCODING_FIELD = "encoding"
 _ENVELOPE_TIMESTAMP_FIELD = "csp_timestamp"
+
+
+class _KeyedMessage(csp.Struct):
+    encoding: str
+    key: str
 
 
 class _EngineCycleEnvelope(csp.Struct):
@@ -181,12 +186,24 @@ class ReadWriteKafka(GatewayModule):
 
     Caveats:
     - Dict baskets are not supported.
+
+    For recorded-engine replay, use exact subscriptions and set both ``encoding_with_engine_timestamps`` and
+    ``subscribe_with_csp_engine_timestamp``. Each channel/topic mapping accepts a single key or a list of explicit keys,
+    such as ``["ingest:tenant-a", "ingest:tenant-b"]``. Inputs must contain the recorded ``csp_timestamp`` envelopes.
+    Live prefix subscriptions remain separate from engine-timestamp replay.
     """
 
     config: KafkaConfiguration
     requires: ChannelSelection | None = []
     publish_channel_to_topic_and_key: dict[str, dict[str, str]] = {}
-    subscribe_channel_to_topic_and_key: dict[str, dict[str, str]] = {}
+    subscribe_channel_to_topic_and_key: dict[str, dict[str, str | list[str]]] = Field(
+        default_factory=dict,
+        description="Map channels to topics and one key or an explicit key list. Use exact keys for native engine-timestamp replay.",
+    )
+    subscribe_key_mode: Literal["exact", "prefix"] = Field(
+        default="exact",
+        description="Match full message keys or their first colon-separated segment. Prefix matching occurs before payload deserialization.",
+    )
 
     publish_channel_processors: dict[str, KafkaChannelProcessor] = Field(
         default={},
@@ -242,6 +259,15 @@ class ReadWriteKafka(GatewayModule):
     def check_parameters_consistent(self):
         if self.subscribe_with_csp_engine_timestamp and not self.encoding_with_engine_timestamps:
             raise ValueError("If `subscribe_with_csp_engine_timestamp` is True, you must set `encoding_with_engine_timestamp` to be True as well")
+        if self.subscribe_key_mode == "prefix" and self.subscribe_with_csp_engine_timestamp:
+            raise ValueError("Prefix subscriptions cannot replay at CSP engine timestamps")
+        for topic_to_keys in self.subscribe_channel_to_topic_and_key.values():
+            for keys in topic_to_keys.values():
+                if isinstance(keys, list):
+                    if not keys or any(not key for key in keys) or len(set(keys)) != len(keys):
+                        raise ValueError("Explicit Kafka key lists must be nonempty and contain unique nonempty keys")
+                    if self.subscribe_key_mode == "prefix":
+                        raise ValueError("Prefix subscriptions require one key selector per topic")
         return self
 
     def __init__(self, *a, **kw):
@@ -267,6 +293,7 @@ class ReadWriteKafka(GatewayModule):
     def deserialize_to_python(self, obj: object, ts_typ: object) -> object:
         """Intercepts encoding from Kafka before conversion to to target type.
         This can be overwritten to implement custom logic to alter the object before it is passed onto the `deserialize_to_target` to create the csp struct
+        Return None to discard a message before target validation.
         """
         return obj
 
@@ -295,6 +322,8 @@ class ReadWriteKafka(GatewayModule):
 
         json_dict = self.deserialize_to_python(encoding_obj, ts_typ=ts_typ)
 
+        if json_dict is None:
+            return None
         return self.deserialize_to_target(json_dict, ts_typ=ts_typ)
 
     @deprecated(details="Use serialize_to_python instead.")
@@ -318,7 +347,9 @@ class ReadWriteKafka(GatewayModule):
     @csp.node
     def deserialize_csp(self, encoding: ts[str], ts_typ: "T") -> ts["T"]:  # noqa
         if csp.ticked(encoding):
-            return self.deserialize(encoding, ts_typ)
+            value = self.deserialize(encoding, ts_typ)
+            if value is not None:
+                return value
 
     @csp.node
     def serialize_csp(self, x: ts[object]) -> ts[str]:
@@ -381,19 +412,27 @@ class ReadWriteKafka(GatewayModule):
             topic_to_key,
         ) in self.subscribe_channel_to_topic_and_key.items():
             values_to_tick = []
-            for topic, key in topic_to_key.items():
+            topic_keys = ((topic, key) for topic, keys in topic_to_key.items() for key in (keys if isinstance(keys, list) else [keys]))
+            for topic, key in topic_keys:
+                prefix_mode = self.subscribe_key_mode == "prefix"
                 sub = self._kafkaadapter.subscribe(
-                    ts_type=subscribe_ts_type,
+                    ts_type=_KeyedMessage if prefix_mode else subscribe_ts_type,
                     topic=topic,
-                    msg_mapper=subscribe_msg_mapper,
-                    key=key,
-                    field_map=subscribe_field_map,
+                    msg_mapper=RawTextMessageMapper() if prefix_mode else subscribe_msg_mapper,
+                    key=None if prefix_mode else key,
+                    field_map={"": "encoding"} if prefix_mode else subscribe_field_map,
+                    meta_field_map={"key": "key"} if prefix_mode else None,
                     tick_timestamp_from_field=tick_timestamp_from_field,
                     adjust_out_of_order_time=True,
                     include_msg_before_start_time=self.include_subscribe_messages_before_engine_start,
                     push_mode=csp.PushMode.NON_COLLAPSING,
                 )
-                if self.encoding_with_engine_timestamps:
+                if prefix_mode:
+                    matches = csp.apply(sub, lambda message, prefix=key: message.key.split(":", 1)[0] == prefix, bool)
+                    sub = csp.filter(matches, sub).encoding
+                    if self.encoding_with_engine_timestamps:
+                        sub = csp.apply(sub, lambda encoding: _decode_envelope(encoding).encoding, str)
+                elif self.encoding_with_engine_timestamps:
                     sub = sub.encoding
                 channel_type = channels.get_outer_type(channel_name).typ
                 deserialized_sub = self.deserialize_csp(encoding=sub, ts_typ=channel_type)
