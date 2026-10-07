@@ -571,7 +571,19 @@ class GatewayUI:
             )
             .on(
                 "perspective-copy-error",
-                Invoke(by_id(_TOAST_ID), "notify", obj({"message": event_prop("detail.message"), "tone": "danger"})),
+                Invoke(
+                    by_id(_TOAST_ID),
+                    "notify",
+                    obj(
+                        {
+                            "message": concat(
+                                event_prop("detail.message"),
+                                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
+                            ),
+                            "tone": "danger",
+                        }
+                    ),
+                ),
             )
             .on("perspective-ready", SetField(_PERSPECTIVE_READY, True))
         )
@@ -916,7 +928,7 @@ class GatewayUI:
             .child("Built with ")
             .child(element("a", href="https://github.com/perspective-dev/perspective", target="_blank").text("Perspective").style(color="inherit"))
             .child(" and ")
-            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("spaday").style(color="inherit"))
+            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("Spaday").style(color="inherit"))
         )
 
         # Compose region contents (built-in chrome merged with module contributions, order-sorted).

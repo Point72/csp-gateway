@@ -212,6 +212,7 @@ class TestSpadayAuth:
         tree = client.get("/tree.json?token=alice_key")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
+        assert '"Spaday"' in tree.text
         assert "gateway-perspective.mjs" not in page.text
         assert client.get("/gateway-perspective.mjs?token=alice_key").status_code == 404
 
@@ -579,7 +580,15 @@ class TestWorkspaceSignals:
         action = panel["events"]["perspective-copy-error"]
         assert action["method"] == "notify"
         assert action["target"] == {"ref": "id", "id": "gateway-toasts"}
-        assert action["args"][0]["fields"]["message"] == {"expr": "event-prop", "path": "detail.message"}
+        from spaday.actions import concat, cond, event_prop
+
+        assert (
+            action["args"][0]["fields"]["message"]
+            == concat(
+                event_prop("detail.message"),
+                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
+            ).to_dict()
+        )
         assert action["args"][0]["fields"]["tone"] == {"expr": "lit", "value": "danger"}
 
     def test_ready_is_recorded_and_seeded_false(self):
