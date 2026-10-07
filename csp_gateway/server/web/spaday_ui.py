@@ -103,7 +103,6 @@ _TOAST_ID = "gateway-toasts"
 _ACTION_RESULT = "action_result"
 _GRAPH_FOCUS = "graph_focus"
 _PERSPECTIVE_READY = "perspective_ready"
-_PERSPECTIVE_ERROR = "perspective_error"
 # Seeded from `?error=` so the auth middleware can say why it turned a request away.
 _AUTH_ERROR = "auth_error"
 
@@ -531,42 +530,50 @@ class GatewayUI:
             layout_expr = cond(eq(field(_GRAPH_FOCUS), name), self._default_layout([name], schemas=schemas), layout_expr)
         self._store_seeds.setdefault(_GRAPH_FOCUS, "")
         self._store_seeds.setdefault(_PERSPECTIVE_READY, False)
-        self._store_seeds.setdefault(_PERSPECTIVE_ERROR, False)
         self._store_seeds.setdefault("saved_layout", None)
         self.persist_store(saved_layout=_CUSTOM_LAYOUT_STORAGE_KEY)
 
         return (
-            PerspectivePanel(autopause=False)
+            PerspectivePanel()
             .prop("id", _WORKSPACE_ID)
             .style(height="100%", display="block", overflow="hidden")
             .compute("theme", cond(field("dark"), "dark", "light"))
             .compute(
                 "config",
-                obj({"ws_url": self.url(route), "tables": table_specs, "layout": layout_expr, "channels": channels or {}, "master_theme": master_theme}),
+                obj(
+                    {
+                        "ws_url": self.url(route),
+                        "tables": table_specs,
+                        "layout": layout_expr,
+                        "channels": channels or {},
+                        "master_theme": master_theme,
+                    }
+                ),
             )
             # Applying a config can fail (a saved layout that no longer matches the tables); the
             # panel reports it and otherwise nothing would. The detail is whatever was thrown --
             # an Error for JS failures, a bare string for the ones raised inside Perspective.
             .on(
                 "perspective-error",
-                Sequence(
-                    SetField(_PERSPECTIVE_ERROR, True),
-                    Invoke(
-                        by_id(_TOAST_ID),
-                        "notify",
-                        obj(
-                            {
-                                "message": concat(
-                                    "Perspective error: ",
-                                    cond(event_prop("detail.message"), event_prop("detail.message"), event_prop("detail")),
-                                ),
-                                "tone": "danger",
-                            }
-                        ),
+                Invoke(
+                    by_id(_TOAST_ID),
+                    "notify",
+                    obj(
+                        {
+                            "message": concat(
+                                "Perspective error: ",
+                                cond(event_prop("detail.message"), event_prop("detail.message"), event_prop("detail")),
+                            ),
+                            "tone": "danger",
+                        }
                     ),
                 ),
             )
-            .on("perspective-ready", Sequence(SetField(_PERSPECTIVE_ERROR, False), SetField(_PERSPECTIVE_READY, True)))
+            .on(
+                "perspective-copy-error",
+                Invoke(by_id(_TOAST_ID), "notify", obj({"message": event_prop("detail.message"), "tone": "danger"})),
+            )
+            .on("perspective-ready", SetField(_PERSPECTIVE_READY, True))
         )
 
     def focus_table_action(self, *, event_path: str = "detail.id") -> Any:
@@ -908,6 +915,8 @@ class GatewayUI:
             element("span")
             .child("Built with ")
             .child(element("a", href="https://github.com/perspective-dev/perspective", target="_blank").text("Perspective").style(color="inherit"))
+            .child(" and ")
+            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("spaday").style(color="inherit"))
         )
 
         # Compose region contents (built-in chrome merged with module contributions, order-sorted).

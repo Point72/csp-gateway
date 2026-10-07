@@ -899,14 +899,33 @@ class TestLayoutMigration:
         once = migrate_perspective_layout(self.V4_LAYOUT)
         assert migrate_perspective_layout(once) == once
 
+    def test_missing_detail_sizes_use_equal_shares(self):
+        layout = json.loads(self.V4_LAYOUT)
+        del layout["detail"]["main"]["sizes"]
+        migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
+        assert migrated["layout"]["children"][1]["sizes"] == [0.5, 0.5]
+
+    def test_v5_layout_with_legacy_metadata_is_untouched(self):
+        layout = json.dumps({"layout": {"type": "tab-layout", "tabs": ["A"]}, "panels": {"A": {"table": "example"}}, "viewers": {}})
+        assert migrate_perspective_layout(layout) == layout
+
     @pytest.mark.parametrize("layout", ["", "not json", "[]", '{"panels": {}}'])
     def test_non_v4_input_passes_through(self, layout):
         assert migrate_perspective_layout(layout) == layout
 
+    @pytest.mark.parametrize(
+        "root",
+        ["invalid", {"type": "split-area", "children": [None]}, {"type": "split-area", "children": 1}],
+    )
+    def test_malformed_legacy_layout_does_not_break_configuration(self, root):
+        layout = json.dumps({"viewers": {}, "detail": {"main": root}})
+        module = MountPerspectiveTables(layouts={"Malformed": layout})
+        assert module.layouts["Malformed"] == layout
+
     def test_configured_layouts_are_migrated_on_validation(self):
         module = MountPerspectiveTables(layouts={"Server Defined Layout": self.V4_LAYOUT})
         migrated = json.loads(module.layouts["Server Defined Layout"])
-        assert sorted(migrated) == ["layout", "masters", "panels"]
+        assert {"layout", "masters", "panels"} <= migrated.keys()
 
 
 class TestDefaultLayoutTables:

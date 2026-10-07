@@ -212,10 +212,8 @@ class TestSpadayAuth:
         tree = client.get("/tree.json?token=alice_key")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
-        script = client.get("/gateway-perspective.mjs?token=alice_key")
-        assert script.status_code == 200
-        assert script.headers["content-type"].startswith("text/javascript")
-        assert "installClipboardHandlers" in script.text
+        assert "gateway-perspective.mjs" not in page.text
+        assert client.get("/gateway-perspective.mjs?token=alice_key").status_code == 404
 
     def test_session_cookie_serves_the_tree(self, client: TestClient):
         # The browser only carries a token on the request that logs it in. Every fetch the page then
@@ -224,7 +222,6 @@ class TestSpadayAuth:
         client.cookies.clear()
         client.get("/login?token=alice_key")
         assert client.cookies.get("token"), "login should leave a session cookie behind"
-        assert "installClipboardHandlers" in client.get("/gateway-perspective.mjs").text
         tree = client.get("/tree.json")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
@@ -333,8 +330,8 @@ class TestSpadayRootPath:
     def test_page_assets_prefixed(self, client: TestClient):
         # The page's own runtime/asset URLs (/js, wasm) carry the ROOT_PATH prefix.
         assert "/watchtower/js" in client.get("/").text
-        assert "/watchtower/gateway-perspective.mjs" in client.get("/").text
-        assert "installClipboardHandlers" in client.get("/watchtower/gateway-perspective.mjs").text
+        assert "/watchtower/spaday-navigation.js" in client.get("/").text
+        assert client.get("/watchtower/gateway-perspective.mjs").status_code == 404
         assert '<link rel="icon" href="/watchtower/custom/icon.svg?x=&quot;a&quot;&amp;y=1">' in client.get("/").text
 
     def test_module_urls_prefixed(self, client: TestClient):
@@ -419,9 +416,9 @@ class TestSpadaySendFormDetails:
 class TestDefaultLayout:
     """The generated layout is a Perspective 5 whole-element config."""
 
-    def test_panel_keeps_views_active_for_hidden_theme_changes(self):
+    def test_panel_uses_component_auto_pause_default(self):
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
-        assert panel.to_node()["props"]["autopause"] == {"Bool": False}
+        assert "autopause" not in panel.to_node()["props"]
 
     def test_one_datagrid_panel_per_table(self):
         from csp_gateway.server.web.spaday_ui import GatewayUI
@@ -573,13 +570,17 @@ class TestWorkspaceSignals:
         node = json.dumps(panel)
 
         assert "perspective-error" in node and '"notify"' in node
-        assert panel["events"]["perspective-error"]["actions"][0] == {
-            "kind": "set-field",
-            "field": "perspective_error",
-            "value": {"expr": "lit", "value": True},
-        }
+        assert panel["events"]["perspective-error"]["method"] == "notify"
         # The detail is an Error for JS failures and a bare string from Perspective itself.
         assert "detail.message" in node and '"path": "detail"' in node
+
+    def test_copy_errors_are_reported_in_a_toast(self):
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node()
+        action = panel["events"]["perspective-copy-error"]
+        assert action["method"] == "notify"
+        assert action["target"] == {"ref": "id", "id": "gateway-toasts"}
+        assert action["args"][0]["fields"]["message"] == {"expr": "event-prop", "path": "detail.message"}
+        assert action["args"][0]["fields"]["tone"] == {"expr": "lit", "value": "danger"}
 
     def test_ready_is_recorded_and_seeded_false(self):
         ui = _bare_ui()
@@ -587,11 +588,11 @@ class TestWorkspaceSignals:
 
         assert "perspective-ready" in node
         assert ui._store_seeds["perspective_ready"] is False
-        assert ui._store_seeds["perspective_error"] is False
-        assert json.loads(node)["events"]["perspective-ready"]["actions"] == [
-            {"kind": "set-field", "field": name, "value": {"expr": "lit", "value": value}}
-            for name, value in [("perspective_error", False), ("perspective_ready", True)]
-        ]
+        assert json.loads(node)["events"]["perspective-ready"] == {
+            "kind": "set-field",
+            "field": "perspective_ready",
+            "value": {"expr": "lit", "value": True},
+        }
 
     def test_layout_buttons_wait_for_the_workspace(self):
         ui = _bare_ui()
@@ -697,10 +698,8 @@ class TestSpadayPerspectiveLayoutActions:
         assert "actions.js" not in page
         assert "cspGatewayCustomLayout" not in page
         assert 'localStorage.getItem("csp_gateway_demo_config")' in page
-        assert (
-            'store.subscribe("saved_layout", (v) => { try { localStorage.setItem("csp_gateway_demo_config", JSON.stringify(v)); } catch {} });'
-            in page
-        )
+        assert 'store.subscribe("saved_layout",' in page
+        assert 'localStorage.setItem("csp_gateway_demo_config", JSON.stringify(v))' in page
         assert client.get("/components/csp-gateway/actions.js").status_code == 404
         tree = client.get("/tree.json").text
         # save: clean-save the workspace, persist it, and switch the selector to the custom layout

@@ -7,6 +7,7 @@ from typing import (
     Any,
     Literal,
     TypeVar,
+    cast,
 )
 from urllib.parse import parse_qs
 
@@ -143,32 +144,6 @@ class TableConfig(BaseModel):
 # Backwards compat alias
 AdditionalTableConfig = TableConfig
 
-# Perspective 4 stored a workspace layout as a Lumino widget tree (`detail`/`master` of `split-area`
-# and `tab-area` nodes) alongside a `viewers` map. Perspective 5 folded the workspace into
-# `<perspective-viewer>` itself, which takes a `layout` tree of `split-layout`/`tab-layout` nodes and
-# a `panels` map. Per-panel bodies are unchanged -- the viewer migrates those from their own stamped
-# `version` -- so only the envelope is rewritten here.
-_LAYOUT_NODE_TYPES = {"split-area": "split-layout", "tab-area": "tab-layout"}
-
-
-def _migrate_layout_node(node: Any) -> Any:
-    if not isinstance(node, dict):
-        return node
-    node_type = _LAYOUT_NODE_TYPES.get(node.get("type"))
-    if node_type == "tab-layout":
-        migrated = {"type": node_type, "tabs": list(node.get("widgets") or [])}
-        if "currentIndex" in node:
-            migrated["selected"] = node["currentIndex"]
-        return migrated
-    if node_type == "split-layout":
-        return {
-            "type": node_type,
-            "orientation": node.get("orientation", "horizontal"),
-            "sizes": list(node.get("sizes") or []),
-            "children": [_migrate_layout_node(child) for child in node.get("children") or []],
-        }
-    return node
-
 
 def migrate_perspective_layout(layout: str) -> str:
     """Rewrite a Perspective 4 workspace layout as the Perspective 5 equivalent.
@@ -176,38 +151,12 @@ def migrate_perspective_layout(layout: str) -> str:
     Layouts already in the version 5 shape, and anything unparseable, are returned untouched so this
     is safe to apply to every configured layout on every startup.
     """
-    try:
-        parsed = orjson.loads(layout)
-    except orjson.JSONDecodeError:
-        return layout
-    if not isinstance(parsed, dict) or "viewers" not in parsed:
-        return layout
+    from spaday_perspective import migrate_layout
 
-    migrated: dict[str, Any] = {"panels": parsed.get("viewers") or {}}
-    root = (parsed.get("detail") or {}).get("main")
-    if root is not None:
-        migrated["layout"] = _migrate_layout_node(root)
-    master = parsed.get("master") or {}
-    masters = master.get("widgets") or []
-    if masters:
-        migrated["masters"] = list(masters)
-        # Filter-source panels also need a place in the layout; the viewer removes unplaced panels.
-        master_layout = {
-            "type": "split-layout",
-            "orientation": "vertical",
-            "sizes": list(master.get("sizes") or [1 / len(masters)] * len(masters)),
-            "children": [{"type": "tab-layout", "tabs": [name], "selected": 0} for name in masters],
-        }
-        if root is None:
-            migrated["layout"] = master_layout
-        else:
-            migrated["layout"] = {
-                "type": "split-layout",
-                "orientation": "horizontal",
-                "sizes": list(parsed.get("sizes") or [0.25, 0.75]),
-                "children": [master_layout, migrated["layout"]],
-            }
-    return orjson.dumps(migrated).decode()
+    try:
+        return cast(str, migrate_layout(layout))
+    except (AttributeError, TypeError):
+        return layout
 
 
 def _is_channel_selection_input(v) -> bool:

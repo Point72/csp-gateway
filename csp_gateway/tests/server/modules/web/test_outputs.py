@@ -81,6 +81,13 @@ class TestOutputsApi:
             ("stdout", b"log line\n", "text/plain", "text", "log line\n"),
             ("notes.md", b"# Notes\n", "text/plain", "text", "# Notes\n"),
             ("job.err", b"error\n", "text/plain", "text", "error\n"),
+            (
+                "hyperlink.log",
+                b"\x1b]8;;https://example.org\x07linked log\x1b]8;;\x07\n",
+                "text/plain",
+                "text",
+                "\x1b]8;;https://example.org\x07linked log\x1b]8;;\x07\n",
+            ),
             ("capture", b"\x00\xff\x01", "application/octet-stream", "download", ""),
         ],
     )
