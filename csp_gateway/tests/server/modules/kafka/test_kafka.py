@@ -95,6 +95,133 @@ def test_subscribe_with_csp_engine_timestamp_only_if_encoding_expected():
         ReadWriteKafka(config=config, encoding_with_engine_timestamps=False, subscribe_with_csp_engine_timestamp=True)
 
 
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+@pytest.mark.parametrize("encoding_with_engine_timestamps", [False, True])
+def test_prefix_subscriptions_filter_keys_before_deserializing(mock_object, encoding_with_engine_timestamps):
+    start = datetime(2026, 10, 6, tzinfo=UTC)
+
+    def subscribe(**kwargs):
+        assert kwargs["key"] is None
+        assert kwargs["field_map"] == {"": "encoding"}
+        assert kwargs["meta_field_map"] == {"key": "key"}
+        encoding = orjson.dumps({"foo": 1.0, "time": 0}).decode()
+        if encoding_with_engine_timestamps:
+            encoding = orjson.dumps({"encoding": encoding, "csp_timestamp": int(start.timestamp() * 1000)}).decode()
+        return csp.curve(
+            kwargs["ts_type"],
+            [
+                (start + timedelta(seconds=index), kwargs["ts_type"](key=key, encoding=value))
+                for index, (key, value) in enumerate(
+                    [("ingest:tenant-a", encoding), ("data:tenant-a", "not JSON"), ("ingestion:tenant-a", "not JSON"), ("ingest:tenant-b", encoding)],
+                    1,
+                )
+            ],
+        )
+
+    mock_object.return_value.subscribe.side_effect = subscribe
+    reader = ReadWriteKafka(
+        config=KafkaConfiguration(broker="dummy"),
+        subscribe_key_mode="prefix",
+        subscribe_channel_to_topic_and_key={MyGatewayChannels.my_channel: {"topic": "ingest"}},
+        encoding_with_engine_timestamps=encoding_with_engine_timestamps,
+    )
+    result = csp.run(
+        MyGateway(modules=[reader, AddChannelsToGraphOutput()], channels=MyGatewayChannels()).graph,
+        starttime=start,
+        endtime=timedelta(seconds=5),
+    )
+    assert len(result[MyGatewayChannels.my_channel]) == 2
+
+
+def test_prefix_subscriptions_reject_engine_timestamp_replay():
+    with pytest.raises(ValidationError, match="Prefix"):
+        ReadWriteKafka(
+            config=KafkaConfiguration(broker="dummy"),
+            subscribe_key_mode="prefix",
+            encoding_with_engine_timestamps=True,
+            subscribe_with_csp_engine_timestamp=True,
+        )
+
+
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+def test_explicit_key_list_replays_at_engine_timestamps(mock_object):
+    start = datetime(2026, 10, 6, tzinfo=UTC)
+    seen = []
+
+    def subscribe(**kwargs):
+        key = kwargs["key"]
+        seen.append(key)
+        assert kwargs["meta_field_map"] is None
+        assert kwargs["tick_timestamp_from_field"] == "csp_timestamp"
+        assert kwargs["field_map"] == {"encoding": "encoding", "csp_timestamp": "csp_timestamp"}
+        assert kwargs["msg_mapper"].properties["datetime_type"] == "UINT64_MILLIS"
+        delay, value = {"ingest:tenant-a": (3, 3.0), "ingest:tenant-b": (1, 1.0)}[key]
+        timestamp = start + timedelta(seconds=delay)
+        envelope = kwargs["ts_type"](encoding=orjson.dumps({"foo": value, "time": 0}).decode(), csp_timestamp=timestamp)
+        return csp.curve(kwargs["ts_type"], [(timestamp, envelope)])
+
+    mock_object.return_value.subscribe.side_effect = subscribe
+    reader = ReadWriteKafka(
+        config=KafkaConfiguration(broker="dummy", start_offset=KafkaStartOffsetCsp.EARLIEST),
+        subscribe_key_mode="exact",
+        subscribe_channel_to_topic_and_key={MyGatewayChannels.my_channel: {"topic": ["ingest:tenant-a", "ingest:tenant-b"]}},
+        encoding_with_engine_timestamps=True,
+        subscribe_with_csp_engine_timestamp=True,
+    )
+    result = csp.run(
+        MyGateway(modules=[reader, AddChannelsToGraphOutput()], channels=MyGatewayChannels()).graph,
+        starttime=start,
+        endtime=timedelta(seconds=5),
+    )[MyGatewayChannels.my_channel]
+    assert seen == ["ingest:tenant-a", "ingest:tenant-b"]
+    assert [record.foo for _, record in result] == [1.0, 3.0]
+    assert [timestamp for timestamp, _ in result] == [(start + timedelta(seconds=delay)).replace(tzinfo=None) for delay in (1, 3)]
+
+
+@pytest.mark.parametrize("keys", [[], [""], ["ingest:tenant-a", "ingest:tenant-a"]])
+def test_explicit_key_lists_reject_empty_or_duplicate_entries(keys):
+    with pytest.raises(ValidationError, match="key"):
+        ReadWriteKafka(
+            config=KafkaConfiguration(broker="dummy"),
+            subscribe_channel_to_topic_and_key={MyGatewayChannels.my_channel: {"topic": keys}},
+        )
+
+
+def test_prefix_mode_rejects_explicit_key_lists():
+    with pytest.raises(ValidationError, match="Prefix"):
+        ReadWriteKafka(
+            config=KafkaConfiguration(broker="dummy"),
+            subscribe_key_mode="prefix",
+            subscribe_channel_to_topic_and_key={MyGatewayChannels.my_channel: {"topic": ["ingest:tenant-a"]}},
+        )
+
+
+@mock.patch("csp.adapters.kafka.KafkaAdapterManager", autospec=True)
+def test_explicit_key_list_accepts_raw_encodings(mock_object):
+    start = datetime(2026, 10, 6, tzinfo=UTC)
+    keys = []
+
+    def subscribe(**kwargs):
+        keys.append(kwargs["key"])
+        assert kwargs["ts_type"] is str
+        assert kwargs["tick_timestamp_from_field"] is None
+        value = float(len(keys))
+        return csp.curve(str, [(start + timedelta(seconds=len(keys)), orjson.dumps({"foo": value, "time": 0}).decode())])
+
+    mock_object.return_value.subscribe.side_effect = subscribe
+    reader = ReadWriteKafka(
+        config=KafkaConfiguration(broker="dummy"),
+        subscribe_channel_to_topic_and_key={MyGatewayChannels.my_channel: {"topic": ["ingest:tenant-a", "ingest:tenant-b"]}},
+    )
+    records = csp.run(
+        MyGateway(modules=[reader, AddChannelsToGraphOutput()], channels=MyGatewayChannels()).graph,
+        starttime=start,
+        endtime=timedelta(seconds=3),
+    )[MyGatewayChannels.my_channel]
+    assert keys == ["ingest:tenant-a", "ingest:tenant-b"]
+    assert [record.foo for _, record in records] == [1.0, 2.0]
+
+
 def _adapter_payload(subscribe_kwargs, encoding):
     """Build what csp's Kafka adapter would hand back for the requested ``ts_type``.
 
