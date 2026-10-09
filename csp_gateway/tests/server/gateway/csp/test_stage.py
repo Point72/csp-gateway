@@ -6,6 +6,7 @@ from typing import Annotated
 import csp
 import pytest
 from csp import ts
+from pydantic import BaseModel
 
 from csp_gateway import (
     Channels,
@@ -26,6 +27,15 @@ class OrderStruct(GatewayStruct):
     symbol: str = ""
     quantity: int = 0
     price: float = 0.0
+
+
+class UnkeyedOrder(BaseModel):
+    symbol: str = ""
+
+
+class PlainOrder(BaseModel):
+    id: object | None = None
+    symbol: str = ""
 
 
 class StagedChannels(GatewayChannels):
@@ -100,6 +110,23 @@ class TestStagingArea:
 
 
 class TestStageManager:
+    @pytest.mark.parametrize("method", ["stage_add", "stage_remove"])
+    @pytest.mark.parametrize("struct", [UnkeyedOrder(), PlainOrder(), PlainOrder(id=[])])
+    @pytest.mark.parametrize("populated", [False, True])
+    def test_invalid_identity_is_rejected_without_mutation(self, method, struct, populated):
+        stage = _StageManager()
+        if populated:
+            stage.stage_add(OrderStruct(symbol="AAPL"))
+        before = stage.stage_lookup()
+        events = []
+        stage.add_listener(events.extend)
+
+        with pytest.raises(ValueError, match="id"):
+            getattr(stage, method)(struct)
+
+        assert stage.stage_lookup() == before
+        assert events == []
+
     def test_stage_add_none_none_creates_empty(self):
         stage = _StageManager()
         result = stage.stage_add(None, None)
@@ -160,6 +187,25 @@ class TestStageManager:
         s = OrderStruct(symbol="AAPL", quantity=100, price=150.0)
         with pytest.raises(KeyError):
             stage.stage_add(s, ["nonexistent"])
+
+    @pytest.mark.parametrize("missing_first", [False, True])
+    def test_stage_add_unknown_id_preserves_all_areas_and_events(self, missing_first):
+        stage = _StageManager()
+        existing = OrderStruct(symbol="AAPL")
+        first_id = stage.stage_add(existing)[0]
+        second_id = stage.stage_add()[0]
+        before = stage.stage_lookup()
+        events = []
+        stage.add_listener(events.extend)
+        staging_ids = [first_id, second_id, "missing"]
+        if missing_first:
+            staging_ids.reverse()
+
+        with pytest.raises(KeyError):
+            stage.stage_add(OrderStruct(symbol="MSFT"), staging_ids)
+
+        assert stage.stage_lookup() == before
+        assert events == []
 
     def test_stage_remove_none_none_clears_latest(self):
         stage = _StageManager()

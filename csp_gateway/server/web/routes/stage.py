@@ -52,6 +52,8 @@ def add_stage_routes(
     ):
         """Add a struct to staging area(s).
 
+        Items without a non-null, hashable id are rejected with HTTP 400.
+
         - Empty body, no id: create a new empty staging
         - Body with struct, no id: add to latest staging or create new
         - Body with struct, id=<ids>: add to specified staging(s)
