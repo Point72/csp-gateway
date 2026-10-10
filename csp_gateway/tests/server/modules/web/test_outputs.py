@@ -226,19 +226,18 @@ class TestSpadayViewer:
                         """
                         const originalFetch = window.fetch;
                         window.fetch = async (...args) => {
-                            const response = await originalFetch(...args);
                             const url = args[0] instanceof Request ? args[0].url : args[0];
                             if (new URL(url, location.href).pathname.endsWith('/tree.json')) {
                                 await new Promise(resolve => { window.releaseBootstrap = resolve; });
                             }
-                            return response;
+                            return originalFetch(...args);
                         };
                         """
                     )
 
                 def wait_for_bootstrap():
                     if hold_bootstrap:
-                        page.wait_for_function("typeof window.releaseBootstrap === 'function'")
+                        page.wait_for_function("typeof window.releaseBootstrap === 'function'", timeout=12000)
                         assert page.evaluate("window.gatewayReady") is False
                         assert page.locator("#gateway-log-panel pre").count() == 0
                         page.evaluate("window.releaseBootstrap()")
