@@ -187,10 +187,11 @@ class TestSpadayUiCustomization:
         )
         try:
             html = client.get("/").text
-            assert '<link rel="stylesheet" href="https://cdn.example.com/extra.css" />' in html
-            # spaday loads extra scripts as ES modules from its bootstrap module. Assert the URL is
-            # handed to an import rather than the exact statement, which is spaday's to change.
-            assert 'import("https://cdn.example.com/extra.js")' in html or '"https://cdn.example.com/extra.js"' in html
+            assert 'href="https://cdn.example.com/extra.css"' in html
+            assert '"/spaday-custom-scripts.js"' in html
+            loader = client.get("/spaday-custom-scripts.js")
+            assert loader.status_code == 200
+            assert '"https://cdn.example.com/extra.js"' in loader.text
         finally:
             gateway.stop()
 
@@ -202,7 +203,7 @@ class TestSpadayUiCustomization:
         try:
             html = client.get("/").text
             assert 'href="/custom/b.css"' in html
-            assert '"/custom/a.js"' in html
+            assert '"/custom/a.js"' in client.get("/spaday-custom-scripts.js").text
             assert client.get("/custom/a.js").status_code == 200
         finally:
             gateway.stop()
@@ -215,6 +216,7 @@ class TestSpadayUiCustomization:
         try:
             html = client.get("/").text
             assert 'href="/watchtower/custom/b.css"' in html
-            assert '"/watchtower/custom/a.js"' in html
+            assert '"/watchtower/spaday-custom-scripts.js"' in html
+            assert '"/watchtower/custom/a.js"' in client.get("/spaday-custom-scripts.js").text
         finally:
             gateway.stop()

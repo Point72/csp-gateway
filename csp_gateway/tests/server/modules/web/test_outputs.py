@@ -207,7 +207,8 @@ class TestSpadayViewer:
         assert '"logs"' in tree
         assert '"href": "/outputs"' not in tree
 
-    def test_shared_log_url_restores_the_file(self, client, outputs_dir, tmp_path):
+    @pytest.mark.parametrize("bootstrap_delay_ms", [0, 6000])
+    def test_shared_log_url_restores_the_file(self, client, outputs_dir, tmp_path, bootstrap_delay_ms):
         playwright_api = pytest.importorskip("playwright.sync_api")
         with playwright_api.sync_playwright() as playwright:
             try:
@@ -219,6 +220,21 @@ class TestSpadayViewer:
             try:
                 page = browser.new_page(viewport={"width": 1280, "height": 720})
                 page.set_default_timeout(5000)
+                page.add_init_script("window.gatewayReady = false; document.addEventListener('spaday:ready', () => { window.gatewayReady = true; });")
+                if bootstrap_delay_ms:
+                    page.add_init_script(
+                        f"""
+                        const originalFetch = window.fetch;
+                        window.fetch = async (...args) => {{
+                            const response = await originalFetch(...args);
+                            const url = args[0] instanceof Request ? args[0].url : args[0];
+                            if (new URL(url, location.href).pathname.endsWith('/tree.json')) {{
+                                await new Promise(resolve => setTimeout(resolve, {bootstrap_delay_ms}));
+                            }}
+                            return response;
+                        }};
+                        """
+                    )
                 held_reads = []
                 held_field = None
 
@@ -238,6 +254,7 @@ class TestSpadayViewer:
                 page.route("http://gateway.test/**", serve)
                 base = f"http://gateway.test{client.app.root_path}"
                 page.goto(f"{base}/?tab=logs&file=run/nested/config.yaml")
+                page.wait_for_function("window.gatewayReady", timeout=12000)
                 playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
                 assert page.locator("#gateway-main-layout").evaluate("layout => layout.save().tabs[layout.save().selected]") == "logs"
                 assert page.locator("#gateway-log-tree").evaluate("tree => tree.selected_paths") == ["run/nested/config.yaml"]
@@ -249,9 +266,11 @@ class TestSpadayViewer:
                 page.go_forward()
                 playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
                 page.reload()
+                page.wait_for_function("window.gatewayReady", timeout=12000)
                 playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
                 for control, held_field in (("Older", "end"), ("Newer", "start")):
                     page.goto(f"{base}/?tab=logs&file=run/app.log")
+                    page.wait_for_function("window.gatewayReady", timeout=12000)
                     playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
                     page.get_by_role("button", name=control, exact=True).click()
                     page.locator("#gateway-log-panel").evaluate(
@@ -267,6 +286,7 @@ class TestSpadayViewer:
                     playwright_api.expect(page.locator("#gateway-log-panel strong")).to_have_text("run/nested/config.yaml")
                 held_field = None
                 page.goto(f"{base}/?tab=channels-graph")
+                page.wait_for_function("window.gatewayReady", timeout=12000)
                 page.wait_for_function(
                     "document.querySelector('#gateway-main-layout')?.save().tabs[document.querySelector('#gateway-main-layout').save().selected] === 'channels-graph'"
                 )
@@ -281,6 +301,7 @@ class TestSpadayViewer:
                 image_path.write_bytes(b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jWZkAAAAASUVORK5CYII="))
                 try:
                     page.goto(f"{base}/?tab=logs&file=plot%20%23%3F.png")
+                    page.wait_for_function("window.gatewayReady", timeout=12000)
                     preview = page.locator("#gateway-log-panel img")
                     playwright_api.expect(preview).to_be_visible()
                     page.wait_for_function("document.querySelector('#gateway-log-panel img').naturalWidth === 1")

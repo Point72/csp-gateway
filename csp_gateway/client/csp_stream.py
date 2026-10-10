@@ -219,7 +219,7 @@ class _GatewayStreamAdapterManagerImpl(AdapterManagerImpl):
     async def _connect_and_stream(self):
         """Async method to connect and stream data with retry logic."""
         try:
-            from aiohttp import ClientConnectorError, ClientSession
+            from aiohttp import ClientConnectorError
         except ImportError:
             raise ImportError("aiohttp is required for websocket streaming. Install with: pip install aiohttp")
 
@@ -231,7 +231,7 @@ class _GatewayStreamAdapterManagerImpl(AdapterManagerImpl):
 
         while self._running:
             try:
-                async with ClientSession() as session, session.ws_connect(route) as ws:
+                async with self._config._streaming_session() as session, session.ws_connect(route) as ws:
                     self._ws = ws
                     self._connected.set()
                     log.info(f"Connected to websocket at {route}")

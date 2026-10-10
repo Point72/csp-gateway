@@ -67,7 +67,9 @@ jobs:
         run: make build
 
       - name: Test
-        run: make coverage
+        run: |
+          python -m playwright install --with-deps chromium
+          make coverage
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload test results
@@ -147,7 +149,9 @@ jobs:
         run: uv pip install `ls csp_gateway-*.whl`[develop] --target .
 
       - name: Test
-        run: make coverage
+        run: |
+          python -m playwright install --with-deps chromium
+          make coverage
 
       - name: Upload test results (Python)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
