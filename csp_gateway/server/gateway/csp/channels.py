@@ -1305,6 +1305,8 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
     ) -> list[str]:
         """Add a struct to staging area(s) for a channel.
 
+        Items must have a non-null, hashable id; otherwise ValueError is raised before any change.
+
         See docs/wiki/Staging.md for full semantics.
         """
         if field not in self._stages:
@@ -1318,6 +1320,8 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         staging_ids: list[str] | None = None,
     ) -> list[str]:
         """Remove struct(s) from staging area(s).
+
+        Items must have a non-null, hashable id; otherwise ValueError is raised before any change.
 
         See docs/wiki/Staging.md for full semantics.
         """

@@ -204,6 +204,18 @@ class _StageManager:
         with self._lock:
             return list(self._areas.keys())
 
+    @staticmethod
+    def _validate_identity(struct: object | None) -> None:
+        if struct is None:
+            return
+        identity = getattr(struct, "id", None)
+        if identity is None:
+            raise ValueError("Staged items must have a non-null id")
+        try:
+            hash(identity)
+        except TypeError:
+            raise ValueError("Staged item id must be hashable") from None
+
     def stage_add(
         self,
         struct: GatewayStruct | None = None,
@@ -211,9 +223,12 @@ class _StageManager:
     ) -> list[str]:
         """Add a struct to staging area(s), reporting what changed.
 
+        Items must have a non-null, hashable id. Invalid items raise ValueError without changing staging.
+
         Returns the list of staging IDs affected.
         """
         with self._lock:
+            self._validate_identity(struct)
             before = self._snapshot()
             affected = self._stage_add(struct, staging_ids)
             events = self._diff(before)
@@ -227,9 +242,12 @@ class _StageManager:
     ) -> list[str]:
         """Remove struct(s) from staging area(s), reporting what changed.
 
+        Items must have a non-null, hashable id. Invalid items raise ValueError without changing staging.
+
         Returns the list of staging IDs affected.
         """
         with self._lock:
+            self._validate_identity(struct)
             before = self._snapshot()
             affected = self._stage_remove(struct, staging_ids)
             events = self._diff(before)
@@ -305,10 +323,11 @@ class _StageManager:
                     return [area.id]
 
             # struct, [staging_id, ...]: add to specified stagings
-            affected = []
             for sid in staging_ids:
                 if sid not in self._areas:
                     raise KeyError(f"Staging ID not found: {sid}")
+            affected = []
+            for sid in staging_ids:
                 self._areas[sid].add(struct)
                 affected.append(sid)
             return affected

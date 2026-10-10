@@ -4,12 +4,14 @@ import signal
 import sys
 import time
 from datetime import timedelta
+from threading import Event, Thread
 from unittest.mock import patch
 
 import csp.impl.error_handling
 import httpx2
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError, ValidationInfo, model_validator
 
 from csp_gateway import Gateway, GatewaySettings, MountControls, MountRestRoutes
 from csp_gateway.server.demo import ExampleGatewayChannels, ExampleModule
@@ -17,6 +19,76 @@ from csp_gateway.testing import CspDieModule, LongStartModule
 from csp_gateway.tests.server.gateway.test_gateway import MyBuildFailureModule
 
 csp.impl.error_handling.set_print_full_exception_stack(True)
+
+
+def test_concurrent_graph_assignment_preserves_thread_handle():
+    assignment_started = Event()
+    release_assignment = Event()
+    output_stored = Event()
+    thread_handle = object()
+    errors = []
+
+    class ConcurrentGateway(Gateway):
+        @model_validator(mode="before")
+        @classmethod
+        def pause_graph_assignment(cls, values, info: ValidationInfo):
+            if info.field_name == "channels_model":
+                assignment_started.set()
+                if not release_assignment.wait(5):
+                    raise ValueError("Graph assignment was not released")
+            return values
+
+    gateway = ConcurrentGateway()
+
+    def assign_graph():
+        try:
+            gateway.channels_model = ExampleGatewayChannels
+        except (TypeError, ValueError) as error:
+            errors.append(error)
+
+    def assign_output():
+        try:
+            gateway.output = thread_handle
+            output_stored.set()
+        except (TypeError, ValueError) as error:
+            errors.append(error)
+
+    graph_thread = Thread(target=assign_graph)
+    output_thread = Thread(target=assign_output)
+    graph_thread.start()
+    try:
+        assert assignment_started.wait(5)
+        output_thread.start()
+        output_stored.wait(0.2)
+    finally:
+        release_assignment.set()
+        graph_thread.join(5)
+        if output_thread.ident is not None:
+            output_thread.join(5)
+
+    assert not graph_thread.is_alive()
+    assert not output_thread.is_alive()
+    assert errors == []
+    assert gateway.output is thread_handle
+    assert gateway.channels_model is ExampleGatewayChannels
+
+
+def test_gateway_assignment_validation_releases_lock_on_error():
+    gateway = Gateway()
+    with pytest.raises(ValidationError):
+        gateway.channels_model = str
+
+    assigned = Event()
+
+    def assign_output():
+        gateway.output = "retained"
+        assigned.set()
+
+    output_thread = Thread(target=assign_output, daemon=True)
+    output_thread.start()
+    output_thread.join(5)
+    assert assigned.is_set()
+    assert gateway.output == "retained"
 
 
 def test_long_startup_die_cleanly(free_port):

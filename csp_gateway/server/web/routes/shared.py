@@ -4,6 +4,8 @@ from typing import Any, get_args, get_origin
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from csp_gateway.utils.struct.base import type_adapter_for
+
 __all__ = (
     "get_fully_qualified_type_name",
     "get_next_tick",
@@ -58,7 +60,7 @@ def prepare_response(
         #  Else return an empty json
         res = []
 
-    json_res_bytes = b"[" + b",".join(r.type_adapter().dump_json(r) for r in res) + b"]"
+    json_res_bytes = b"[" + b",".join(type_adapter_for(r).dump_json(r) for r in res) + b"]"
     json_res = json_res_bytes.decode()
     # Prepare and return response
     if wrap_in_response:
