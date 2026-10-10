@@ -298,7 +298,13 @@ class MountOutputsFolder(GatewayModule):
             toolbar = (
                 element("div")
                 .style(display="flex", gap="0.5rem", align_items="center", flex_wrap="wrap", padding="0.5rem")
-                .child(element("strong").bind("textContent", "logs.body.path").style(min_width="0", overflow_wrap="anywhere"))
+                .child(
+                    element("a", target="_blank", rel="noopener noreferrer")
+                    .bind("textContent", "logs.body.path")
+                    .compute("href", concat(app.url("/"), field("logs.body.url")))
+                    .compute("hidden", not_(field("logs.body.url")))
+                    .style(font_weight="bold", min_width="0", overflow_wrap="anywhere")
+                )
                 # The HTML log page has always shown the serving process's pid beside its heading;
                 # keep it here so the tab identifies the process whose logs these are.
                 .child(element("span").style(color="var(--spa-muted)").text(f"pid[{os.getpid()}]"))

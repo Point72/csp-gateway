@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from starlette.requests import Request
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, Response
 from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocket
 
@@ -46,7 +46,6 @@ from spaday.actions import (
     NamedJs,
     Sequence,
     SetField,
-    SetStorage,
     Toggle,
     ToggleField,
     all_,
@@ -282,6 +281,7 @@ class GatewayUI:
         self._tab_actions: dict[str, Any] = {}
         self._store_seeds: dict[str, Any] = {"main_tab": ""}
         self._url_fields: dict[str, str] = {"main_tab": "tab"}
+        self._store_persistence: dict[str, str] = {}
         # Tables the workspace can show, recorded by `perspective_panel` so later contributions
         # (the channels graph) can drive it without knowing how it was configured.
         self._workspace_tables: list[str] = []
@@ -383,6 +383,10 @@ class GatewayUI:
         """Map signal-store fields to shareable URL query parameters."""
         self._url_fields.update(fields)
 
+    def persist_store(self, **keys: str) -> None:
+        """Bind store fields to browser localStorage keys, loading them before the page mounts."""
+        self._store_persistence.update(keys)
+
     def package(self, package: Any) -> None:
         """Load an extra spaday component package into the page.
 
@@ -479,6 +483,8 @@ class GatewayUI:
         schemas: dict[str, dict[str, str]] | None = None,
         default_layout: dict[str, Any] | None = None,
         table_options: dict[str, dict[str, Any]] | None = None,
+        channels: dict[str, dict[str, Any]] | None = None,
+        master_theme: str | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
 
@@ -488,7 +494,9 @@ class GatewayUI:
         ``tables``. ``schemas`` (table name -> column name -> type) lets the generated layout apply
         per-table defaults (timestamp sort, hidden id column). ``table_options`` carries each table's
         ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
-        worker rather than reading it off the websocket. Add it to `Region.MAIN`.
+        worker rather than reading it off the websocket. ``channels`` supplies configurations for
+        channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
+        ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
         """
         tables = list(tables or [])
         self._workspace_tables = list(tables)
@@ -522,13 +530,26 @@ class GatewayUI:
             layout_expr = cond(eq(field(_GRAPH_FOCUS), name), self._default_layout([name], schemas=schemas), layout_expr)
         self._store_seeds.setdefault(_GRAPH_FOCUS, "")
         self._store_seeds.setdefault(_PERSPECTIVE_READY, False)
+        self._store_seeds.setdefault("saved_layout", None)
+        self.persist_store(saved_layout=_CUSTOM_LAYOUT_STORAGE_KEY)
 
         return (
             PerspectivePanel()
             .prop("id", _WORKSPACE_ID)
             .style(height="100%", display="block", overflow="hidden")
             .compute("theme", cond(field("dark"), "dark", "light"))
-            .compute("config", obj({"ws_url": self.url(route), "tables": table_specs, "layout": layout_expr}))
+            .compute(
+                "config",
+                obj(
+                    {
+                        "ws_url": self.url(route),
+                        "tables": table_specs,
+                        "layout": layout_expr,
+                        "channels": channels or {},
+                        "master_theme": master_theme,
+                    }
+                ),
+            )
             # Applying a config can fail (a saved layout that no longer matches the tables); the
             # panel reports it and otherwise nothing would. The detail is whatever was thrown --
             # an Error for JS failures, a bare string for the ones raised inside Perspective.
@@ -542,6 +563,22 @@ class GatewayUI:
                             "message": concat(
                                 "Perspective error: ",
                                 cond(event_prop("detail.message"), event_prop("detail.message"), event_prop("detail")),
+                            ),
+                            "tone": "danger",
+                        }
+                    ),
+                ),
+            )
+            .on(
+                "perspective-copy-error",
+                Invoke(
+                    by_id(_TOAST_ID),
+                    "notify",
+                    obj(
+                        {
+                            "message": concat(
+                                event_prop("detail.message"),
+                                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
                             ),
                             "tone": "danger",
                         }
@@ -587,8 +624,7 @@ class GatewayUI:
         """A header button that saves the current Perspective workspace in the browser.
 
         `saveClean` strips the transient fields (theme, column size overrides) before the layout is
-        persisted to localStorage; writing `result="custom_layout"` updates the store field the
-        workspace's layout expression reads, and selecting the custom layout re-renders it.
+        persisted to localStorage. Saving updates the custom layout and selects it.
         """
         return (
             WaButton(appearance="plain", title="Save current layout")
@@ -597,7 +633,7 @@ class GatewayUI:
                 "click",
                 Sequence(
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
-                    SetStorage(_CUSTOM_LAYOUT_STORAGE_KEY, field("custom_layout")),
+                    SetField("saved_layout", field("custom_layout")),
                     SetField(_GRAPH_FOCUS, ""),
                     SetField("view", _CUSTOM_LAYOUT_NAME),
                     SetField("layout_view", _CUSTOM_LAYOUT_NAME),
@@ -892,7 +928,7 @@ class GatewayUI:
             .child("Built with ")
             .child(element("a", href="https://github.com/perspective-dev/perspective", target="_blank").text("Perspective").style(color="inherit"))
             .child(" and ")
-            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("spaday").style(color="inherit"))
+            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("Spaday").style(color="inherit"))
         )
 
         # Compose region contents (built-in chrome merged with module contributions, order-sorted).
@@ -909,7 +945,7 @@ class GatewayUI:
 
         # Header-right built-ins: theme toggle, plus the drawer toggles when their drawers have content.
         settings_button = (
-            WaButton(appearance="plain", title="Settings").text("\u2630").on("click", Toggle(by_id(right_drawer_id), "open"))
+            WaButton(appearance="plain", title="Settings").child(WaIcon(name="bars")).on("click", Toggle(by_id(right_drawer_id), "open"))
             if right_drawer_items
             else None
         )
@@ -1175,16 +1211,59 @@ class GatewayUI:
         root = getattr(self._settings, "ROOT_PATH", "") or ""
         custom_css, custom_scripts = self._custom_assets()
         error_head = """<script>
-    document.addEventListener('spaday:error', event => {
-      if (event.detail.target != null || document.getElementById('gateway-startup-error')) return;
+    (() => {
+    let shellReady = false, workspaceReady = false;
+    const finish = () => {
+      const tab = document.getElementById('gateway-main-layout')?.dataset.activeTab;
+      if (!shellReady || (!workspaceReady && document.querySelector('perspective-panel') && (!tab || tab === 'workspace'))) return;
+      document.getElementById('gateway-startup-loader')?.remove();
+      document.getElementById('gateway-startup-error')?.remove();
+    };
+    const fail = event => {
+      if (event.detail?.target != null || document.getElementById('gateway-startup-error')) return;
+      const loader = document.getElementById('gateway-startup-loader');
       const panel = document.createElement('section');
       panel.id = 'gateway-startup-error'; panel.setAttribute('role', 'alert');
+      if (loader) panel.className = 'gateway-startup';
       const message = document.createElement('p');
       message.textContent = 'The interface could not finish loading. Reload to try again.';
       const reload = document.createElement('a');
       reload.href = ''; reload.textContent = 'Reload page';
       panel.append(message, reload); document.body.append(panel);
+      loader?.remove();
+    };
+    document.addEventListener('spaday:error', fail);
+    document.addEventListener('spaday:ready', event => {
+      if (event.detail.target != null) return;
+      shellReady = true; finish();
     });
+    document.addEventListener('perspective-ready', () => { workspaceReady = true; finish(); }, true);
+    document.addEventListener('perspective-error', event => {
+      if (document.getElementById('gateway-startup-loader')) fail(event);
+    }, true);
+    })();
+    </script>"""
+        loading_image = self.url(getattr(self._settings, "LOADING_IMAGE", None))
+        loader_body = ""
+        if loading_image:
+            loader_body = f"""<style>
+    .gateway-startup {{
+      position: fixed; inset: 0; z-index: 100000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color-scheme: light; background: light-dark(#fff, #242526); color: light-dark(#161616, #fff);
+    }}
+    :root.wa-dark .gateway-startup {{ color-scheme: dark; }}
+    #gateway-startup-loader img {{ width: 100%; height: 100%; object-fit: contain; }}
+    </style>
+    <div id="gateway-startup-loader" class="gateway-startup" role="status" aria-label="Loading {escape(title, quote=True)}">
+      <img src="{escape(loading_image, quote=True)}" alt="">
+    </div>
+    <script>
+    (() => {{
+      let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      try {{ dark = JSON.parse(localStorage.getItem('csp-gateway:dark')) ?? dark; }} catch {{}}
+      document.documentElement.classList.toggle('wa-dark', !!dark);
+    }})();
     </script>"""
 
         elements = tuple(
@@ -1210,6 +1289,8 @@ class GatewayUI:
                 )
                 return Response(source, media_type="text/javascript")
 
+        favicon = self.url(getattr(self._settings, "FAVICON", None))
+        favicon_head = f'<link rel="icon" href="{escape(favicon, quote=True)}">' if favicon else ""
         # Only wire a transports model when a module actually declared live state; otherwise the page is a
         # static tree and no websocket is served.
         wire: Any = None
@@ -1238,10 +1319,10 @@ class GatewayUI:
             # prefers-color-scheme detection), and a manual toggle is persisted per browser and takes
             # precedence on later loads.
             store={"dark": Js('matchMedia("(prefers-color-scheme: dark)").matches'), **self._store_seeds},
-            persist={"dark": "csp-gateway:dark"},
+            persist={"dark": "csp-gateway:dark", **self._store_persistence},
             url=self._url_fields,
             scripts=scripts,
-            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head,
+            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head + favicon_head,
             title=title,
             prefix=root,
             lifecycle=Lifecycle(elements=elements),
@@ -1254,7 +1335,12 @@ class GatewayUI:
 
         def _authed_route(endpoint):
             async def _serve(request: Request):
-                return await endpoint(request)
+                response = await endpoint(request)
+                if loader_body and isinstance(response, HTMLResponse):
+                    # The loader must precede Spaday's module downloads and tree mount.
+                    response.body = response.body.replace(b"<body>", b"<body>" + loader_body.encode(), 1)
+                    response.headers["content-length"] = str(len(response.body))
+                return response
 
             return _serve
 

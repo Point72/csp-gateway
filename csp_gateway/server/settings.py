@@ -89,6 +89,8 @@ class Settings(BaseSettings):
         description="Header logo image, given as an http(s) URL, a data URI, an absolute "
         "URL path, or a local file path (local files are served automatically).",
     )
+    FAVICON: str | None = Field(default=None, description="Browser-tab icon URL for the Spaday UI; root-relative URLs honor ROOT_PATH.")
+    LOADING_IMAGE: str | None = Field(default=None, description="Startup image URL for the Spaday UI; root-relative URLs honor ROOT_PATH.")
     FOOTER_LOGO: str | None = Field(
         default=None,
         description="Footer logo image, given as an http(s) URL, a data URI, an absolute "

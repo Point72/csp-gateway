@@ -81,6 +81,13 @@ class TestOutputsApi:
             ("stdout", b"log line\n", "text/plain", "text", "log line\n"),
             ("notes.md", b"# Notes\n", "text/plain", "text", "# Notes\n"),
             ("job.err", b"error\n", "text/plain", "text", "error\n"),
+            (
+                "hyperlink.log",
+                b"\x1b]8;;https://example.org\x07linked log\x1b]8;;\x07\n",
+                "text/plain",
+                "text",
+                "\x1b]8;;https://example.org\x07linked log\x1b]8;;\x07\n",
+            ),
             ("capture", b"\x00\xff\x01", "application/octet-stream", "download", ""),
         ],
     )
@@ -264,11 +271,18 @@ class TestSpadayViewer:
                 page.goto(f"{base}/?tab=logs&file=run/nested/config.yaml")
                 wait_for_bootstrap()
                 playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
+                file_link = page.get_by_role("link", name="run/nested/config.yaml", exact=True)
+                playwright_api.expect(file_link).to_have_attribute("href", f"{client.app.root_path}/outputs/run/nested/config.yaml")
+                playwright_api.expect(file_link).to_have_attribute("target", "_blank")
+                playwright_api.expect(file_link).to_have_attribute("rel", "noopener noreferrer")
                 assert page.locator("#gateway-main-layout").evaluate("layout => layout.save().tabs[layout.save().selected]") == "logs"
                 assert page.locator("#gateway-log-tree").evaluate("tree => tree.selected_paths") == ["run/nested/config.yaml"]
                 page.locator("#gateway-log-tree").click(position={"x": 150, "y": 145})
                 page.wait_for_function("new URL(location.href).searchParams.get('file') === 'run/app.log'")
                 playwright_api.expect(page.locator("#gateway-log-panel pre")).to_contain_text("line 999")
+                playwright_api.expect(page.get_by_role("link", name="run/app.log", exact=True)).to_have_attribute(
+                    "href", f"{client.app.root_path}/outputs/run/app.log"
+                )
                 page.go_back()
                 playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
                 page.go_forward()
@@ -291,7 +305,7 @@ class TestSpadayViewer:
                         route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
                     page.evaluate("() => new Promise(requestAnimationFrame)")
                     playwright_api.expect(page.locator("#gateway-log-panel pre")).to_have_text("a: 1\n")
-                    playwright_api.expect(page.locator("#gateway-log-panel strong")).to_have_text("run/nested/config.yaml")
+                    playwright_api.expect(file_link).to_be_visible()
                 held_field = None
                 page.goto(f"{base}/?tab=channels-graph")
                 wait_for_bootstrap()
@@ -315,6 +329,9 @@ class TestSpadayViewer:
                     page.wait_for_function("document.querySelector('#gateway-log-panel img').naturalWidth === 1")
                     playwright_api.expect(page.locator("#gateway-log-panel pre")).not_to_be_visible()
                     assert preview.get_attribute("src") == f"{client.app.root_path}/outputs/plot%20%23%3F.png"
+                    playwright_api.expect(page.get_by_role("link", name="plot #?.png", exact=True)).to_have_attribute(
+                        "href", f"{client.app.root_path}/outputs/plot%20%23%3F.png"
+                    )
                     page.screenshot(path=str(tmp_path / "logs-image-desktop.png"))
                     page.set_viewport_size({"width": 390, "height": 844})
                     playwright_api.expect(preview).to_be_visible()
