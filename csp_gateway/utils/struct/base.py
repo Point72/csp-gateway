@@ -1,9 +1,10 @@
+import inspect
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, ClassVar, Literal, Optional, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_serializer, model_serializer, model_validator
-from pydantic_core import core_schema
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationInfo, field_serializer, model_serializer, model_validator
+from pydantic_core import SchemaSerializer, core_schema
 
 from ..id_generator import get_counter
 from .psp import PerspectiveUtilityMixin, model_metadata
@@ -500,11 +501,62 @@ class GatewayStruct(
         the author actually declared is a different thing and is always reported. Identity fields
         also stay absent if neither supplied nor generated; an explicit None is still reported.
         """
-        fields = type(self).model_fields
-        implicit = type(self).__gateway_implicit_fields__ | {
+        return type(self)._maybe_unset_fields() - self.model_fields_set
+
+    @classmethod
+    def _maybe_unset_fields(cls) -> frozenset[str]:
+        """Every field `_implicitly_unset` can report for an instance of ``cls``."""
+        fields = cls.model_fields
+        return cls.__gateway_implicit_fields__ | {
             name for name in ("id", "timestamp") if name in fields and fields[name].default is None and fields[name].default_factory is None
         }
-        return implicit - self.model_fields_set
+
+    @classmethod
+    def _dump_json_list(cls, records: list[Self]) -> bytes | None:
+        """Serialize records that are all exactly ``cls`` as a JSON array, byte-identical to dumping each.
+
+        Each record would otherwise call back into Python through `_drop_implicitly_unset`, and
+        usually `_serialize_timestamp`. Instead, consecutive records that leave the same fields unset
+        go to pydantic-core in one call, with those fields as a native ``exclude``; `_serialize_timestamp`
+        is also dropped for a run whose timestamps are all plain naive datetimes, which pydantic writes
+        the same way. Nested structs keep both. Runs are capped at `_DUMP_CHUNK` records: one native
+        call holds the GIL throughout, and the csp engine thread needs it to tick.
+
+        ``None`` when ``cls`` could serialize differently this way; see `_build_list_serializer`.
+        """
+        serializers = cls._list_serializers()
+        if serializers is None:
+            return None
+        maybe_unset = cls._maybe_unset_fields()
+        has_timestamp = "timestamp" in cls.model_fields
+        pieces = [b"["]
+        start, unset, plain = 0, None, True
+        for i, record in enumerate(records):
+            record_unset = maybe_unset - record.__pydantic_fields_set__
+            if i > start and (record_unset != unset or i - start == _DUMP_CHUNK):
+                pieces += (serializers[plain].to_json(records[start:i], exclude=unset or None)[1:-1], b",")
+                start, plain = i, True
+            unset = record_unset
+            if plain and has_timestamp:
+                timestamp = record.__dict__.get("timestamp")
+                plain = timestamp is None or (type(timestamp) is datetime and timestamp.tzinfo is None)
+        if records:
+            pieces.append(serializers[plain].to_json(records[start:], exclude=unset or None)[1:-1])
+        pieces.append(b"]")
+        # Exact bytes pieces, so CPython copies them into the response without holding the GIL.
+        return b"".join(pieces)
+
+    @classmethod
+    def _list_serializers(cls) -> dict[bool, SchemaSerializer] | None:
+        """The ``list[cls]`` serializers `_dump_json_list` uses, keyed by whether timestamps are plain.
+
+        Built from ``cls``'s core schema, and rebuilt if pydantic rebuilds it.
+        """
+        schema = cls.__pydantic_core_schema__
+        cached = cls.__dict__.get("_gateway_list_serializers")
+        if cached is None or cached[0] is not schema:
+            cached = cls._gateway_list_serializers = (schema, _build_list_serializer(cls, schema))
+        return cached[1]
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema_, handler):
@@ -537,6 +589,133 @@ class GatewayStruct(
     def copy(self, **kwargs: Any) -> "GatewayStruct":
         """A shallow copy, matching csp's ``Struct.copy`` rather than pydantic's deprecated one."""
         return self.model_copy(**kwargs)
+
+
+def _unwrap_copy(schema: dict) -> tuple[dict, dict]:
+    """Copy ``schema`` down through its validator wrappers, which carry no serialization of their own.
+
+    Returns the copied top and the copied first schema that is not such a wrapper. Only that path is
+    copied, so the rest of the schema (field defaults included) is shared, never duplicated.
+    """
+    top = node = dict(schema)
+    while node.get("type", "").startswith("function-") and node.get("serialization") is None:
+        node["schema"] = dict(node["schema"])
+        node = node["schema"]
+    return top, node
+
+
+#: Records per native serializer call in `GatewayStruct._dump_json_list`; bounds how long one call holds the GIL.
+_DUMP_CHUNK = 5_000
+
+#: Serializers that leave a ``None`` alone, so skipping them for an unset field changes nothing.
+_NONE_SAFE_SERIALIZERS = (GatewayStruct._drop_implicitly_unset, GatewayStruct._serialize_timestamp)
+
+
+def _serializers_reached_by_none(schema: dict, definitions: dict) -> list:
+    """The serializer functions a ``None`` value meets on its way through a field's schema."""
+    found = []
+    while True:
+        if "serialization" in schema:
+            found.append(schema["serialization"].get("function"))
+        kind = schema.get("type", "")
+        if kind == "definition-ref":
+            schema = definitions[schema["schema_ref"]]
+        elif kind == "default" or kind.startswith("function-"):
+            schema = schema["schema"]
+        else:
+            # ``nullable`` writes the None itself, and anything else (a model included) stops here.
+            return found
+
+
+def _is_plain_timestamp(field: dict) -> bool:
+    """Whether the ``timestamp`` field is GatewayStruct's own: optional, plain datetime, our serializer."""
+    schema = field.get("schema", {})
+    inner = schema.get("schema", {})
+    return (
+        schema.get("type") == "default"
+        and schema.get("serialization", {}).get("function") is GatewayStruct._serialize_timestamp
+        and inner.get("type") == "nullable"
+        and "serialization" not in inner
+        and inner.get("schema", {}).get("type") == "datetime"
+        and "serialization" not in inner["schema"]
+    )
+
+
+def _build_list_serializer(cls: type[GatewayStruct], schema: dict) -> dict[bool, SchemaSerializer] | None:
+    """Serializers for `GatewayStruct._dump_json_list`, or ``None`` where it could change the output.
+
+    Excluding unset fields natively differs from `_drop_implicitly_unset`'s popping when a serializer
+    would see an unset field's ``None``, when two fields or a computed field share an output key, or
+    when extra fields can share one; and stripping `_drop_implicitly_unset` is only sound when it is
+    the struct's own. A struct with its own ``type_adapter`` may serialize differently altogether.
+    Any shape this does not recognise also yields ``None``.
+    """
+    own_adapter = getattr(cls.type_adapter, "__func__", None) is not GatewayStruct.type_adapter.__func__
+    if cls._implicitly_unset is not GatewayStruct._implicitly_unset or own_adapter:
+        return None
+    root, definitions = (schema["schema"], schema["definitions"]) if schema.get("type") == "definitions" else (schema, None)
+    definitions_by_ref = {d["ref"]: d for d in definitions or ()}
+    root, model = _unwrap_copy(root)
+    if model.get("type") != "model" or model.get("serialization", {}).get("function") is not GatewayStruct._drop_implicitly_unset:
+        return None
+    model["schema"], model_fields = _unwrap_copy(model["schema"])
+    fields = model_fields.get("fields")
+    extra = model_fields.get("extra_behavior") or (model.get("config") or {}).get("extra_fields_behavior")
+    if model_fields.get("type") != "model-fields" or fields is None or extra == "allow":
+        return None
+    by_alias = bool(cls.model_config.get("serialize_by_alias", False))
+    keys = [(field.get("serialization_alias") or name) if by_alias else name for name, field in fields.items()]
+    keys += [
+        (computed.get("alias") or computed["property_name"]) if by_alias else computed["property_name"]
+        for computed in model_fields.get("computed_fields") or ()
+    ]
+    if len(set(keys)) != len(keys):
+        return None
+    for name in cls._maybe_unset_fields():
+        if any(fn not in _NONE_SAFE_SERIALIZERS for fn in _serializers_reached_by_none(fields[name]["schema"], definitions_by_ref)):
+            return None
+
+    del model["serialization"]
+    config = model.get("config")
+
+    def build(list_root: dict) -> SchemaSerializer:
+        list_schema = core_schema.list_schema(list_root)
+        if definitions is not None:
+            list_schema = core_schema.definitions_schema(list_schema, definitions)
+        serializer = SchemaSerializer(list_schema, config)
+        return _BoundSerializer(serializer, _BY_ALIAS_UNSET)
+
+    serializers = {False: build(root)}
+    if "timestamp" in fields and _is_plain_timestamp(fields["timestamp"]) and (config or {}).get("ser_json_temporal", "iso8601") == "iso8601":
+        # A plain naive datetime serializes natively exactly as `_serialize_timestamp` writes it.
+        plain_root, plain_model = _unwrap_copy(root)
+        plain_model["schema"], plain_fields = _unwrap_copy(plain_model["schema"])
+        timestamp = dict(fields["timestamp"])
+        timestamp["schema"] = {k: v for k, v in timestamp["schema"].items() if k != "serialization"}
+        plain_fields["fields"] = {**fields, "timestamp": timestamp}
+        serializers[True] = build(plain_root)
+    else:
+        serializers[True] = serializers[False]
+    return serializers
+
+
+#: What ``TypeAdapter.dump_json`` passes for ``by_alias`` when the caller does not: ``None`` lets each
+#: model, nested ones included, apply its own ``serialize_by_alias``. pydantic-core before 2.33 takes
+#: only a bool there, and defaults it to True where ``TypeAdapter`` passed False.
+_BY_ALIAS_UNSET = inspect.signature(TypeAdapter.dump_json).parameters["by_alias"].default
+
+
+class _BoundSerializer:
+    """A `SchemaSerializer` with ``by_alias`` fixed, so every call matches a per-record ``TypeAdapter``."""
+
+    __slots__ = ("_by_alias", "_serializer")
+
+    def __init__(self, serializer: SchemaSerializer, by_alias: bool | None) -> None:
+        self._serializer = serializer
+        self._by_alias = by_alias
+
+    def to_json(self, records: list, exclude: set[str] | None) -> bytes:
+        return self._serializer.to_json(records, by_alias=self._by_alias, exclude={"__all__": exclude} if exclude else None)
 
 
 def is_gateway_struct_like(cls) -> bool:

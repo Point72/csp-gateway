@@ -443,11 +443,14 @@ class DuckDBState:
             # Bulk load the buffered records
             self.load_data()
 
-            # Run query
-            res = self._con.sql(query_str).fetchall()
+            # The engine thread's buffered inserts run load_data on the same cursor, so the SELECT and
+            # the object store lookup it feeds must exclude them.
+            with self._db_lock:
+                # Run query
+                res = self._con.sql(query_str).fetchall()
 
-            # Fetch the python objects from the object store using returned ids
-            obj_res = [self._obj_store[row[-1]] for row in res]
+                # Fetch the python objects from the object store using returned ids
+                obj_res = [self._obj_store[row[-1]] for row in res]
 
         return obj_res
 

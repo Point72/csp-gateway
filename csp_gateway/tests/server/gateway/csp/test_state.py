@@ -1,3 +1,4 @@
+import threading
 import time
 import typing
 from datetime import datetime, timedelta
@@ -594,3 +595,55 @@ def test_duckdb_schema_includes_pep604_optional_fields():
     assert schema.get("a") == "BIGINT"  # typing.Optional[int]
     assert schema.get("b") == "BIGINT"  # int | None
     assert schema.get("c") == "BIGINT"
+
+
+def test_duckdb_query_concurrent_with_buffered_inserts():
+    # REST queries now run in a threadpool while the engine thread keeps inserting; an insert that
+    # crosses the buffer threshold loads into DuckDB on the cursor a query is reading from.
+    enable_duckdb_state()
+    state_module.modify_buffer_threshold(50)
+    try:
+        s = State[CspStruct](keyby=("a",))
+        impl = s._state_impl
+        errors = []
+        overlapping_queries = 0
+        # The writer parks inside its first buffered load until a query has started, so the two contend
+        # on the shared cursor no matter how the threads are scheduled.
+        writer_loading = threading.Event()
+        query_started = threading.Event()
+        writer_done = threading.Event()
+        load_data = impl.load_data
+
+        def parked_load_data():
+            if threading.current_thread() is writer and not writer_loading.is_set():
+                writer_loading.set()
+                assert query_started.wait(timeout=10), "no query started while the writer was loading"
+            load_data()
+
+        def insert_many():
+            try:
+                for i in range(5000):
+                    s.insert(CspStruct(a=i, b=f"v{i}"))
+            except Exception as err:  # noqa: BLE001
+                errors.append(err)
+            finally:
+                writer_done.set()
+
+        impl.load_data = parked_load_data
+        writer = threading.Thread(target=insert_many)
+        writer.start()
+        assert writer_loading.wait(timeout=10), "writer never reached a buffered load"
+        sizes = []
+        while not writer_done.is_set():
+            query_started.set()
+            # Query the implementation directly: the State wrapper turns any error into an empty list.
+            sizes.append(len(impl.query()))
+            overlapping_queries += not writer_done.is_set()
+        writer.join(timeout=30)
+        assert not writer.is_alive()
+        assert not errors
+        assert overlapping_queries > 0, "no query ran while the writer was inserting"
+        assert sizes == sorted(sizes)
+        assert len(impl.query()) == 5000
+    finally:
+        state_module.restore_buffer_threshold()
