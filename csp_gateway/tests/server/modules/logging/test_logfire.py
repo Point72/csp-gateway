@@ -113,6 +113,21 @@ class TestConfigureLogfireEarly:
         result = configure_logfire_early(send_to_logfire=False)
         assert result is True
 
+    @pytest.mark.skipif(logfire is None, reason="logfire not installed")
+    def test_configured_meter_supports_fastapi_histogram_boundaries(self):
+        from opentelemetry import metrics
+
+        from csp_gateway.server.modules.logging.logfire import configure_logfire_early
+
+        assert configure_logfire_early(send_to_logfire=False) is True
+        meter = metrics.get_meter_provider().get_meter("fastapi")
+        histogram = meter.create_histogram(
+            "http.server.request.duration",
+            unit="s",
+            explicit_bucket_boundaries_advisory=(0.1, 0.5, 1.0),
+        )
+        histogram.record(0.25)
+
     @pytest.mark.skipif(
         logfire is None,
         reason="logfire not installed",

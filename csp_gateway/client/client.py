@@ -279,6 +279,31 @@ class GatewayClientConfig(BaseModel):
     def __hash__(self):
         return hash(self.model_dump_json())
 
+    def _streaming_session(self):
+        import ipaddress
+        from urllib.parse import urlsplit
+
+        from aiohttp import ClientSession, TraceConfig
+
+        if not self.bearer_token:
+            return ClientSession()
+        endpoint = urlsplit(_host(self))
+        if endpoint.scheme != "https":
+            host = endpoint.hostname or ""
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = host == "localhost"
+            if not loopback:
+                raise ValueError("Bearer WebSocket streaming requires HTTPS for non-loopback hosts")
+        trace = TraceConfig()
+
+        async def reject_redirect(session, context, parameters):
+            raise RuntimeError("Credentialed WebSocket redirects are not followed")
+
+        trace.on_request_redirect.append(reject_redirect)
+        return ClientSession(headers={"Authorization": f"Bearer {self.bearer_token}"}, trace_configs=[trace])
+
 
 class ResponseWrapper(BaseModel):
     json_data: Any
@@ -454,6 +479,7 @@ class BaseGatewayClient(BaseModel):
             headers = self.http_args.get("headers", {}).copy()
             headers["Authorization"] = f"Bearer {self.config.bearer_token}"
             self.http_args["headers"] = headers
+            self.http_args["follow_redirects"] = False
 
         if self._event_loop is None:
             self._event_loop = _get_or_new_event_loop()
@@ -484,11 +510,13 @@ class BaseGatewayClient(BaseModel):
             # grab openapi spec
             openapi_url = f"{_host(self.config)}/openapi.json"
             openapi_params = {"token": self.config.api_key} if self.config.api_key else None
+            response = GET(openapi_url, params=openapi_params, **self.http_args)
+            if self.config.bearer_token and 300 <= response.status_code < 400:
+                raise ServerUnknownException(
+                    f"Schema request returned HTTP {response.status_code}; credentialed redirects are not followed. Configure the final gateway endpoint."
+                )
             self._openapi_spec: dict[Any, Any] = replace_refs(
-                cast(
-                    dict[Any, Any],
-                    GET(openapi_url, params=openapi_params, **self.http_args),
-                ).json(),
+                cast(dict[Any, Any], response.json()),
             )
 
             # collect mounted routes
@@ -840,9 +868,7 @@ class BaseGatewayClient(BaseModel):
 
     def _aiohttp_session(self) -> "ClientSession":
         try:
-            from aiohttp import ClientSession
-
-            return ClientSession()
+            return self.config._streaming_session()
         except ImportError:
             log.exception("Must have aiohttp installed to use async WebSocket streaming")
             raise

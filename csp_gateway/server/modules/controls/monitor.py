@@ -88,5 +88,5 @@ class MountProcessMonitor(GatewayModule):
                 .child(Each(element("table").child(element("tbody").child(*rows)), field="monitor.body", key="id"))
             )
 
-        app.add_tab("monitor", "Process", panel)
-        app.add(Region.DRAWER_RIGHT, app.tab_button("Process", "monitor", action=refresh))
+        app.add_tab("monitor", "Process", panel, on_open=refresh)
+        app.add(Region.DRAWER_RIGHT, app.tab_button("Process", "monitor"))

@@ -32,6 +32,9 @@ channels that have staging enabled.
 `struct` and `staging_ids` combine to select what is affected. The distinction between `None` (unset)
 and `[]` (empty list) is meaningful for `staging_ids`.
 
+Each struct passed to `stage_add` or `stage_remove` must have a non-null, hashable `id`.
+A missing, null, or unhashable `id` raises `ValueError` without changing staging contents or emitting events.
+
 ### `stage_add(field, struct=None, staging_ids=None)`
 
 | `struct` | `staging_ids`  | Effect                                                                                                         |
@@ -92,6 +95,8 @@ it empty (`?id=`) is the empty-list case.
 
 A validator rejecting a staged struct surfaces as a `422`; see
 [Develop](Develop#Custom-Struct-Validators).
+
+An item with a missing, null, or unhashable `id` returns `400` without changing staging.
 
 ## Observing staging from the graph
 

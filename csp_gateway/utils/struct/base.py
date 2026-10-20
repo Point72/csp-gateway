@@ -1,10 +1,10 @@
+import inspect
 from collections.abc import Callable
-from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Annotated, Any, ClassVar, Literal, Optional, TypeVar
+from typing import Annotated, Any, ClassVar, Literal, Optional, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_serializer, model_serializer, model_validator
-from pydantic_core import core_schema
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationInfo, field_serializer, model_serializer, model_validator
+from pydantic_core import SchemaSerializer, core_schema
 
 from ..id_generator import get_counter
 from .psp import PerspectiveUtilityMixin, model_metadata
@@ -17,6 +17,8 @@ ValidatorFn = Callable[[Any], Any]
 #: Accepted ``mode`` arguments; "pre"/"post" are aliases for "before"/"after".
 ValidatorMode = Literal["before", "pre", "after", "post"]
 
+_TYPE_ADAPTERS: dict = {}
+
 __all__ = (
     "GatewayLookupMixin",
     "GatewayPydanticMixin",
@@ -27,6 +29,7 @@ __all__ = (
     "ValidatorMode",
     "global_lookup",
     "is_gateway_struct_like",
+    "type_adapter_for",
 )
 
 T = TypeVar("T")
@@ -41,9 +44,8 @@ _class_registry: dict[tuple, Any] = {}
 # to know which classes in which MRO were affected.
 _validator_registry_version = 0
 
-# Set for exactly one nested validation while ``__init__`` delegates to pydantic, letting the wrap
-# validator tell direct construction from ingress validation. See ``GatewayLookupMixin.__init__``.
-_constructing: ContextVar[bool] = ContextVar("csp_gateway_struct_constructing", default=False)
+_CONSTRUCTION = "csp_gateway_construction"
+_FIELD_VALUES = "csp_gateway_field_values"
 
 # Core-schema metadata key marking a schema this class has already wrapped.
 _WRAPPED_MARKER = "csp_gateway_validated"
@@ -53,11 +55,6 @@ _PRESERVE_TZ = "csp_gateway_preserve_tz"
 
 # FastAPI collects component schemas under #/components/schemas.
 _REF_TEMPLATE = "#/components/schemas/{model}"
-
-# The in-flight (force_new_id, force_new_timestamp) request. ``BaseModel.__init__`` re-enters the
-# validator without forwarding pydantic's ``context``, so a struct's fields would otherwise never see
-# the flags the caller passed to ``model_validate`` and nested ids would survive a scrub.
-_force_identity: ContextVar[tuple[bool, bool] | None] = ContextVar("csp_gateway_force_identity", default=None)
 
 
 def global_lookup(id: IdType, cls: type[T] | None = None) -> T | None:
@@ -89,28 +86,13 @@ class GatewayLookupMixin:
         cls._include_in_lookup = True
 
     def __init__(self, **kwargs: Any) -> None:
-        # Registered validators are an ingress concern -- they run on data entering the gateway (REST,
-        # Kafka, replay), not when the graph builds a struct itself. csp.Struct got that for free by
-        # not validating at all on construction; a pydantic model validates here, so flag the nested
-        # validation as construction and let the wrap validator skip the registry for it. Without this
-        # an "after" validator that returns a newly built struct would recurse forever.
-        token = _constructing.set(True)
-        try:
-            super().__init__(**kwargs)
-        finally:
-            _constructing.reset(token)
+        self.__pydantic_validator__.validate_python(kwargs, self_instance=self, context={_CONSTRUCTION: True})
 
     @model_validator(mode="before")
     @classmethod
-    def _mint_identity(cls, data: Any) -> Any:
-        """Fill in a fresh id/timestamp for any the caller left out.
-
-        Done here rather than in ``__init__`` because overriding ``__init__`` on a pydantic model makes
-        ``super().__init__()`` re-enter the model validator, running every registered validator twice.
-        Minting into the input also lands both fields in ``model_fields_set``, so ``to_dict`` still
-        reports them under ``exclude_unset``.
-        """
-        if not isinstance(data, dict):
+    def _mint_identity(cls, data: Any, info: ValidationInfo) -> Any:
+        """Fill in a fresh id/timestamp for any the caller left out."""
+        if not isinstance(data, dict) or (isinstance(info.context, dict) and info.context.get(_FIELD_VALUES, False)):
             return data
         fields = cls.model_fields
         missing = {}
@@ -127,7 +109,7 @@ class GatewayLookupMixin:
 
     def model_post_init(self, context: Any, /) -> None:
         super().model_post_init(context)
-        if getattr(type(self), "_include_in_lookup", True):
+        if not (isinstance(context, dict) and context.get(_FIELD_VALUES, False)) and getattr(type(self), "_include_in_lookup", True):
             id = getattr(self, "id", None)
             if id is not None:
                 _global_registry[id] = self
@@ -325,17 +307,14 @@ class GatewayPydanticMixin:
     @classmethod
     def _scrub_identity(cls, val, info: ValidationInfo):
         """Drop a caller-supplied id/timestamp when the validation context asks for fresh ones."""
-        if isinstance(info.context, dict):
-            new_id = bool(info.context.get("force_new_id", False))
-            new_timestamp = bool(info.context.get("force_new_timestamp", False))
-        else:
-            inherited = _force_identity.get()
-            if inherited is None:
-                return val
-            new_id, new_timestamp = inherited
+        if not isinstance(info.context, dict):
+            return val
+        new_id = bool(info.context.get("force_new_id", False))
+        new_timestamp = bool(info.context.get("force_new_timestamp", False))
         if not (new_id or new_timestamp):
             return val
         if isinstance(val, dict):
+            val = val.copy()
             if new_id:
                 val.pop("id", None)
             if new_timestamp:
@@ -349,34 +328,20 @@ class GatewayPydanticMixin:
                 fields.pop("id", None)
             if new_timestamp:
                 fields.pop("timestamp", None)
-            return type(val)(**fields)
+            return type(val).__pydantic_validator__.validate_python(fields, context={**info.context, _CONSTRUCTION: True})
         return val
 
     @classmethod
     def _validate_gateway_struct(cls, val, handler, info: ValidationInfo):
-        if _constructing.get():
-            # Re-entered from __init__, so this is construction rather than ingress. Clear the flag for
-            # the nested validation: fields of the struct being built are themselves ingress input.
-            token = _constructing.set(False)
-            try:
-                return handler(val)
-            finally:
-                _constructing.reset(token)
+        if isinstance(info.context, dict) and info.context.pop(_CONSTRUCTION, False):
+            return handler(val)
         val = cls._scrub_identity(val, info)
         # An already-constructed model has no raw input to reshape, so "before" validators are skipped.
         if not isinstance(val, cls):
             val = cls.run_validators(val, mode="before")
             # Re-scrub: a before validator that rebuilds the input can otherwise reinstate the old id.
             val = cls._scrub_identity(val, info)
-        token = None
-        if isinstance(info.context, dict):
-            forced = (bool(info.context.get("force_new_id", False)), bool(info.context.get("force_new_timestamp", False)))
-            token = _force_identity.set(forced if any(forced) else None)
-        try:
-            model = handler(val)
-        finally:
-            if token is not None:
-                _force_identity.reset(token)
+        model = handler(val)
         # Dispatch on the concrete type: a subclass instance in a base-annotated field is validated
         # against the base's schema, but must still run its own validators and hook.
         concrete = type(model)
@@ -391,6 +356,11 @@ class GatewayPydanticMixin:
         # nesting level. The marker makes the wrap idempotent.
         if schema.get("metadata", {}).get(_WRAPPED_MARKER):
             return schema
+        model_schema = schema
+        while model_schema["type"] in ("function-before", "function-after", "function-wrap"):
+            model_schema = model_schema["schema"]
+        if model_schema["type"] == "model":
+            model_schema["custom_init"] = False
         return core_schema.with_info_wrap_validator_function(
             function=cls._validate_gateway_struct,
             schema=schema,
@@ -443,6 +413,15 @@ class GatewayStruct(
     id: IdType | None = None
     timestamp: datetime | None = None
 
+    @classmethod
+    def from_field_values(cls, **fields: Any) -> Self:
+        """Validate field values without generating identities or registering model instances.
+
+        Explicit identities and declared defaults are preserved. The same identity and lookup
+        policy applies to nested models built from field values.
+        """
+        return cls.__pydantic_validator__.validate_python(fields, context={_CONSTRUCTION: True, _FIELD_VALUES: True})
+
     @field_serializer("timestamp", when_used="json")
     def _serialize_timestamp(self, value: datetime | None, info) -> str | None:
         # csp emitted naive UTC, and clients parse that shape. ``to_json`` is the exception: it stands
@@ -454,7 +433,7 @@ class GatewayStruct(
         return _to_naive_utc(value).isoformat()
 
     @model_serializer(mode="wrap")
-    def _drop_implicitly_unset(self, handler: Callable[[Any], dict[str, Any]]) -> dict[str, Any]:
+    def _drop_implicitly_unset(self, handler: Callable[[Any], dict[str, Any]], info) -> dict[str, Any]:
         """Omit fields that were never set and have no declared default.
 
         A model serializer rather than an ``exclude=`` argument so the rule also applies to structs
@@ -466,8 +445,11 @@ class GatewayStruct(
         if self is None:
             # A null value for a struct-typed field still routes through that struct's serializer.
             return data
+        by_alias = info.by_alias if info.by_alias is not None else self.model_config.get("serialize_by_alias", False)
         for name in self._implicitly_unset():
-            data.pop(name, None)
+            field = type(self).model_fields[name]
+            key = (field.serialization_alias or name) if by_alias else name
+            data.pop(key, None)
         return data
 
     @classmethod
@@ -516,9 +498,65 @@ class GatewayStruct(
         """Fields that only exist because ``_relax_required_fields`` gave them a default.
 
         These are csp's "never set" fields, so they stay out of serialization. A field with a default
-        the author actually declared is a different thing and is always reported.
+        the author actually declared is a different thing and is always reported. Identity fields
+        also stay absent if neither supplied nor generated; an explicit None is still reported.
         """
-        return type(self).__gateway_implicit_fields__ - self.model_fields_set
+        return type(self)._maybe_unset_fields() - self.model_fields_set
+
+    @classmethod
+    def _maybe_unset_fields(cls) -> frozenset[str]:
+        """Every field `_implicitly_unset` can report for an instance of ``cls``."""
+        fields = cls.model_fields
+        return cls.__gateway_implicit_fields__ | {
+            name for name in ("id", "timestamp") if name in fields and fields[name].default is None and fields[name].default_factory is None
+        }
+
+    @classmethod
+    def _dump_json_list(cls, records: list[Self]) -> bytes | None:
+        """Serialize records that are all exactly ``cls`` as a JSON array, byte-identical to dumping each.
+
+        Each record would otherwise call back into Python through `_drop_implicitly_unset`, and
+        usually `_serialize_timestamp`. Instead, consecutive records that leave the same fields unset
+        go to pydantic-core in one call, with those fields as a native ``exclude``; `_serialize_timestamp`
+        is also dropped for a run whose timestamps are all plain naive datetimes, which pydantic writes
+        the same way. Nested structs keep both. Runs are capped at `_DUMP_CHUNK` records: one native
+        call holds the GIL throughout, and the csp engine thread needs it to tick.
+
+        ``None`` when ``cls`` could serialize differently this way; see `_build_list_serializer`.
+        """
+        serializers = cls._list_serializers()
+        if serializers is None:
+            return None
+        maybe_unset = cls._maybe_unset_fields()
+        has_timestamp = "timestamp" in cls.model_fields
+        pieces = [b"["]
+        start, unset, plain = 0, None, True
+        for i, record in enumerate(records):
+            record_unset = maybe_unset - record.__pydantic_fields_set__
+            if i > start and (record_unset != unset or i - start == _DUMP_CHUNK):
+                pieces += (serializers[plain].to_json(records[start:i], exclude=unset or None)[1:-1], b",")
+                start, plain = i, True
+            unset = record_unset
+            if plain and has_timestamp:
+                timestamp = record.__dict__.get("timestamp")
+                plain = timestamp is None or (type(timestamp) is datetime and timestamp.tzinfo is None)
+        if records:
+            pieces.append(serializers[plain].to_json(records[start:], exclude=unset or None)[1:-1])
+        pieces.append(b"]")
+        # Exact bytes pieces, so CPython copies them into the response without holding the GIL.
+        return b"".join(pieces)
+
+    @classmethod
+    def _list_serializers(cls) -> dict[bool, SchemaSerializer] | None:
+        """The ``list[cls]`` serializers `_dump_json_list` uses, keyed by whether timestamps are plain.
+
+        Built from ``cls``'s core schema, and rebuilt if pydantic rebuilds it.
+        """
+        schema = cls.__pydantic_core_schema__
+        cached = cls.__dict__.get("_gateway_list_serializers")
+        if cached is None or cached[0] is not schema:
+            cached = cls._gateway_list_serializers = (schema, _build_list_serializer(cls, schema))
+        return cached[1]
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema_, handler):
@@ -553,6 +591,133 @@ class GatewayStruct(
         return self.model_copy(**kwargs)
 
 
+def _unwrap_copy(schema: dict) -> tuple[dict, dict]:
+    """Copy ``schema`` down through its validator wrappers, which carry no serialization of their own.
+
+    Returns the copied top and the copied first schema that is not such a wrapper. Only that path is
+    copied, so the rest of the schema (field defaults included) is shared, never duplicated.
+    """
+    top = node = dict(schema)
+    while node.get("type", "").startswith("function-") and node.get("serialization") is None:
+        node["schema"] = dict(node["schema"])
+        node = node["schema"]
+    return top, node
+
+
+#: Records per native serializer call in `GatewayStruct._dump_json_list`; bounds how long one call holds the GIL.
+_DUMP_CHUNK = 5_000
+
+#: Serializers that leave a ``None`` alone, so skipping them for an unset field changes nothing.
+_NONE_SAFE_SERIALIZERS = (GatewayStruct._drop_implicitly_unset, GatewayStruct._serialize_timestamp)
+
+
+def _serializers_reached_by_none(schema: dict, definitions: dict) -> list:
+    """The serializer functions a ``None`` value meets on its way through a field's schema."""
+    found = []
+    while True:
+        if "serialization" in schema:
+            found.append(schema["serialization"].get("function"))
+        kind = schema.get("type", "")
+        if kind == "definition-ref":
+            schema = definitions[schema["schema_ref"]]
+        elif kind in ("default", "function-before", "function-after", "function-wrap"):
+            schema = schema["schema"]
+        else:
+            # ``nullable`` writes the None itself, and anything else (a model included) stops here.
+            return found
+
+
+def _is_plain_timestamp(field: dict) -> bool:
+    """Whether the ``timestamp`` field is GatewayStruct's own: optional, plain datetime, our serializer."""
+    schema = field.get("schema", {})
+    inner = schema.get("schema", {})
+    return (
+        schema.get("type") == "default"
+        and schema.get("serialization", {}).get("function") is GatewayStruct._serialize_timestamp
+        and inner.get("type") == "nullable"
+        and "serialization" not in inner
+        and inner.get("schema", {}).get("type") == "datetime"
+        and "serialization" not in inner["schema"]
+    )
+
+
+def _build_list_serializer(cls: type[GatewayStruct], schema: dict) -> dict[bool, SchemaSerializer] | None:
+    """Serializers for `GatewayStruct._dump_json_list`, or ``None`` where it could change the output.
+
+    Excluding unset fields natively differs from `_drop_implicitly_unset`'s popping when a serializer
+    would see an unset field's ``None``, when two fields or a computed field share an output key, or
+    when extra fields can share one; and stripping `_drop_implicitly_unset` is only sound when it is
+    the struct's own. A struct with its own ``type_adapter`` may serialize differently altogether.
+    Any shape this does not recognise also yields ``None``.
+    """
+    own_adapter = getattr(cls.type_adapter, "__func__", None) is not GatewayStruct.type_adapter.__func__
+    if cls._implicitly_unset is not GatewayStruct._implicitly_unset or own_adapter:
+        return None
+    root, definitions = (schema["schema"], schema["definitions"]) if schema.get("type") == "definitions" else (schema, None)
+    definitions_by_ref = {d["ref"]: d for d in definitions or ()}
+    root, model = _unwrap_copy(root)
+    if model.get("type") != "model" or model.get("serialization", {}).get("function") is not GatewayStruct._drop_implicitly_unset:
+        return None
+    model["schema"], model_fields = _unwrap_copy(model["schema"])
+    fields = model_fields.get("fields")
+    extra = model_fields.get("extra_behavior") or (model.get("config") or {}).get("extra_fields_behavior")
+    if model_fields.get("type") != "model-fields" or fields is None or extra == "allow":
+        return None
+    by_alias = bool(cls.model_config.get("serialize_by_alias", False))
+    keys = [(field.get("serialization_alias") or name) if by_alias else name for name, field in fields.items()]
+    keys += [
+        (computed.get("alias") or computed["property_name"]) if by_alias else computed["property_name"]
+        for computed in model_fields.get("computed_fields") or ()
+    ]
+    if len(set(keys)) != len(keys):
+        return None
+    for name in cls._maybe_unset_fields():
+        if any(fn not in _NONE_SAFE_SERIALIZERS for fn in _serializers_reached_by_none(fields[name]["schema"], definitions_by_ref)):
+            return None
+
+    del model["serialization"]
+    config = model.get("config")
+
+    def build(list_root: dict) -> SchemaSerializer:
+        list_schema = core_schema.list_schema(list_root)
+        if definitions is not None:
+            list_schema = core_schema.definitions_schema(list_schema, definitions)
+        serializer = SchemaSerializer(list_schema, config)
+        return _BoundSerializer(serializer, _BY_ALIAS_UNSET)
+
+    serializers = {False: build(root)}
+    if "timestamp" in fields and _is_plain_timestamp(fields["timestamp"]) and (config or {}).get("ser_json_temporal", "iso8601") == "iso8601":
+        # A plain naive datetime serializes natively exactly as `_serialize_timestamp` writes it.
+        plain_root, plain_model = _unwrap_copy(root)
+        plain_model["schema"], plain_fields = _unwrap_copy(plain_model["schema"])
+        timestamp = dict(fields["timestamp"])
+        timestamp["schema"] = {k: v for k, v in timestamp["schema"].items() if k != "serialization"}
+        plain_fields["fields"] = {**fields, "timestamp": timestamp}
+        serializers[True] = build(plain_root)
+    else:
+        serializers[True] = serializers[False]
+    return serializers
+
+
+#: What ``TypeAdapter.dump_json`` passes for ``by_alias`` when the caller does not: ``None`` lets each
+#: model, nested ones included, apply its own ``serialize_by_alias``. pydantic-core before 2.33 takes
+#: only a bool there, and defaults it to True where ``TypeAdapter`` passed False.
+_BY_ALIAS_UNSET = inspect.signature(TypeAdapter.dump_json).parameters["by_alias"].default
+
+
+class _BoundSerializer:
+    """A `SchemaSerializer` with ``by_alias`` fixed, so every call matches a per-record ``TypeAdapter``."""
+
+    __slots__ = ("_by_alias", "_serializer")
+
+    def __init__(self, serializer: SchemaSerializer, by_alias: bool | None) -> None:
+        self._serializer = serializer
+        self._by_alias = by_alias
+
+    def to_json(self, records: list, exclude: set[str] | None) -> bytes:
+        return self._serializer.to_json(records, by_alias=self._by_alias, exclude={"__all__": exclude} if exclude else None)
+
+
 def is_gateway_struct_like(cls) -> bool:
     """Strict check: requires all gateway mixins and a pydantic `BaseModel`.
 
@@ -574,3 +739,35 @@ def is_gateway_struct_like(cls) -> bool:
         )
     except TypeError:
         return False
+
+
+def type_adapter_for(obj):
+    """Return a pydantic ``TypeAdapter`` able to serialize ``obj``.
+
+    ``GatewayStruct`` carries its own cached ``type_adapter``, but a channel is
+    free to carry a plain pydantic model, and those do not. Falling back to an
+    adapter built from the model's own type lets such a channel be served over
+    REST instead of failing inside the response path.
+
+    The fallback is deliberately limited to pydantic models. Anything else
+    still raises ``AttributeError``, because reaching this function with, say,
+    a ``str`` means a caller mishandled a container, and serializing it would
+    turn that mistake into quietly wrong output.
+    """
+    own = getattr(obj, "type_adapter", None)
+    if callable(own):
+        return own()
+
+    from pydantic import BaseModel, TypeAdapter
+
+    if not isinstance(obj, BaseModel):
+        # AttributeError, not TypeError: this is the error callers already see
+        # and the response path already documents, so the contract is kept.
+        raise AttributeError(f"{type(obj).__name__!r} object has no attribute 'type_adapter'")  # noqa: TRY004
+
+    cls = type(obj)
+    cached = _TYPE_ADAPTERS.get(cls)
+    if cached is None:
+        cached = TypeAdapter(cls)
+        _TYPE_ADAPTERS[cls] = cached
+    return cached

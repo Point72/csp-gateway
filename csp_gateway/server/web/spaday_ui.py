@@ -19,10 +19,13 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
+from html import escape
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from starlette.requests import Request
+from starlette.responses import FileResponse, HTMLResponse, Response
 from starlette.routing import Mount, WebSocketRoute
 from starlette.websockets import WebSocket
 
@@ -40,9 +43,9 @@ from spaday.actions import (
     Download,
     If,
     Invoke,
+    NamedJs,
     Sequence,
     SetField,
-    SetStorage,
     Toggle,
     ToggleField,
     all_,
@@ -58,9 +61,9 @@ from spaday.actions import (
     obj,
 )
 from spaday.backends.starlette import build_routes as _spaday_build_routes
-from spaday.bootstrap import bootstrap
+from spaday.bootstrap import Lifecycle, bootstrap
 from spaday.components.shell import AppShell, Column, Region, Row, Show, Toast
-from spaday.packages import ComponentPackage
+from spaday.packages import ComponentPackage, resolve_component_packages
 from spaday_perspective import PerspectivePanel
 from spaday_regular_layout import RegularLayout, RegularLayoutFrame
 from spaday_webawesome import (
@@ -275,7 +278,10 @@ class GatewayUI:
         self._settings = settings
         self._regions: dict[Region, list[_Contribution]] = {}
         self._tabs: list[tuple[int, str, str, Any, bool]] = []
-        self._store_seeds: dict[str, Any] = {}
+        self._tab_actions: dict[str, Any] = {}
+        self._store_seeds: dict[str, Any] = {"main_tab": ""}
+        self._url_fields: dict[str, str] = {"main_tab": "tab"}
+        self._store_persistence: dict[str, str] = {}
         # Tables the workspace can show, recorded by `perspective_panel` so later contributions
         # (the channels graph) can drive it without knowing how it was configured.
         self._workspace_tables: list[str] = []
@@ -337,7 +343,7 @@ class GatewayUI:
         """
         self._regions.setdefault(Region(region), []).append(_Contribution(component=component, order=order, label=label))
 
-    def add_tab(self, name: str, label: str, component: Any, *, order: int = 0, closeable: bool = True) -> None:
+    def add_tab(self, name: str, label: str, component: Any, *, order: int = 0, closeable: bool = True, on_open: Any = None) -> None:
         """Register a tab for the main window's tab layout.
 
         The main region always shows the workspace; registered tabs open on demand (via a
@@ -347,31 +353,39 @@ class GatewayUI:
         region contributions. ``name`` is the frame identity (also what a `tab_button`
         opens); ``label`` is the tab text. ``closeable=False`` hides the tab's close
         control for tabs nothing could reopen (the workspace is always non-closeable).
+        ``on_open`` runs when the tab is activated, including through a shared URL.
         """
         if any(existing == name for _, existing, _, _, _ in self._tabs):
             raise ValueError(f"main tab already registered: {name}")
         self._tabs.append((order, name, label, component, closeable))
+        if on_open is not None:
+            self._tab_actions[name] = on_open
 
     def tab_button(self, label: str, tab: str, *, icon: str | None = None, appearance: str = "outlined", action: Any = None) -> Any:
         """A button that opens (or focuses) a registered main tab. Add it to any region.
 
-        ``action`` runs after the tab opens -- the place to load a panel's data on demand. A tab's
-        frame is not laid out while it is closed, so a component that measures itself (a virtualized
-        list) renders nothing if its data arrives before it is on screen; fetching here rather than
-        on page load keeps that ordering right, and keeps a closed tab off the wire entirely.
+        ``action`` runs on this button's click. Use ``add_tab(on_open=...)`` for data loading
+        that must also run when the tab opens through a shared URL.
         """
         open_tab = Invoke(by_id(_MAIN_LAYOUT_ID), "openPanel", event_prop("currentTarget.dataset.tab"))
-        button = (
-            WaButton(appearance=appearance, title=label)
-            .prop("data-tab", tab)
-            .on("click", Sequence(open_tab, action) if action is not None else open_tab)
-        )
+        actions = [NamedJs("gateway-tab-repeat"), open_tab]
+        if action is not None:
+            actions.append(action)
+        button = WaButton(appearance=appearance, title=label).prop("data-tab", tab).on("click", Sequence(*actions))
         button = button.child(WaIcon(name=icon)) if icon else button.text(label).style(width="100%")
         return button
 
     def seed_store(self, **fields: Any) -> None:
         """Seed initial values into the page's reactive signal store (merged across callers)."""
         self._store_seeds.update(fields)
+
+    def bind_url(self, **fields: str) -> None:
+        """Map signal-store fields to shareable URL query parameters."""
+        self._url_fields.update(fields)
+
+    def persist_store(self, **keys: str) -> None:
+        """Bind store fields to browser localStorage keys, loading them before the page mounts."""
+        self._store_persistence.update(keys)
 
     def package(self, package: Any) -> None:
         """Load an extra spaday component package into the page.
@@ -431,8 +445,7 @@ class GatewayUI:
 
         Both are resolved by `GatewayWebApp._resolve_ui_assets` first, so local paths have already
         been mounted and turned into URLs, and anything discovered under ``CUSTOM_STATIC_DIR`` is
-        included. Scripts are handed to spaday as ES modules rather than the classic ``<script>``
-        tags the default UI emits.
+        included. Scripts are loaded as optional ES modules before mounting the main page.
         """
         ui_config = getattr(self._web_app, "_ui_config_raw", None) or {}
         stylesheets = [self.url(href) for href in ui_config.get("customCss") or []]
@@ -470,6 +483,8 @@ class GatewayUI:
         schemas: dict[str, dict[str, str]] | None = None,
         default_layout: dict[str, Any] | None = None,
         table_options: dict[str, dict[str, Any]] | None = None,
+        channels: dict[str, dict[str, Any]] | None = None,
+        master_theme: str | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
 
@@ -479,7 +494,9 @@ class GatewayUI:
         ``tables``. ``schemas`` (table name -> column name -> type) lets the generated layout apply
         per-table defaults (timestamp sort, hidden id column). ``table_options`` carries each table's
         ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
-        worker rather than reading it off the websocket. Add it to `Region.MAIN`.
+        worker rather than reading it off the websocket. ``channels`` supplies configurations for
+        channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
+        ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
         """
         tables = list(tables or [])
         self._workspace_tables = list(tables)
@@ -513,13 +530,26 @@ class GatewayUI:
             layout_expr = cond(eq(field(_GRAPH_FOCUS), name), self._default_layout([name], schemas=schemas), layout_expr)
         self._store_seeds.setdefault(_GRAPH_FOCUS, "")
         self._store_seeds.setdefault(_PERSPECTIVE_READY, False)
+        self._store_seeds.setdefault("saved_layout", None)
+        self.persist_store(saved_layout=_CUSTOM_LAYOUT_STORAGE_KEY)
 
         return (
             PerspectivePanel()
             .prop("id", _WORKSPACE_ID)
             .style(height="100%", display="block", overflow="hidden")
             .compute("theme", cond(field("dark"), "dark", "light"))
-            .compute("config", obj({"ws_url": self.url(route), "tables": table_specs, "layout": layout_expr}))
+            .compute(
+                "config",
+                obj(
+                    {
+                        "ws_url": self.url(route),
+                        "tables": table_specs,
+                        "layout": layout_expr,
+                        "channels": channels or {},
+                        "master_theme": master_theme,
+                    }
+                ),
+            )
             # Applying a config can fail (a saved layout that no longer matches the tables); the
             # panel reports it and otherwise nothing would. The detail is whatever was thrown --
             # an Error for JS failures, a bare string for the ones raised inside Perspective.
@@ -533,6 +563,22 @@ class GatewayUI:
                             "message": concat(
                                 "Perspective error: ",
                                 cond(event_prop("detail.message"), event_prop("detail.message"), event_prop("detail")),
+                            ),
+                            "tone": "danger",
+                        }
+                    ),
+                ),
+            )
+            .on(
+                "perspective-copy-error",
+                Invoke(
+                    by_id(_TOAST_ID),
+                    "notify",
+                    obj(
+                        {
+                            "message": concat(
+                                event_prop("detail.message"),
+                                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
                             ),
                             "tone": "danger",
                         }
@@ -578,8 +624,7 @@ class GatewayUI:
         """A header button that saves the current Perspective workspace in the browser.
 
         `saveClean` strips the transient fields (theme, column size overrides) before the layout is
-        persisted to localStorage; writing `result="custom_layout"` updates the store field the
-        workspace's layout expression reads, and selecting the custom layout re-renders it.
+        persisted to localStorage. Saving updates the custom layout and selects it.
         """
         return (
             WaButton(appearance="plain", title="Save current layout")
@@ -588,7 +633,7 @@ class GatewayUI:
                 "click",
                 Sequence(
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
-                    SetStorage(_CUSTOM_LAYOUT_STORAGE_KEY, field("custom_layout")),
+                    SetField("saved_layout", field("custom_layout")),
                     SetField(_GRAPH_FOCUS, ""),
                     SetField("view", _CUSTOM_LAYOUT_NAME),
                     SetField("layout_view", _CUSTOM_LAYOUT_NAME),
@@ -842,12 +887,18 @@ class GatewayUI:
         return (
             RegularLayout(*frames, layout={"type": "tab-layout", "tabs": [_WORKSPACE_TAB]})
             .prop("id", _MAIN_LAYOUT_ID)
+            .compute("data-active-tab", field("main_tab"))
             # Tabs open, select, and close, but drag-rearranging is disabled: the nested
             # Perspective workspace is itself a regular-layout, which makes drags confusing.
             .prop("locked", True)
             .prop("style", "; ".join(titles))
             .compute("class", cond(field("main_tabbed"), "spa", "spa spa-solo"))
-            .on("regular-layout-update", SetField("main_tabbed", not_(eq(open_count, 1))))
+            .on("regular-layout-update", Sequence(SetField("main_tabbed", not_(eq(open_count, 1))), NamedJs("gateway-tabs")))
+            .on("gateway-tab-change", SetField("main_tab", event_value("tab")))
+            .on(
+                "gateway-tab-open",
+                Sequence(*[If(eq(event_value("tab"), tab), action) for tab, action in self._tab_actions.items()]),
+            )
         )
 
     def build_page(self) -> Any:
@@ -877,7 +928,7 @@ class GatewayUI:
             .child("Built with ")
             .child(element("a", href="https://github.com/perspective-dev/perspective", target="_blank").text("Perspective").style(color="inherit"))
             .child(" and ")
-            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("spaday").style(color="inherit"))
+            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("Spaday").style(color="inherit"))
         )
 
         # Compose region contents (built-in chrome merged with module contributions, order-sorted).
@@ -894,7 +945,7 @@ class GatewayUI:
 
         # Header-right built-ins: theme toggle, plus the drawer toggles when their drawers have content.
         settings_button = (
-            WaButton(appearance="plain", title="Settings").text("\u2630").on("click", Toggle(by_id(right_drawer_id), "open"))
+            WaButton(appearance="plain", title="Settings").child(WaIcon(name="bars")).on("click", Toggle(by_id(right_drawer_id), "open"))
             if right_drawer_items
             else None
         )
@@ -1159,6 +1210,130 @@ class GatewayUI:
         title = getattr(self._settings, "TITLE", "Gateway")
         root = getattr(self._settings, "ROOT_PATH", "") or ""
         custom_css, custom_scripts = self._custom_assets()
+        error_head = """<style>
+        #gateway-startup-error:not(.gateway-startup) {
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 100000;
+            padding: 0.75rem 1rem; box-sizing: border-box; max-height: 30vh; overflow: auto;
+            background: var(--spa-surface, #fff); color: var(--spa-text, #161616);
+            border-top: 1px solid var(--spa-border, #ccc);
+        }
+        </style><script>
+    (() => {
+            let shellReady = false, workspaceReady = false, workspaceTimer, monitorWorkspace = false;
+            const tabObserver = new MutationObserver(() => finish());
+            const cleanup = () => {
+                clearTimeout(workspaceTimer);
+                workspaceTimer = undefined;
+                tabObserver.disconnect();
+            };
+            const finish = () => {
+                if (!shellReady) return;
+                const layout = document.getElementById('gateway-main-layout');
+                const tab = layout?.dataset.activeTab;
+                const tabs = layout ? [...layout.children].map(frame => frame.getAttribute('name')) : [];
+                const otherTab = tab && tab !== 'workspace' && tabs.includes(tab);
+                const error = document.getElementById('gateway-startup-error');
+                if (workspaceReady || !document.querySelector('perspective-panel')) {
+                    cleanup();
+                    document.getElementById('gateway-startup-loader')?.remove();
+                    error?.remove();
+                } else if (otherTab) {
+                    clearTimeout(workspaceTimer);
+                    workspaceTimer = undefined;
+                    document.getElementById('gateway-startup-loader')?.remove();
+                    if (error) error.hidden = true;
+                } else if (error) {
+                    error.hidden = false;
+                } else if (monitorWorkspace && workspaceTimer === undefined) {
+                    workspaceTimer = setTimeout(() => {
+                        workspaceTimer = undefined;
+                        if (!workspaceReady) fail({detail: null}, false);
+                    }, 10000);
+                }
+            };
+            const fail = (event, blocking = true) => {
+                if (event.detail?.target != null || document.getElementById('gateway-startup-error')) return;
+                clearTimeout(workspaceTimer);
+                const loader = document.getElementById('gateway-startup-loader');
+                const panel = document.createElement('section');
+                panel.id = 'gateway-startup-error'; panel.setAttribute('role', 'alert');
+        if (loader && blocking) panel.className = 'gateway-startup';
+                const message = document.createElement('p');
+                message.textContent = 'The interface could not finish loading. Reload to try again.';
+                const reload = document.createElement('a');
+                reload.href = ''; reload.textContent = 'Reload page';
+                panel.append(message, reload); document.body.append(panel);
+                loader?.remove();
+            };
+            document.addEventListener('spaday:error', fail);
+            document.addEventListener('spaday:ready', event => {
+                if (event.detail.target != null) return;
+                shellReady = true;
+                monitorWorkspace ||= !!document.getElementById('gateway-startup-loader');
+                const layout = document.getElementById('gateway-main-layout');
+                if (layout) tabObserver.observe(layout, {attributes: true, attributeFilter: ['data-active-tab']});
+                clearTimeout(workspaceTimer);
+                workspaceTimer = undefined;
+                finish();
+            });
+            document.addEventListener('perspective-ready', () => { workspaceReady = true; finish(); }, true);
+            document.addEventListener('perspective-error', event => {
+        monitorWorkspace ||= !!document.getElementById('gateway-startup-loader');
+        if (monitorWorkspace && !workspaceReady) {
+                    fail(event, false);
+                    finish();
+        }
+            }, true);
+    })();
+    </script>"""
+        loading_image = self.url(getattr(self._settings, "LOADING_IMAGE", None))
+        loader_body = ""
+        if loading_image:
+            loader_body = f"""<style>
+    .gateway-startup {{
+      position: fixed; inset: 0; z-index: 100000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color-scheme: light; background: light-dark(#fff, #242526); color: light-dark(#161616, #fff);
+    }}
+    :root.wa-dark .gateway-startup {{ color-scheme: dark; }}
+    #gateway-startup-loader img {{ width: 100%; height: 100%; object-fit: contain; }}
+    </style>
+    <div id="gateway-startup-loader" class="gateway-startup" role="status" aria-label="Loading {escape(title, quote=True)}">
+      <img src="{escape(loading_image, quote=True)}" alt="">
+    </div>
+    <script>
+    (() => {{
+      let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+      try {{ dark = JSON.parse(localStorage.getItem('csp-gateway:dark')) ?? dark; }} catch {{}}
+      document.documentElement.classList.toggle('wa-dark', !!dark);
+    }})();
+    </script>"""
+
+        elements = tuple(
+            sorted(
+                {
+                    component.tag
+                    for package in resolve_component_packages(self._page_packages())
+                    if package.name == "webawesome"
+                    for component in package.components
+                }
+            )
+        )
+        custom_head = "".join(f'<link rel="stylesheet" href="{escape(url, quote=True)}">' for url in custom_css)
+        scripts = [self.url("/spaday-navigation.js")]
+        if custom_scripts:
+            scripts.append(self.url("/spaday-custom-scripts.js"))
+
+            @self._web_app.get_router("app").get("/spaday-custom-scripts.js", include_in_schema=False)
+            async def custom_script_loader():
+                source = (
+                    f"await Promise.all({json.dumps(custom_scripts)}.map(url => import(url)"
+                    ".catch(() => console.error('Optional custom module unavailable'))));"
+                )
+                return Response(source, media_type="text/javascript")
+
+        favicon = self.url(getattr(self._settings, "FAVICON", None))
+        favicon_head = f'<link rel="icon" href="{escape(favicon, quote=True)}">' if favicon else ""
         # Only wire a transports model when a module actually declared live state; otherwise the page is a
         # static tree and no websocket is served.
         wire: Any = None
@@ -1187,20 +1362,28 @@ class GatewayUI:
             # prefers-color-scheme detection), and a manual toggle is persisted per browser and takes
             # precedence on later loads.
             store={"dark": Js('matchMedia("(prefers-color-scheme: dark)").matches'), **self._store_seeds},
-            persist={"dark": "csp-gateway:dark"},
-            # Emitted after the component packages' own CSS, so a custom stylesheet can override the
-            # shell palette, and before `head`, which carries only document resets.
-            stylesheets=custom_css,
-            scripts=custom_scripts,
-            head=PAGE_CSS + MAIN_PAGE_CSS,
+            persist={"dark": "csp-gateway:dark", **self._store_persistence},
+            url=self._url_fields,
+            scripts=scripts,
+            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head + favicon_head,
             title=title,
             prefix=root,
+            lifecycle=Lifecycle(elements=elements),
         )
         app_router = self._web_app.get_router("app")
 
+        @app_router.get("/spaday-navigation.js", include_in_schema=False)
+        async def navigation_script():
+            return FileResponse(Path(__file__).with_name("spaday-navigation.js"), media_type="text/javascript")
+
         def _authed_route(endpoint):
             async def _serve(request: Request):
-                return await endpoint(request)
+                response = await endpoint(request)
+                if loader_body and isinstance(response, HTMLResponse):
+                    # The loader must precede Spaday's module downloads and tree mount.
+                    response.body = response.body.replace(b"<body>", b"<body>" + loader_body.encode(), 1)
+                    response.headers["content-length"] = str(len(response.body))
+                return response
 
             return _serve
 

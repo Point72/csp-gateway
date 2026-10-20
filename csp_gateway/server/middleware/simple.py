@@ -19,7 +19,7 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 from ..settings import GatewaySettings
 from ..web import GatewayWebApp
 from .base import AuthenticationMiddleware, IdentityAwareMiddlewareMixin
-from .hacks.api_key_middleware_websocket_fix.api_key import APIKeyCookie
+from .hacks.api_key_middleware_websocket_fix import APIKeyCookie
 
 __all__ = ("MountSimpleAuthMiddleware",)
 

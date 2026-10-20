@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
 from io import BytesIO
@@ -15,7 +14,6 @@ import csp
 import orjson
 import pyarrow
 import pyarrow.json
-import uvloop
 from csp import ts
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from perspective import Client, Server, Table
@@ -39,8 +37,6 @@ __all__ = (
 )
 
 T = TypeVar("T")
-
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 log = getLogger(__name__)
 
@@ -147,31 +143,22 @@ class TableConfig(BaseModel):
 # Backwards compat alias
 AdditionalTableConfig = TableConfig
 
-# Perspective 4 stored a workspace layout as a Lumino widget tree (`detail`/`master` of `split-area`
-# and `tab-area` nodes) alongside a `viewers` map. Perspective 5 folded the workspace into
-# `<perspective-viewer>` itself, which takes a `layout` tree of `split-layout`/`tab-layout` nodes and
-# a `panels` map. Per-panel bodies are unchanged -- the viewer migrates those from their own stamped
-# `version` -- so only the envelope is rewritten here.
-_LAYOUT_NODE_TYPES = {"split-area": "split-layout", "tab-area": "tab-layout"}
 
-
-def _migrate_layout_node(node: Any) -> Any:
+def _migrate_layout_node(node: Any) -> dict[str, Any]:
     if not isinstance(node, dict):
-        return node
-    node_type = _LAYOUT_NODE_TYPES.get(node.get("type"))
-    if node_type == "tab-layout":
-        migrated = {"type": node_type, "tabs": list(node.get("widgets") or [])}
-        if "currentIndex" in node:
-            migrated["selected"] = node["currentIndex"]
-        return migrated
-    if node_type == "split-layout":
+        raise TypeError("Layout nodes must be objects")
+    if node.get("type") == "tab-area":
+        return {"type": "tab-layout", "tabs": list(node.get("widgets") or []), "selected": node.get("currentIndex", 0)}
+    if node.get("type") == "split-area":
+        children = [_migrate_layout_node(child) for child in node.get("children") or []]
+        sizes = node.get("sizes") or ([1 / len(children)] * len(children) if children else [])
         return {
-            "type": node_type,
+            "type": "split-layout",
             "orientation": node.get("orientation", "horizontal"),
-            "sizes": list(node.get("sizes") or []),
-            "children": [_migrate_layout_node(child) for child in node.get("children") or []],
+            "sizes": list(sizes),
+            "children": children,
         }
-    return node
+    raise ValueError("Unsupported layout node type")
 
 
 def migrate_perspective_layout(layout: str) -> str:
@@ -182,19 +169,37 @@ def migrate_perspective_layout(layout: str) -> str:
     """
     try:
         parsed = orjson.loads(layout)
-    except orjson.JSONDecodeError:
-        return layout
-    if not isinstance(parsed, dict) or "viewers" not in parsed:
-        return layout
+        if not isinstance(parsed, dict) or "viewers" not in parsed or "layout" in parsed or "panels" in parsed:
+            return layout
 
-    migrated: dict[str, Any] = {"panels": parsed.get("viewers") or {}}
-    root = (parsed.get("detail") or {}).get("main")
-    if root is not None:
-        migrated["layout"] = _migrate_layout_node(root)
-    masters = (parsed.get("master") or {}).get("widgets") or []
-    if masters:
-        migrated["masters"] = list(masters)
-    return orjson.dumps(migrated).decode()
+        migrated: dict[str, Any] = {"panels": parsed.get("viewers") or {}}
+        detail = (parsed.get("detail") or {}).get("main")
+        root = _migrate_layout_node(detail) if detail is not None else None
+        master = parsed.get("master") or {}
+        masters = list(master.get("widgets") or [])
+        if masters:
+            sidebar = {
+                "type": "split-layout",
+                "orientation": "vertical",
+                "sizes": list(master.get("sizes") or [1 / len(masters)] * len(masters)),
+                "children": [{"type": "tab-layout", "tabs": [name], "selected": 0} for name in masters],
+            }
+            root = (
+                {
+                    "type": "split-layout",
+                    "orientation": "horizontal",
+                    "sizes": list(parsed.get("sizes") or [0.25, 0.75]),
+                    "children": [sidebar, root],
+                }
+                if root is not None
+                else sidebar
+            )
+            migrated["masters"] = masters
+        if root is not None:
+            migrated["layout"] = root
+        return orjson.dumps(migrated).decode()
+    except (AttributeError, TypeError, ValueError):
+        return layout
 
 
 def _is_channel_selection_input(v) -> bool:

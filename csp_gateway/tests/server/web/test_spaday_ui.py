@@ -41,9 +41,220 @@ def _bare_ui():
 
     ui = object.__new__(GatewayUI)
     ui._store_seeds = {}
+    ui._store_persistence = {}
     ui._settings = GatewaySettings()
     ui._workspace_tables = []
     return ui
+
+
+@pytest.mark.parametrize("failed_asset", [False, True])
+@pytest.mark.parametrize("custom_asset", [None, "js", "css"])
+@pytest.mark.parametrize("loading_image", [None, "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"])
+def test_spaday_lifecycle_boot_and_error_recovery_in_chromium(failed_asset, custom_asset, loading_image, tmp_path):
+    from types import SimpleNamespace
+
+    from spaday import element
+    from spaday.components.shell import Region
+
+    from csp_gateway.server.web.app import GatewayWebApp
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    options = {f"CUSTOM_{custom_asset.upper()}": [f"/missing-custom.{custom_asset}"]} if custom_asset else {}
+    web = GatewayWebApp(
+        SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday", LOADING_IMAGE=loading_image, **options), ui=True
+    )
+    web.ui.add(Region.MAIN, element("wa-input", label="Ready control"))
+    web._finalize()
+    client = TestClient(web.app)
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(headless=True)
+        except playwright.Error as failure:
+            if "Executable doesn't exist" in str(failure):
+                pytest.skip("Chromium is not installed")
+            raise
+        page = browser.new_page()
+        page.add_init_script(
+            "window.lifecycleEvents = []; for (const name of ['ready', 'error']) document.addEventListener('spaday:' + name, () => lifecycleEvents.push(name));"
+        )
+        pending = []
+
+        def serve(route):
+            if loading_image and route.request.url.endswith("/js/cdn/index.js"):
+                pending.append(route)
+                return
+            if failed_asset and "/components/webawesome/cdn/" in route.request.url:
+                route.abort()
+                return
+            response = client.get(route.request.url)
+            route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+        page.route("http://csp-review.test/**", serve)
+        try:
+            page.goto("http://csp-review.test/", wait_until="commit")
+            loader = page.locator("#gateway-startup-loader")
+            if loading_image:
+                playwright.expect(loader).to_be_visible()
+                page.wait_for_function("document.readyState !== 'loading'")
+                assert page.locator("spa-app").count() == 0
+                assert page.evaluate("lifecycleEvents") == []
+                assert pending
+                for route in pending:
+                    response = client.get(route.request.url)
+                    route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+            if failed_asset:
+                playwright.expect(page.locator("#gateway-startup-error")).to_be_visible(timeout=12000)
+                playwright.expect(page.get_by_role("link", name="Reload page")).to_be_visible()
+                assert page.evaluate("lifecycleEvents") == ["error"]
+            else:
+                page.wait_for_function("lifecycleEvents.includes('ready')")
+                playwright.expect(page.locator("wa-input")).to_be_visible()
+                assert page.locator("wa-input").evaluate("element => !!element.shadowRoot")
+                assert page.locator("#gateway-startup-error").count() == 0
+            playwright.expect(loader).to_have_count(0)
+            page.screenshot(path=str(tmp_path / "lifecycle.png"), full_page=True)
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "workspace",
+        "early-ready",
+        "early-error",
+        "error",
+        "logs",
+        "logs-after-ready",
+        "logs-return",
+        "unknown-tab",
+        "timeout",
+        "timeout-recovery",
+        "duplicate-ready",
+    ],
+)
+def test_startup_loader_waits_for_workspace_only_in_chromium(case):
+    from types import SimpleNamespace
+
+    from spaday import element
+    from spaday.components.shell import Region
+
+    from csp_gateway.server.web.app import GatewayWebApp
+
+    playwright = pytest.importorskip("playwright.sync_api")
+    settings = GatewaySettings(UI=True, LOADING_IMAGE="/loader.svg", ROOT_PATH="/prefix", TITLE='A "B" <C>')
+    web = GatewayWebApp(SimpleNamespace(modules=[]), None, settings, ui=True)
+    stalled_workspace = case in {"logs-after-ready", "logs-return", "unknown-tab", "duplicate-ready"} or case.startswith("timeout")
+    panel = web.ui.perspective_panel(route="/perspective", tables=["orders"]) if stalled_workspace else element("perspective-panel")
+    web.ui.add(Region.MAIN, panel)
+    web.ui.add_tab("logs", "Logs", element("p").text("Log contents"))
+    web._finalize()
+    client = TestClient(web.app)
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(headless=True)
+        except playwright.Error as failure:
+            if "Executable doesn't exist" in str(failure):
+                pytest.skip("Chromium is not installed")
+            raise
+        page = browser.new_page(color_scheme="light")
+        page.add_init_script(
+            "localStorage.setItem('csp-gateway:dark', 'true'); window.shellReady = false; document.addEventListener('spaday:ready', () => shellReady = true)"
+        )
+        if case.startswith("timeout") or case in {"duplicate-ready", "logs", "logs-after-ready", "logs-return"}:
+            page.clock.install()
+        if stalled_workspace:
+            page.route_web_socket("**/perspective", lambda socket: socket.on_message(lambda message: None))
+        pending = []
+
+        def respond(route):
+            response = client.get(route.request.url)
+            route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+        def serve(route):
+            if route.request.url.endswith("/js/cdn/index.js"):
+                pending.append(route)
+            else:
+                respond(route)
+
+        page.route("http://csp-review.test/**", serve)
+        try:
+            initial_tab = "logs" if case in {"logs", "logs-return"} else "unknown" if case == "unknown-tab" else ""
+            page.goto(f"http://csp-review.test/prefix/?tab={initial_tab}", wait_until="commit")
+            loader = page.locator("#gateway-startup-loader")
+            playwright.expect(loader).to_be_visible()
+            playwright.expect(loader).to_have_attribute("aria-label", 'Loading A "B" <C>')
+            playwright.expect(loader.locator("img")).to_have_attribute("src", "/prefix/loader.svg")
+            assert loader.evaluate("el => getComputedStyle(el).backgroundColor") == "rgb(36, 37, 38)"
+            assert loader.bounding_box() == {"x": 0, "y": 0, "width": 1280, "height": 720}
+            page.wait_for_function("document.readyState !== 'loading'")
+            if case == "early-ready":
+                page.evaluate("document.dispatchEvent(new CustomEvent('perspective-ready'))")
+                playwright.expect(loader).to_be_visible()
+            if case == "early-error":
+                page.evaluate("document.dispatchEvent(new CustomEvent('perspective-error', {detail: new Error('Early config failure')}))")
+                playwright.expect(loader).to_have_count(0)
+                playwright.expect(page.locator("#gateway-startup-error")).to_be_in_viewport()
+                assert page.evaluate("shellReady") is False
+            assert pending
+            for route in pending:
+                respond(route)
+            page.wait_for_function("shellReady")
+            if stalled_workspace:
+                page.wait_for_function("!!document.querySelector('perspective-panel').viewer")
+            if case == "unknown-tab":
+                page.wait_for_function("!document.querySelector('#gateway-main-layout').dataset.activeTab")
+                playwright.expect(loader).to_be_visible()
+                page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready', {bubbles: true}))")
+            if case == "duplicate-ready":
+                page.evaluate("document.dispatchEvent(new CustomEvent('spaday:ready', {detail: {}}))")
+                page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready', {bubbles: true}))")
+                page.clock.fast_forward(10001)
+            if case == "logs-return":
+                playwright.expect(loader).to_have_count(0)
+                page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('workspace')")
+                page.wait_for_function("!document.querySelector('#gateway-main-layout').dataset.activeTab")
+                page.clock.fast_forward(10001)
+                playwright.expect(page.locator("#gateway-startup-error")).to_be_in_viewport()
+                page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready', {bubbles: true}))")
+            if case == "logs-after-ready":
+                playwright.expect(loader).to_be_visible()
+                page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('logs')")
+                page.wait_for_function("document.querySelector('#gateway-main-layout').dataset.activeTab === 'logs'")
+            if case in {"logs", "logs-after-ready"}:
+                page.clock.fast_forward(10001)
+                playwright.expect(page.locator("#gateway-startup-error")).to_have_count(0)
+            if case.startswith("timeout"):
+                playwright.expect(loader).to_be_visible()
+                page.clock.fast_forward(10001)
+                playwright.expect(loader).to_have_count(0)
+                playwright.expect(page.get_by_role("link", name="Reload page")).to_be_visible()
+                playwright.expect(page.locator("#gateway-startup-error")).to_be_in_viewport()
+                assert "gateway-startup" not in (page.locator("#gateway-startup-error").get_attribute("class") or "").split()
+                if case == "timeout":
+                    page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('logs')")
+                    page.wait_for_function("document.querySelector('#gateway-main-layout').dataset.activeTab === 'logs'")
+                    playwright.expect(page.locator("#gateway-startup-error")).to_be_hidden()
+                    page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('workspace')")
+                    page.wait_for_function("!document.querySelector('#gateway-main-layout').dataset.activeTab")
+                    playwright.expect(page.locator("#gateway-startup-error")).to_be_in_viewport()
+                    page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready', {bubbles: true}))")
+                else:
+                    page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready', {bubbles: true}))")
+            if case in {"workspace", "error", "early-error"}:
+                if case != "early-error":
+                    playwright.expect(loader).to_be_visible()
+                if case == "error":
+                    page.evaluate("document.dispatchEvent(new CustomEvent('perspective-error', {detail: new Error('Test failure')}))")
+                    playwright.expect(page.get_by_role("link", name="Reload page")).to_be_visible()
+                    playwright.expect(loader).to_have_count(0)
+                page.evaluate("document.querySelector('perspective-panel').dispatchEvent(new CustomEvent('perspective-ready'))")
+            playwright.expect(loader).to_have_count(0)
+            playwright.expect(page.locator("#gateway-startup-error")).to_have_count(0)
+            page.evaluate("document.dispatchEvent(new CustomEvent('perspective-error'))")
+            playwright.expect(page.locator(".gateway-startup")).to_have_count(0)
+        finally:
+            browser.close()
 
 
 class Example(GatewayStruct):
@@ -92,6 +303,64 @@ class TestSpadayAuth:
         # default UI), so an unauthenticated request never receives the spaday app or its tree.
         assert "spa-app" not in client.get("/").text
         assert not client.get("/tree.json").headers["content-type"].startswith("application/json")
+        assert "installClipboardHandlers" not in client.get("/gateway-perspective.mjs").text
+
+    def test_authenticated_page_declares_lifecycle_and_root_cleanup(self, client: TestClient):
+        page = client.get("/?token=alice_key")
+        assert page.status_code == 200
+        assert "notify('mounted')" in page.text
+        assert "notify('ready')" in page.text
+        assert "onDispose: cleanup" in page.text
+        assert "bootstrap timed out" in page.text
+        assert "spaday:error" in page.text
+        assert "Reload page" in page.text
+
+    def test_lifecycle_waits_for_actual_authored_webawesome_controls(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from spaday import element
+        from spaday.components.shell import Region
+
+        from csp_gateway.server.web.app import GatewayWebApp
+
+        captured = {}
+        original = spaday_ui._spaday_build_routes
+
+        def capture(*args, **options):
+            captured.update(options)
+            return original(*args, **options)
+
+        monkeypatch.setattr(spaday_ui, "_spaday_build_routes", capture)
+        web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday"), ui=True)
+        web.ui.add(Region.MAIN, element("div", element("wa-input"), element("wa-select"), element("wa-option"), element("optional-widget")))
+        web.ui.mount()
+        required = set(captured["lifecycle"].elements)
+        assert {"wa-button", "wa-icon", "wa-input", "wa-select", "wa-option"} <= required
+        assert "optional-widget" not in required
+
+    def test_lifecycle_setup_does_not_evaluate_contributions_or_require_unknown_wa_tags(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from spaday import element
+        from spaday.components.shell import Region
+
+        from csp_gateway.server.web.app import GatewayWebApp
+
+        captured = {}
+
+        def capture(*args, **options):
+            captured.update(options)
+            return []
+
+        def contribution():
+            pytest.fail("Page contributions must stay lazy until a request")
+
+        monkeypatch.setattr(spaday_ui, "_spaday_build_routes", capture)
+        web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday"), ui=True)
+        web.ui.add(Region.MAIN, contribution)
+        web.ui.add(Region.MAIN, element("wa-not-defined"))
+        web.ui.mount()
+        assert "wa-not-defined" not in captured["lifecycle"].elements
 
     def test_authenticated_serves_spaday(self, client: TestClient):
         # With a valid key the page renders (200) and the tree is JSON — the provider-gated smoke test.
@@ -101,6 +370,9 @@ class TestSpadayAuth:
         tree = client.get("/tree.json?token=alice_key")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
+        assert '"Spaday"' in tree.text
+        assert "gateway-perspective.mjs" not in page.text
+        assert client.get("/gateway-perspective.mjs?token=alice_key").status_code == 404
 
     def test_session_cookie_serves_the_tree(self, client: TestClient):
         # The browser only carries a token on the request that logs it in. Every fetch the page then
@@ -203,7 +475,7 @@ class TestSpadayRootPath:
         return Gateway(
             modules=[SendableModule(), MountRestRoutes(force_mount_all=True), MountSendForm()],
             channels=ExampleChannels(),
-            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday", ROOT_PATH="/watchtower"),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday", ROOT_PATH="/watchtower", FAVICON='/custom/icon.svg?x="a"&y=1'),
         )
 
     @pytest.fixture(scope="class")
@@ -217,6 +489,9 @@ class TestSpadayRootPath:
     def test_page_assets_prefixed(self, client: TestClient):
         # The page's own runtime/asset URLs (/js, wasm) carry the ROOT_PATH prefix.
         assert "/watchtower/js" in client.get("/").text
+        assert "/watchtower/spaday-navigation.js" in client.get("/").text
+        assert client.get("/watchtower/gateway-perspective.mjs").status_code == 404
+        assert '<link rel="icon" href="/watchtower/custom/icon.svg?x=&quot;a&quot;&amp;y=1">' in client.get("/").text
 
     def test_module_urls_prefixed(self, client: TestClient):
         # A module-generated action URL (the send POST) is prefixed in the component tree.
@@ -300,6 +575,10 @@ class TestSpadaySendFormDetails:
 class TestDefaultLayout:
     """The generated layout is a Perspective 5 whole-element config."""
 
+    def test_panel_uses_component_auto_pause_default(self):
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
+        assert "autopause" not in panel.to_node()["props"]
+
     def test_one_datagrid_panel_per_table(self):
         from csp_gateway.server.web.spaday_ui import GatewayUI
 
@@ -335,6 +614,7 @@ class TestDefaultLayout:
 
         ui = object.__new__(GatewayUI)
         ui._store_seeds = {}
+        ui._store_persistence = {}
         ui._settings = GatewaySettings()
         custom = {
             "layout": {"type": "tab-layout", "tabs": ["custom"]},
@@ -362,6 +642,17 @@ class TestTableOptions:
     def test_tables_without_options_stay_plain_names(self):
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
+
+    @pytest.mark.parametrize("master_theme", [None, "Sidebar"])
+    def test_channel_defaults_and_storage_are_configured_from_python(self, master_theme):
+        ui = _bare_ui()
+        channels = {"orders": {"table": "orders", "columns": ["quantity"]}}
+        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels, master_theme=master_theme)
+        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["channels"]["value"] == channels
+        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["master_theme"]["value"] == master_theme
+        assert ui._store_persistence == {"saved_layout": "csp_gateway_demo_config"}
+        ui.persist_store(legacy_layout="old-layout")
+        assert ui._store_persistence["legacy_layout"] == "old-layout"
 
     def test_options_are_merged_into_the_table_spec(self):
         panel = _bare_ui().perspective_panel(
@@ -434,11 +725,29 @@ class TestWorkspaceSignals:
     """`perspective-error` reaches a toast, and `perspective-ready` gates the layout buttons."""
 
     def test_errors_are_reported_in_a_toast(self):
-        node = json.dumps(_bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node())
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node()
+        node = json.dumps(panel)
 
         assert "perspective-error" in node and '"notify"' in node
+        assert panel["events"]["perspective-error"]["method"] == "notify"
         # The detail is an Error for JS failures and a bare string from Perspective itself.
         assert "detail.message" in node and '"path": "detail"' in node
+
+    def test_copy_errors_are_reported_in_a_toast(self):
+        panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node()
+        action = panel["events"]["perspective-copy-error"]
+        assert action["method"] == "notify"
+        assert action["target"] == {"ref": "id", "id": "gateway-toasts"}
+        from spaday.actions import concat, cond, event_prop
+
+        assert (
+            action["args"][0]["fields"]["message"]
+            == concat(
+                event_prop("detail.message"),
+                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
+            ).to_dict()
+        )
+        assert action["args"][0]["fields"]["tone"] == {"expr": "lit", "value": "danger"}
 
     def test_ready_is_recorded_and_seeded_false(self):
         ui = _bare_ui()
@@ -446,6 +755,11 @@ class TestWorkspaceSignals:
 
         assert "perspective-ready" in node
         assert ui._store_seeds["perspective_ready"] is False
+        assert json.loads(node)["events"]["perspective-ready"] == {
+            "kind": "set-field",
+            "field": "perspective_ready",
+            "value": {"expr": "lit", "value": True},
+        }
 
     def test_layout_buttons_wait_for_the_workspace(self):
         ui = _bare_ui()
@@ -512,7 +826,10 @@ class TestDarkBoot:
         # A manual toggle is stored and overrides the browser preference on the next load (legacy parity).
         page = client.get("/").text
         assert 'localStorage.getItem("csp-gateway:dark")' in page
-        assert 'store.subscribe("dark", (v) => { try { localStorage.setItem("csp-gateway:dark", JSON.stringify(v)); } catch {} });' in page
+        assert (
+            'cleanups.push(store.subscribe("dark", (v) => { try { localStorage.setItem("csp-gateway:dark", JSON.stringify(v)); } catch {} }));'
+            in page
+        )
 
 
 class TestSpadayPerspectiveLayoutActions:
@@ -548,11 +865,13 @@ class TestSpadayPerspectiveLayoutActions:
         assert "actions.js" not in page
         assert "cspGatewayCustomLayout" not in page
         assert 'localStorage.getItem("csp_gateway_demo_config")' in page
+        assert 'store.subscribe("saved_layout",' in page
+        assert 'localStorage.setItem("csp_gateway_demo_config", JSON.stringify(v))' in page
         assert client.get("/components/csp-gateway/actions.js").status_code == 404
         tree = client.get("/tree.json").text
         # save: clean-save the workspace, persist it, and switch the selector to the custom layout
         assert '"target": {"ref": "id", "id": "gateway-workspace"}, "method": "saveClean", "result": "custom_layout"' in tree
-        assert '"kind": "set-storage", "key": "csp_gateway_demo_config", "value": {"expr": "field", "name": "custom_layout"}' in tree
+        assert '"kind": "set-field", "field": "saved_layout", "value": {"expr": "field", "name": "custom_layout"}' in tree
         assert '"kind": "set-field", "field": "layout_view", "value": {"expr": "lit", "value": "Custom Layout"}' in tree
         # download: clean-save, then offer the result as a client-side file
         assert '"method": "saveClean", "result": "download_layout"' in tree
@@ -585,6 +904,25 @@ class TestSpadayPerspectiveLayoutActions:
 
 class TestMainTabs:
     """The main window's tab layout: workspace + on-demand closeable tabs (graph, send)."""
+
+    def test_tab_buttons_do_not_depend_on_registration_order(self):
+        from spaday import element
+        from spaday.actions import SetField
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        before = ui.tab_button("Logs", "logs").to_node()
+        ui.add_tab("logs", "Logs", element("div"), on_open=SetField("loaded", True))
+        after = ui.tab_button("Logs", "logs").to_node()
+        assert before["events"]["click"] == after["events"]["click"]
+
+    def test_buttons_for_one_tab_keep_their_own_actions(self):
+        from spaday.actions import SetField
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        first = ui.tab_button("First", "logs", action=SetField("choice", "first")).to_node()
+        second = ui.tab_button("Second", "logs", action=SetField("choice", "second")).to_node()
+        assert first["events"]["click"]["actions"][-1]["value"] == {"expr": "lit", "value": "first"}
+        assert second["events"]["click"]["actions"][-1]["value"] == {"expr": "lit", "value": "second"}
 
     @pytest.fixture(scope="class")
     def gateway(self, free_port):
@@ -676,6 +1014,8 @@ class TestMainTabs:
 
     def test_plus_and_graph_buttons_open_tabs(self, client: TestClient):
         tree = client.get("/tree.json").text
+        assert '"name": {"Str": "bars"}' in tree
+        assert "\\u2630" not in tree
         assert '"data-tab": {"Str": "send"}' in tree
         assert '"data-tab": {"Str": "channels-graph"}' in tree
         # the bottom drawer is gone in the spaday provider (send lives in a tab now)

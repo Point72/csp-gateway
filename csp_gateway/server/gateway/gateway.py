@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from socket import gethostname
-from threading import Event
+from threading import Event, RLock
 from time import monotonic, sleep
 from typing import Any
 
@@ -89,6 +89,7 @@ class Gateway(ChannelsFactory[GatewayChannels]):
     _in_test: bool = PrivateAttr(False)
     _module_shutdown_timeout: int = PrivateAttr()
     _dynamic_channels_instantiated: bool = PrivateAttr(False)
+    _assignment_lock: Any = PrivateAttr(default_factory=RLock)
     # Signalled by the csp thread once the engine is running or the graph build has failed.
     _startup_complete: Event = PrivateAttr(default_factory=Event)
 
@@ -149,6 +150,14 @@ class Gateway(ChannelsFactory[GatewayChannels]):
         if attr in ("channels", "state") and not self.running:
             raise GatewayException(f"Can only access `{attr}` when engine is running")
         return object.__getattribute__(self, attr)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        lock = getattr(self, "_assignment_lock", None)
+        if lock is None:
+            super().__setattr__(name, value)
+        else:
+            with lock:
+                super().__setattr__(name, value)
 
     @csp.graph
     def graph(self, user_graph: Callable[[GatewayChannels], Any] | None = None):  # type: ignore[no-untyped-def]

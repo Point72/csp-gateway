@@ -4,6 +4,8 @@ from typing import Any, get_args, get_origin
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from csp_gateway.utils.struct.base import type_adapter_for
+
 __all__ = (
     "get_fully_qualified_type_name",
     "get_next_tick",
@@ -58,16 +60,32 @@ def prepare_response(
         #  Else return an empty json
         res = []
 
-    json_res_bytes = b"[" + b",".join(r.type_adapter().dump_json(r) for r in res) + b"]"
-    json_res = json_res_bytes.decode()
+    json_res_bytes = _dump_records(list(res))
     # Prepare and return response
     if wrap_in_response:
         return Response(
-            content=json_res,
+            content=json_res_bytes,
             media_type="application/json",
         )
     # useful when you want the data, but outside a fastapi response object
-    return json_res
+    return json_res_bytes.decode()
+
+
+def _dump_records(res: list) -> bytes:
+    """Serialize records to a JSON array, byte-identical to dumping each with its own adapter.
+
+    Records that are all exactly one `GatewayStruct` type go through its batched dump instead.
+    """
+    if not res:
+        return b"[]"
+    cls = type(res[0])
+    # Called even on the fast path: it is what rejects non-model records.
+    type_adapter_for(res[0])
+    if all(type(r) is cls for r in res):
+        dump_json_list = getattr(cls, "_dump_json_list", None)
+        if dump_json_list is not None and (json_res_bytes := dump_json_list(res)) is not None:
+            return json_res_bytes
+    return b"[" + b",".join(type_adapter_for(r).dump_json(r) for r in res) + b"]"
 
 
 async def get_next_tick(gateway, field, key=""):

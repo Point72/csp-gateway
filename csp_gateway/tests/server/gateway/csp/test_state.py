@@ -1,7 +1,9 @@
+import threading
 import time
 import typing
 from datetime import datetime, timedelta
 from enum import Enum
+from unittest.mock import Mock
 
 import pytest
 
@@ -594,3 +596,80 @@ def test_duckdb_schema_includes_pep604_optional_fields():
     assert schema.get("a") == "BIGINT"  # typing.Optional[int]
     assert schema.get("b") == "BIGINT"  # int | None
     assert schema.get("c") == "BIGINT"
+
+
+def test_duckdb_query_concurrent_with_buffered_inserts(monkeypatch):
+    enable_duckdb_state()
+    state_module.modify_buffer_threshold(1)
+    try:
+        state = State[CspStruct](keyby=("a",))
+        impl = state._state_impl
+        original = CspStruct(a=1, b="old")
+        replacement = CspStruct(a=1, b="new")
+        impl.insert(original)
+
+        query_started = threading.Event()
+        writer_blocked = threading.Event()
+        errors = []
+        database_lock = impl._db_lock
+
+        class ObservedLock:
+            owner = None
+
+            def __enter__(self):
+                if threading.current_thread() is writer:
+                    acquired = database_lock.acquire(blocking=False)
+                    if acquired:
+                        database_lock.release()
+                    assert not acquired, "writer did not contend with the query"
+                    writer_blocked.set()
+                assert database_lock.acquire(timeout=10), "database lock timed out"
+                self.owner = threading.get_ident()
+                return self
+
+            def __exit__(self, *exc):
+                self.owner = None
+                database_lock.release()
+
+        observed_lock = ObservedLock()
+        sql = impl._con.sql
+
+        def checked_sql(query):
+            assert observed_lock.owner == threading.get_ident(), "SELECT is not protected"
+            result = sql(query)
+            query_started.set()
+            assert writer_blocked.wait(timeout=10), "writer did not attempt the database lock"
+            return result
+
+        class CheckedStore(dict):
+            def __getitem__(self, key):
+                assert observed_lock.owner == threading.get_ident(), "object lookup is not protected"
+                return super().__getitem__(key)
+
+        connection = Mock(wraps=impl._con)
+        connection.sql.side_effect = checked_sql
+        monkeypatch.setattr(impl, "_con", connection)
+        monkeypatch.setattr(impl, "_db_lock", observed_lock)
+        monkeypatch.setattr(impl, "_obj_store", CheckedStore(impl._obj_store))
+
+        def insert_replacement():
+            try:
+                assert query_started.wait(timeout=10), "query never reached SELECT"
+                impl.insert(replacement)
+            except Exception as error:  # noqa: BLE001
+                errors.append(error)
+
+        writer = threading.Thread(target=insert_replacement, daemon=True)
+        writer.start()
+        try:
+            query = Query(filters=[Filter(attr="b", by=FilterCondition(value="old", where="=="))])
+            result = impl.query(query)
+        finally:
+            query_started.set()
+            writer.join(timeout=10)
+        assert not writer.is_alive()
+        assert not errors
+        assert result == [original]
+        assert impl.query() == [replacement]
+    finally:
+        state_module.restore_buffer_threshold()

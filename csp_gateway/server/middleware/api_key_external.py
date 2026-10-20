@@ -11,7 +11,7 @@ from ..settings import GatewaySettings
 from ..web import GatewayWebApp
 from .api_key import MountAPIKeyMiddleware
 from .base import IdentityAwareMiddlewareMixin
-from .hacks.api_key_middleware_websocket_fix.api_key import (
+from .hacks.api_key_middleware_websocket_fix import (
     APIKeyCookie,
     APIKeyHeader,
     APIKeyQuery,

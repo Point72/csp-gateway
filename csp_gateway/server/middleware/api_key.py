@@ -13,7 +13,7 @@ from starlette.status import HTTP_403_FORBIDDEN
 from ..settings import GatewaySettings
 from ..web import GatewayWebApp
 from .base import AuthenticationMiddleware
-from .hacks.api_key_middleware_websocket_fix.api_key import (
+from .hacks.api_key_middleware_websocket_fix import (
     APIKeyCookie,
     APIKeyHeader,
     APIKeyQuery,

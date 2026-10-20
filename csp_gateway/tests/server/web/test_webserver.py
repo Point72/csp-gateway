@@ -2,14 +2,19 @@ import logging
 import os
 import os.path
 import pickle
+import runpy
 import time
+import typing
+from importlib import import_module
 from platform import python_version
 from unittest import mock
 
 import csp.impl.error_handling
 import pytest
+from fastapi import FastAPI, Request, Security, WebSocket, security as native
 from fastapi.testclient import TestClient
 from packaging import version
+from starlette.requests import HTTPConnection
 
 from csp_gateway import (
     Filter,
@@ -33,6 +38,8 @@ from csp_gateway.server.demo import (
     ExampleModule,
     ExampleModuleCustomTable,
 )
+from csp_gateway.server.middleware.hacks import api_key_middleware_websocket_fix as compatibility
+from csp_gateway.server.middleware.hacks.api_key_middleware_websocket_fix import api_key as legacy
 
 csp.impl.error_handling.set_print_full_exception_stack(True)
 
@@ -945,3 +952,74 @@ class TestMultipleAPIKeys:
         """Test that requests without API key are rejected"""
         response = multi_key_rest_client.get("/api/v1/last")
         assert response.status_code == 403, "Request without API key should be rejected"
+
+
+@pytest.mark.parametrize("websocket_support", [False, True])
+def test_api_key_security_selects_websocket_capable_dependencies(monkeypatch, websocket_support):
+    request_type = HTTPConnection if websocket_support else Request
+    monkeypatch.setattr(typing, "get_type_hints", lambda dependency: {"request": request_type})
+    exports = runpy.run_path(compatibility.__file__, run_name=f"{compatibility.__name__}.__init__")
+    expected = native if websocket_support else legacy
+    for name in ("APIKeyQuery", "APIKeyHeader", "APIKeyCookie"):
+        assert exports.get(name) is getattr(expected, name)
+
+
+def test_api_key_security_is_shared_by_middlewares():
+    for name in ("api_key", "api_key_external", "simple"):
+        middleware = import_module(f"csp_gateway.server.middleware.{name}")
+        assert middleware.APIKeyCookie is compatibility.APIKeyCookie
+        if name != "simple":
+            assert middleware.APIKeyQuery is compatibility.APIKeyQuery
+            assert middleware.APIKeyHeader is compatibility.APIKeyHeader
+
+
+@pytest.mark.parametrize("location", ["query", "header", "cookie"])
+@pytest.mark.parametrize("credential", [None, "", "valid"])
+def test_api_key_security_http_and_websocket_credentials(location, credential):
+    dependency = getattr(compatibility, f"APIKey{location.title()}")(name="token", auto_error=False)
+    app = FastAPI()
+
+    @app.get("/credentials")
+    async def http_credentials(token: str | None = Security(dependency)):
+        return {"token": token}
+
+    @app.websocket("/credentials")
+    async def websocket_credentials(websocket: WebSocket, token: str | None = Security(dependency)):
+        await websocket.accept()
+        await websocket.send_json({"token": token})
+        await websocket.close()
+
+    path = "/credentials"
+    headers = {}
+    if credential is not None:
+        if location == "query":
+            path += f"?token={credential}"
+        elif location == "header":
+            headers["token"] = credential
+        else:
+            headers["cookie"] = f"token={credential}"
+    with TestClient(app) as client:
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        assert response.json() == {"token": credential or None}
+        with client.websocket_connect(path, headers=headers) as websocket:
+            assert websocket.receive_json() == {"token": credential or None}
+        scheme = app.openapi()["components"]["securitySchemes"][type(dependency).__name__]
+        assert scheme == {"type": "apiKey", "in": location, "name": "token"}
+
+
+@pytest.mark.parametrize("credential", [None, "", "wrong"])
+def test_api_key_security_preserves_gateway_forbidden_response(credential):
+    app = FastAPI()
+    check = MountAPIKeyMiddleware(api_key="valid").validate()
+
+    @app.get("/protected")
+    async def protected(token: str = Security(check)):
+        return {"token": token}
+
+    with TestClient(app) as client:
+        params = {} if credential is None else {"token": credential}
+        response = client.get("/protected", params=params)
+        assert response.status_code == 403
+        assert response.json() == {"detail": "unauthorized"}
+        assert "www-authenticate" not in response.headers

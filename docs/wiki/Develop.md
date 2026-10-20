@@ -121,6 +121,7 @@ the gateway templates the served `index.html` and exposes the configuration at `
 which the default frontend reads on load.
 
 - `TITLE`: Page title and header title.
+- `FAVICON`: Browser-tab icon URL. Root-relative URLs honor `ROOT_PATH`. Spaday provider only.
 - `HEADER_LOGO` / `FOOTER_LOGO`: Logo image, given as an `http(s)` URL, a `data:` URI, an
   already-served URL path, or a local file path. Local files are served automatically.
 - `CUSTOM_CSS`: List of CSS files to inject (URLs or local file paths).

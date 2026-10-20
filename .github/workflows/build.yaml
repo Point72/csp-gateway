@@ -28,6 +28,7 @@ permissions:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     strategy:
       matrix:
@@ -42,12 +43,12 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           version: ${{ matrix.python-version }}
 
       - name: Setup Node.js
-        uses: actions-ext/node/setup@76f3a17a300e54d13e6486d4caecfaa41833bf70
+        uses: actions-ext/node/setup@03c9f6b2d9c9fa2c26cfa22d0fa379a69329b319
         with:
           version: ${{ matrix.node-version }}
 
@@ -66,7 +67,9 @@ jobs:
         run: make build
 
       - name: Test
-        run: make coverage
+        run: |
+          python -m playwright install --with-deps chromium
+          make coverage
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload test results
@@ -83,7 +86,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Upload coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -92,13 +95,13 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
 
       - name: Test wheel
-        uses: actions-ext/python/test-wheel@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/test-wheel@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           module: csp_gateway
         if: matrix.os == 'ubuntu-latest'
 
       - name: Test source distribution
-        uses: actions-ext/python/test-sdist@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/test-sdist@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           module: csp_gateway
         if: matrix.os == 'ubuntu-latest'
@@ -112,6 +115,7 @@ jobs:
 
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     needs: build
     strategy:
       matrix:
@@ -125,12 +129,12 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           version: ${{ matrix.python-version }}
 
       - name: Setup Node.js
-        uses: actions-ext/node/setup@76f3a17a300e54d13e6486d4caecfaa41833bf70
+        uses: actions-ext/node/setup@03c9f6b2d9c9fa2c26cfa22d0fa379a69329b319
         with:
           version: 22.x
 
@@ -146,7 +150,9 @@ jobs:
         run: uv pip install `ls csp_gateway-*.whl`[develop] --target .
 
       - name: Test
-        run: make coverage
+        run: |
+          python -m playwright install --with-deps chromium
+          make coverage
 
       - name: Upload test results (Python)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -162,7 +168,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
 
       - name: Upload coverage
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -181,7 +187,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions-ext/python/setup@1151b211cbac1137879fd28605e82a9f4511e0db
+        uses: actions-ext/python/setup@c8228d827a81b9f8c808825328af361c45461ba3
         with:
           version: 3.11
 

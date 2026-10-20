@@ -735,6 +735,7 @@ class GatewayWebApp:
             port=self.settings.PORT,
             uds=None,
             fd=None,
+            # "auto" builds the loop with uvloop when it is installed, plain asyncio otherwise
             loop="auto",
             http="auto",
             ws="auto",
