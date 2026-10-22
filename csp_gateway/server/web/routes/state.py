@@ -50,8 +50,6 @@ def add_state_routes(
     if subroute_key:
         query_dependency = query_json()
 
-        # Sync, so FastAPI runs the query and serialization in its threadpool: a large state would
-        # otherwise hold the event loop and stall every other request until it finished.
         def get_state(key: str, query: Query | None = query_dependency, request: Request = None) -> list_model:  # type: ignore[valid-type]
             """
             Get state value on a dictionary basket channel, where `key` is the key of the dictionary basket.
@@ -89,8 +87,6 @@ def add_state_routes(
     if model:
         query_dependency = query_json()
 
-        # Sync, so FastAPI runs the query and serialization in its threadpool: a large state would
-        # otherwise hold the event loop and stall every other request until it finished.
         def get_state(query: Query | None = query_dependency, request: Request = None) -> list_model:  # type: ignore[misc, valid-type]
             """Get state value on a non-dict basket channel. This endpoint will flatten the state structure and return a list of the elements.
             Query parameters may be provided to perform server-side filtering and other functionality on the state object.

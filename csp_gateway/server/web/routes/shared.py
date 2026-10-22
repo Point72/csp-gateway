@@ -50,7 +50,7 @@ def prepare_response(
     if res:
         # Convert the dict basket to just the list of values
         if is_dict_basket:
-            res = res.values()
+            res = [record for records in res.values() for record in records] if is_list_model else res.values()
 
         # If its not a list model, it means we got back 1 thing, so wrap it
         elif not is_list_model and not isinstance(res, list):

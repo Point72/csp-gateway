@@ -2,6 +2,7 @@ from typing import Any, get_origin
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException, coerce_basket_key
@@ -67,7 +68,7 @@ def add_next_routes(
                     detail=f"Channel not found: {field}/{key}",
                 )
 
-            return prepare_response(res, is_list_model=is_list_model)
+            return await run_in_threadpool(prepare_response, res, is_list_model=is_list_model)
 
         api_router.get(
             f"/{field}/{{key:path}}",
@@ -101,7 +102,8 @@ def add_next_routes(
                     status_code=404,
                     detail=f"Channel not found: {field}",
                 )
-            return prepare_response(
+            return await run_in_threadpool(
+                prepare_response,
                 res,
                 is_list_model=is_list_model,
                 is_dict_basket=True,
@@ -149,7 +151,7 @@ def add_next_routes(
                     detail=f"Channel not found: {field}",
                 )
 
-            return prepare_response(res, is_list_model=is_list_model)
+            return await run_in_threadpool(prepare_response, res, is_list_model=is_list_model)
 
         api_router.get(
             f"/{field}",

@@ -232,7 +232,7 @@ class _StageManager:
             before = self._snapshot()
             affected = self._stage_add(struct, staging_ids)
             events = self._diff(before)
-        self._emit(events)
+            self._emit(events)
         return affected
 
     def stage_remove(
@@ -251,7 +251,7 @@ class _StageManager:
             before = self._snapshot()
             affected = self._stage_remove(struct, staging_ids)
             events = self._diff(before)
-        self._emit(events)
+            self._emit(events)
         return affected
 
     def stage_release(
@@ -264,7 +264,7 @@ class _StageManager:
         """
         with self._lock:
             released = self._stage_release(staging_ids)
-        self._emit([(StagingAction.RELEASED, sid, items) for sid, items in released.items()])
+            self._emit([(StagingAction.RELEASED, sid, items) for sid, items in released.items()])
         return released
 
     def _stage_add(

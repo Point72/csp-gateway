@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Annotated, Any
 
 import csp
+import numpy as np
 import orjson
 import pytest
 from csp import ts
@@ -20,7 +21,6 @@ from csp_gateway import (
     JSONConverter,
 )
 from csp_gateway.server.gateway.csp.channels import _CSP_ENGINE_CYCLE_TIMESTAMP_FIELD
-from csp_gateway.server.shared import json_converter as json_converter_module
 from csp_gateway.server.shared.json_converter import (
     ChannelValueModel as CVM,
     _convert_orjson_compatible,
@@ -770,17 +770,6 @@ def test_decode(after_graph_ends):
         assert len(out["my_str_basket[my_key2]"]) == 1
 
 
-def _convert_without_passthrough(obj):
-    """`_convert_orjson_compatible` as it was before plain leaves skipped the isinstance chain."""
-    converter = json_converter_module._convert_orjson_compatible
-    original = json_converter_module._PASSTHROUGH_TYPES
-    json_converter_module._PASSTHROUGH_TYPES = frozenset()
-    try:
-        return converter(obj)
-    finally:
-        json_converter_module._PASSTHROUGH_TYPES = original
-
-
 class _LeafEnum(IntEnum):
     ONE = 1
 
@@ -789,31 +778,32 @@ class _Name(str):
     pass
 
 
+class _StringEnum(str, Enum):
+    ONE = "one"
+
+
 @pytest.mark.parametrize(
-    "value",
+    "value, expected",
     [
-        pytest.param("text", id="str"),
-        pytest.param(_Name("sub"), id="str_subclass"),
-        pytest.param(7, id="int"),
-        pytest.param(True, id="bool"),
-        pytest.param(1.5, id="float"),
-        pytest.param(float("nan"), id="nan"),
-        pytest.param(None, id="none"),
-        pytest.param(datetime(2026, 1, 1), id="naive_datetime"),
-        pytest.param(datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=-5))), id="aware_datetime"),
-        pytest.param(_LeafEnum.ONE, id="int_enum"),
-        pytest.param(timedelta(seconds=3), id="timedelta"),
-        pytest.param({"a": [1, "b", _LeafEnum.ONE, {"c": None}]}, id="nested_containers"),
+        pytest.param("text", b'"text"', id="str"),
+        pytest.param(_Name("sub"), b'"sub"', id="str_subclass"),
+        pytest.param(7, b"7", id="int"),
+        pytest.param(True, b"true", id="bool"),
+        pytest.param(1.5, b"1.5", id="float"),
+        pytest.param(float("nan"), b"null", id="nan"),
+        pytest.param(None, b"null", id="none"),
+        pytest.param(datetime(2026, 1, 1), b'"2026-01-01T00:00:00"', id="naive_datetime"),
+        pytest.param(datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=-5))), b'"2026-01-01T00:00:00-05:00"', id="aware_datetime"),
+        pytest.param(_LeafEnum.ONE, b'"ONE"', id="int_enum"),
+        pytest.param(_StringEnum.ONE, b'"ONE"', id="str_enum"),
+        pytest.param(MyCspEnum.ZERO, b'"ZERO"', id="csp_enum"),
+        pytest.param(np.int64(7), b"7", id="numpy_int"),
+        pytest.param(np.float64(1.5), b"1.5", id="numpy_float"),
+        pytest.param(np.array([1, 2]), b"[1,2]", id="numpy_array"),
+        pytest.param(timedelta(seconds=3), b"3.0", id="timedelta"),
+        pytest.param({"a": [1, "b", _LeafEnum.ONE, {"c": None}]}, b'{"a":[1,"b","ONE",{"c":null}]}', id="nested_containers"),
     ],
 )
-def test_convert_orjson_compatible_passthrough_matches_full_chain(value):
-    converted = json_converter_module._convert_orjson_compatible(value)
-    expected = _convert_without_passthrough(value)
-    assert type(converted) is type(expected)
-    assert orjson.dumps(converted, option=orjson.OPT_SERIALIZE_NUMPY) == orjson.dumps(expected, option=orjson.OPT_SERIALIZE_NUMPY)
-
-
-def test_convert_orjson_compatible_subclass_leaves_keep_their_branches():
-    # Exact-type matching: an int or str subclass must not be passed through as a plain leaf.
-    assert json_converter_module._convert_orjson_compatible(_LeafEnum.ONE) == "ONE"
-    assert json_converter_module._convert_orjson_compatible([_LeafEnum.ONE, 1]) == ["ONE", 1]
+def test_convert_orjson_compatible_wire_values(value, expected):
+    converted = _convert_orjson_compatible(value)
+    assert orjson.dumps(converted, option=orjson.OPT_SERIALIZE_NUMPY) == expected

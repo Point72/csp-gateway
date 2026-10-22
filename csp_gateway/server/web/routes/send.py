@@ -37,8 +37,7 @@ def add_send_routes(
     fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
-        # Sync, so FastAPI runs it in its threadpool: pushing and echoing a large
-        # payload would otherwise hold the event loop and stall every other request.
+
         def send(key: subroute_key, data: list_model | base_model, request: Request) -> list_model:  # type: ignore[valid-type]
             """
             Send data to a dictionary basket channel, where `key` is the key of the dictionary basket.
@@ -95,9 +94,7 @@ def add_send_routes(
             include_in_schema=False,
         )(send)
 
-        # Sync, so FastAPI runs it in its threadpool: pushing and echoing a large
-        # payload would otherwise hold the event loop and stall every other request.
-        def send(data: dict[subroute_key, base_model], request: Request) -> dict[subroute_key, base_model]:  # type: ignore[valid-type]
+        def send(data: dict[subroute_key, model], request: Request) -> list_model:  # type: ignore[valid-type]
             log.debug(f"send: {data}")
 
             # Throw 404 if not a supported channel
@@ -119,7 +116,7 @@ def add_send_routes(
 
             # Emit the pydantic model back as it
             # will now have the `id` and `timestamp`
-            return prepare_response(data, is_dict_basket=True)
+            return prepare_response(data, is_list_model=is_list_model, is_dict_basket=True)
 
         api_router.post(
             f"/{field}",
@@ -135,8 +132,7 @@ def add_send_routes(
         )(send)
 
     elif model:
-        # Sync, so FastAPI runs it in its threadpool: pushing and echoing a large
-        # payload would otherwise hold the event loop and stall every other request.
+
         def send(data: list_model | base_model, request: Request) -> list_model:  # type: ignore[misc, valid-type]
             """
             Send data to a non-basket channel. This endpoint can accept either a single element, or a list of elements.

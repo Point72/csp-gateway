@@ -64,13 +64,10 @@ def read_engine_encoding_json_with_duckdb(channels: ChannelsType, filename: str)
     return duckdb.read_json(filename, columns=columns, format="newline_delimited")
 
 
-#: Leaf types returned unchanged. Matched by exact type, so subclasses (IntEnum, csp enums, numpy
-#: scalars) still reach their branches below.
 _PASSTHROUGH_TYPES = frozenset((str, int, float, bool, type(None), datetime))
 
 
 def _convert_orjson_compatible(obj: Any):
-    # Most values are plain leaves; return them before the isinstance chain, once per published field.
     if type(obj) in _PASSTHROUGH_TYPES:
         return obj
     if isinstance(obj, PydanticBaseModel):

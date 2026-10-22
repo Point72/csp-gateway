@@ -26,7 +26,7 @@ def add_lookup_routes(
     # Get the fully qualified type name for the description
     fq_type_name = get_fully_qualified_type_name(model)
 
-    async def lookup(id: str, request: Request) -> list[model]:  # type: ignore[misc, valid-type]
+    def lookup(id: str, request: Request) -> list[model]:  # type: ignore[misc, valid-type]
         """
         This endpoint lets you lookup any GatewayStruct by its uniquely generated `id`.
         """
@@ -71,7 +71,7 @@ def add_lookup_available_channels(api_router: APIRouter, fields: set[str] | None
         "/id/{id:path}",
         responses=get_default_responses(),
     )
-    async def get_lookup_by_id(id: str, request: Request) -> Any:
+    def get_lookup_by_id(id: str, request: Request) -> Any:
         """
         This endpoint lets you lookup any GatewayStruct by its globally unique `id`.
         Returns the GatewayStruct instance if found, otherwise returns 404.
