@@ -32,8 +32,9 @@ def add_last_routes(
     fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
-
-        async def get_last(key: str, request: Request) -> list_model:  # type: ignore[valid-type]
+        # Sync, so FastAPI runs it in its threadpool: it blocks until the engine
+        # answers, which would otherwise hold the event loop and stall every other request.
+        def get_last(key: str, request: Request) -> list_model:  # type: ignore[valid-type]
             """
             Get last ticked value on a dictionary basket channel, where `key` is the key of the dictionary basket.
             If such a key does not exist or is not mounted, this endpoint will raise a `404` error.
@@ -80,7 +81,9 @@ def add_last_routes(
             include_in_schema=False,
         )(get_last)
 
-        async def get_last_basket(request: Request) -> list_model:  # type: ignore[misc, valid-type]
+        # Sync, so FastAPI runs it in its threadpool: it blocks until the engine
+        # answers, which would otherwise hold the event loop and stall every other request.
+        def get_last_basket(request: Request) -> list_model:  # type: ignore[misc, valid-type]
             """Get last ticked value on a dictionary basket channel. This endpoint will return the entire basket"""
             # Throw 404 if not a supported channel
             if not hasattr(request.app.gateway.channels, field):
@@ -116,8 +119,9 @@ def add_last_routes(
         )(get_last_basket)
 
     elif model:
-
-        async def get_last(request: Request) -> list_model:  # type: ignore[misc, valid-type]
+        # Sync, so FastAPI runs it in its threadpool: it blocks until the engine
+        # answers, which would otherwise hold the event loop and stall every other request.
+        def get_last(request: Request) -> list_model:  # type: ignore[misc, valid-type]
             """
             Get last ticked value on a non-basket channel.
             This endpoint will always return a list of elements.

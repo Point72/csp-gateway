@@ -20,6 +20,7 @@ from csp_gateway import (
     JSONConverter,
 )
 from csp_gateway.server.gateway.csp.channels import _CSP_ENGINE_CYCLE_TIMESTAMP_FIELD
+from csp_gateway.server.shared import json_converter as json_converter_module
 from csp_gateway.server.shared.json_converter import (
     ChannelValueModel as CVM,
     _convert_orjson_compatible,
@@ -767,3 +768,52 @@ def test_decode(after_graph_ends):
         assert len(out["my_enum_basket[MyEnum.TWO]"]) == 1
         assert len(out["my_str_basket[my_key]"]) == 1
         assert len(out["my_str_basket[my_key2]"]) == 1
+
+
+def _convert_without_passthrough(obj):
+    """`_convert_orjson_compatible` as it was before plain leaves skipped the isinstance chain."""
+    converter = json_converter_module._convert_orjson_compatible
+    original = json_converter_module._PASSTHROUGH_TYPES
+    json_converter_module._PASSTHROUGH_TYPES = frozenset()
+    try:
+        return converter(obj)
+    finally:
+        json_converter_module._PASSTHROUGH_TYPES = original
+
+
+class _LeafEnum(IntEnum):
+    ONE = 1
+
+
+class _Name(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("text", id="str"),
+        pytest.param(_Name("sub"), id="str_subclass"),
+        pytest.param(7, id="int"),
+        pytest.param(True, id="bool"),
+        pytest.param(1.5, id="float"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(None, id="none"),
+        pytest.param(datetime(2026, 1, 1), id="naive_datetime"),
+        pytest.param(datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=-5))), id="aware_datetime"),
+        pytest.param(_LeafEnum.ONE, id="int_enum"),
+        pytest.param(timedelta(seconds=3), id="timedelta"),
+        pytest.param({"a": [1, "b", _LeafEnum.ONE, {"c": None}]}, id="nested_containers"),
+    ],
+)
+def test_convert_orjson_compatible_passthrough_matches_full_chain(value):
+    converted = json_converter_module._convert_orjson_compatible(value)
+    expected = _convert_without_passthrough(value)
+    assert type(converted) is type(expected)
+    assert orjson.dumps(converted, option=orjson.OPT_SERIALIZE_NUMPY) == orjson.dumps(expected, option=orjson.OPT_SERIALIZE_NUMPY)
+
+
+def test_convert_orjson_compatible_subclass_leaves_keep_their_branches():
+    # Exact-type matching: an int or str subclass must not be passed through as a plain leaf.
+    assert json_converter_module._convert_orjson_compatible(_LeafEnum.ONE) == "ONE"
+    assert json_converter_module._convert_orjson_compatible([_LeafEnum.ONE, 1]) == ["ONE", 1]

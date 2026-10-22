@@ -37,8 +37,9 @@ def add_send_routes(
     fq_type_name = get_fully_qualified_type_name(model)
 
     if subroute_key:
-
-        async def send(key: subroute_key, data: list_model | base_model, request: Request) -> list_model:  # type: ignore[valid-type]
+        # Sync, so FastAPI runs it in its threadpool: pushing and echoing a large
+        # payload would otherwise hold the event loop and stall every other request.
+        def send(key: subroute_key, data: list_model | base_model, request: Request) -> list_model:  # type: ignore[valid-type]
             """
             Send data to a dictionary basket channel, where `key` is the key of the dictionary basket.
             If such a key does not exist or is not mounted, this endpoint will raise a `404` error.
@@ -94,7 +95,9 @@ def add_send_routes(
             include_in_schema=False,
         )(send)
 
-        async def send(data: dict[subroute_key, base_model], request: Request) -> dict[subroute_key, base_model]:  # type: ignore[valid-type]
+        # Sync, so FastAPI runs it in its threadpool: pushing and echoing a large
+        # payload would otherwise hold the event loop and stall every other request.
+        def send(data: dict[subroute_key, base_model], request: Request) -> dict[subroute_key, base_model]:  # type: ignore[valid-type]
             log.debug(f"send: {data}")
 
             # Throw 404 if not a supported channel
@@ -132,8 +135,9 @@ def add_send_routes(
         )(send)
 
     elif model:
-
-        async def send(data: list_model | base_model, request: Request) -> list_model:  # type: ignore[misc, valid-type]
+        # Sync, so FastAPI runs it in its threadpool: pushing and echoing a large
+        # payload would otherwise hold the event loop and stall every other request.
+        def send(data: list_model | base_model, request: Request) -> list_model:  # type: ignore[misc, valid-type]
             """
             Send data to a non-basket channel. This endpoint can accept either a single element, or a list of elements.
             A list of elements will be returned with `id` and `timestamp` fields assigned.
