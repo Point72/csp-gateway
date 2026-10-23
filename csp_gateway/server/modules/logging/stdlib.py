@@ -309,7 +309,7 @@ class Logging(GatewayModule):
     def _get_hydra_output_dir(self) -> str | None:
         """Try to get the hydra output directory."""
         try:
-            from hydra.core.hydra_config import HydraConfig
+            from csp_gateway._config_framework import HydraConfig
 
             if HydraConfig.initialized():
                 return HydraConfig.get().runtime.output_dir
