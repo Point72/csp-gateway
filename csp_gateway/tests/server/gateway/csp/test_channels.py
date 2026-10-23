@@ -1,4 +1,7 @@
+import asyncio
+from concurrent.futures import Future
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Annotated, get_type_hints
 
 import csp
@@ -8,7 +11,7 @@ from csp import Enum, Struct, ts
 from csp.typing import Numpy1DArray
 from pydantic import ValidationError
 
-from csp_gateway import GatewayChannels, GatewayStruct as _Base, State
+from csp_gateway import GatewayChannels, GatewayStruct as _Base, NoProviderException, State
 from csp_gateway.server.gateway.csp.channels import _CSP_ENGINE_CYCLE_TIMESTAMP_FIELD
 
 
@@ -64,6 +67,68 @@ class MyGatewayChannels(GatewayChannels):
     my_str_basket: dict[str, ts[MyStruct]] = None
     my_enum_basket_list: dict[MyEnum, ts[list[MyStruct]]] = None
     my_array_channel: ts[Numpy1DArray[float]] = None
+
+
+@pytest.fixture
+def last_request():
+    channels = MyGatewayChannels()
+    future = Future()
+    submitted = asyncio.Event()
+
+    def push_tick():
+        submitted.set()
+        return future
+
+    channels._last_requests["my_channel", None] = SimpleNamespace(push_tick=push_tick)
+    return channels, future, submitted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value, key, expected",
+    [
+        pytest.param(7, None, 7, id="scalar"),
+        pytest.param([1, 2], None, [1, 2], id="list"),
+        pytest.param(None, None, None, id="unticked"),
+        pytest.param({"one": [1, 2]}, None, {"one": [1, 2]}, id="basket"),
+        pytest.param({"one": [1, 2]}, "one", [1, 2], id="basket-key"),
+        pytest.param({0: 7}, 0, 7, id="zero-key"),
+    ],
+)
+async def test_last_async_matches_last_values(last_request, value, key, expected):
+    channels, future, _ = last_request
+    future.set_result(value)
+    assert await channels.last_async("my_channel", key) == expected
+    assert channels.last("my_channel", key) == expected
+
+
+@pytest.mark.asyncio
+async def test_last_async_cancellation_keeps_engine_future_pending(last_request):
+    channels, future, submitted = last_request
+    pending = asyncio.create_task(channels.last_async("my_channel"))
+    await asyncio.wait_for(submitted.wait(), timeout=1)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert not future.done()
+    future.set_result(7)
+    assert future.result() == 7
+
+
+@pytest.mark.asyncio
+async def test_last_async_timeout_keeps_engine_future_pending(last_request):
+    channels, future, _ = last_request
+    with pytest.raises(TimeoutError):
+        await channels.last_async("my_channel", timeout=0.01)
+    assert not future.done()
+    future.set_result(7)
+    assert future.result() == 7
+
+
+@pytest.mark.asyncio
+async def test_last_async_missing_provider():
+    with pytest.raises(NoProviderException):
+        await MyGatewayChannels().last_async("my_channel")
 
 
 def test_csp_enum_dict_basket_has_static_keys():

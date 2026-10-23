@@ -569,7 +569,7 @@ class GatewayWebApp:
             return list[get_args(typ)[0]]
         return typ
 
-    def add_last_api(self, field: str, version: str | None = None) -> None:
+    def add_last_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("last", version)
         dict_basket = self._is_dict_basket_field(field=field)
 
@@ -580,13 +580,13 @@ class GatewayWebApp:
             model = self._get_field_pydantic_type(field)
             subroute_key = None
 
-        add_last_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
+        add_last_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key, batch_size=batch_size, materialize=materialize)
 
     def add_last_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
         api_router = self.get_router("last", version)
         add_last_available_channels(api_router=api_router, fields=fields)
 
-    def add_next_api(self, field: str, version: str | None = None) -> None:
+    def add_next_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("next", version)
 
         if dict_basket := self._is_dict_basket_field(field=field):
@@ -596,13 +596,13 @@ class GatewayWebApp:
             model = self._get_field_pydantic_type(field)
             subroute_key = None
 
-        add_next_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
+        add_next_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key, batch_size=batch_size, materialize=materialize)
 
     def add_next_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
         api_router = self.get_router("next", version)
         add_next_available_channels(api_router=api_router, fields=fields)
 
-    def add_lookup_api(self, field: str, version: str | None = None) -> None:
+    def add_lookup_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("lookup", version)
         dict_basket = self._is_dict_basket_field(field=field)
 
@@ -611,13 +611,15 @@ class GatewayWebApp:
         else:
             model = self._get_field_pydantic_type(field)
 
-        add_lookup_routes(api_router=api_router, field=field, model=model)
+        add_lookup_routes(api_router=api_router, field=field, model=model, batch_size=batch_size, materialize=materialize)
 
-    def add_lookup_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
+    def add_lookup_available_channels(
+        self, fields: set[str] | None = None, version: str | None = None, *, batch_size: int = 500, materialize: bool = True
+    ) -> None:
         api_router = self.get_router("lookup", version)
-        add_lookup_available_channels(api_router=api_router, fields=fields)
+        add_lookup_available_channels(api_router=api_router, fields=fields, batch_size=batch_size, materialize=materialize)
 
-    def add_send_api(self, field: str, version: str | None = None) -> None:
+    def add_send_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("send", version)
         dict_basket = self._is_dict_basket_field(field=field)
 
@@ -628,13 +630,13 @@ class GatewayWebApp:
             model = self._get_field_pydantic_type(field)
             subroute_key = None
 
-        add_send_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
+        add_send_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key, batch_size=batch_size, materialize=materialize)
 
     def add_send_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
         api_router = self.get_router("send", version)
         add_send_available_channels(api_router=api_router, fields=fields)
 
-    def add_state_api(self, field: str, version: str | None = None) -> None:
+    def add_state_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         """Mount REST routes for the given state ``field``.
 
         ``field`` must be a known state name on the gateway's channels — either
@@ -673,6 +675,8 @@ class GatewayWebApp:
             subroute_key=subroute_key,
             keyby=tuple(spec.keyby) if spec.keyby else (),
             indexer=spec.indexer,
+            batch_size=batch_size,
+            materialize=materialize,
         )
 
     def add_state_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:

@@ -2,12 +2,13 @@ from typing import Any, get_origin
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException, coerce_basket_key
 
 from ..utils import get_default_responses
-from .shared import get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_last_available_channels",
@@ -20,7 +21,11 @@ def add_last_routes(
     field: str,
     model: BaseModel | list[BaseModel] = None,
     subroute_key: Any = None,
+    *,
+    batch_size: int = 500,
+    materialize: bool = True,
 ) -> None:
+    _validate_batch_size(batch_size)
     if model and get_origin(model) is list:
         is_list_model = True
         list_model = model
@@ -33,7 +38,7 @@ def add_last_routes(
 
     if subroute_key:
 
-        def get_last(key: str, request: Request) -> list_model:  # type: ignore[valid-type]
+        async def get_last(key: str, request: Request) -> list_model:  # type: ignore[valid-type]
             """
             Get last ticked value on a dictionary basket channel, where `key` is the key of the dictionary basket.
             If such a key does not exist or is not mounted, this endpoint will raise a `404` error.
@@ -56,14 +61,14 @@ def add_last_routes(
 
             # Grab the request off the edge
             try:
-                res = request.app.gateway.channels.last(getattr(request.app.gateway.channels_model, field), actual_key)
+                res = await request.app.gateway.channels.last_async(getattr(request.app.gateway.channels_model, field), actual_key)
             except NoProviderException:
                 raise HTTPException(
                     status_code=404,
                     detail=f"Channel not found: {field}/{key}",
                 )
 
-            return prepare_response(res, is_list_model=is_list_model)
+            return await run_in_threadpool(prepare_response, res, is_list_model=is_list_model, batch_size=batch_size, materialize=materialize)
 
         api_router.get(
             f"/{field}/{{key:path}}",
@@ -80,7 +85,7 @@ def add_last_routes(
             include_in_schema=False,
         )(get_last)
 
-        def get_last_basket(request: Request) -> list_model:  # type: ignore[misc, valid-type]
+        async def get_last_basket(request: Request) -> list_model:  # type: ignore[misc, valid-type]
             """Get last ticked value on a dictionary basket channel. This endpoint will return the entire basket"""
             # Throw 404 if not a supported channel
             if not hasattr(request.app.gateway.channels, field):
@@ -88,16 +93,19 @@ def add_last_routes(
 
             # Grab the request off the edge
             try:
-                res = request.app.gateway.channels.last(getattr(request.app.gateway.channels_model, field))
+                res = await request.app.gateway.channels.last_async(getattr(request.app.gateway.channels_model, field))
             except NoProviderException:
                 raise HTTPException(
                     status_code=404,
                     detail=f"Channel not found: {field}",
                 )
-            return prepare_response(
+            return await run_in_threadpool(
+                prepare_response,
                 res,
                 is_list_model=is_list_model,
                 is_dict_basket=True,
+                batch_size=batch_size,
+                materialize=materialize,
             )
 
         api_router.get(
@@ -117,7 +125,7 @@ def add_last_routes(
 
     elif model:
 
-        def get_last(request: Request) -> list_model:  # type: ignore[misc, valid-type]
+        async def get_last(request: Request) -> list_model:  # type: ignore[misc, valid-type]
             """
             Get last ticked value on a non-basket channel.
             This endpoint will always return a list of elements.
@@ -132,14 +140,14 @@ def add_last_routes(
 
             # Grab the request off the edge
             try:
-                res = request.app.gateway.channels.last(getattr(request.app.gateway.channels_model, field))
+                res = await request.app.gateway.channels.last_async(getattr(request.app.gateway.channels_model, field))
             except NoProviderException:
                 raise HTTPException(
                     status_code=404,
                     detail=f"Channel not found: {field}",
                 )
 
-            return prepare_response(res, is_list_model=is_list_model)
+            return await run_in_threadpool(prepare_response, res, is_list_model=is_list_model, batch_size=batch_size, materialize=materialize)
 
         api_router.get(
             f"/{field}",

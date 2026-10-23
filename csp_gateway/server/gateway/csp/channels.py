@@ -1,3 +1,4 @@
+import asyncio
 import warnings
 from collections import defaultdict, deque
 from contextlib import contextmanager
@@ -1165,6 +1166,15 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
 
         # wait for result
         result = future.result(timeout=timeout)
+        if _has_indexer(indexer):
+            return result.get(indexer)
+        return result
+
+    async def last_async(self, field: str, indexer: str | int | None = None, *, timeout=None) -> Any:
+        """Return the last channel value asynchronously."""
+        self._check(field, self._last_requests, "last")
+        future = self._last_requests[field, None].push_tick()
+        result = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), timeout=timeout)
         if _has_indexer(indexer):
             return result.get(indexer)
         return result

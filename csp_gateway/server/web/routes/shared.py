@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, get_args, get_origin
 
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from csp_gateway.utils.struct.base import type_adapter_for
@@ -40,12 +40,21 @@ def get_fully_qualified_type_name(model: BaseModel | list[BaseModel] | None) -> 
     return ""
 
 
+def _validate_batch_size(batch_size: int) -> None:
+    if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
+        raise ValueError("batch_size must be a positive integer")
+
+
 def prepare_response(
     res: Any,
     is_list_model: bool = False,
     is_dict_basket: bool = False,
     wrap_in_response: bool = True,
-) -> list[dict[Any, Any]]:
+    *,
+    batch_size: int = 500,
+    materialize: bool = True,
+) -> Response | str:
+    _validate_batch_size(batch_size)
     # If we've ticked
     if res:
         # Convert the dict basket to just the list of values
@@ -60,15 +69,20 @@ def prepare_response(
         #  Else return an empty json
         res = []
 
-    json_res_bytes = _dump_records(list(res))
-    # Prepare and return response
-    if wrap_in_response:
-        return Response(
-            content=json_res_bytes,
-            media_type="application/json",
-        )
-    # useful when you want the data, but outside a fastapi response object
-    return json_res_bytes.decode()
+    records = list(res)
+
+    def encode():
+        yield b"["
+        for start in range(0, len(records), batch_size):
+            encoded = _dump_records(records[start : start + batch_size])[1:-1]
+            yield (b"," if start else b"") + encoded
+        yield b"]"
+
+    if not wrap_in_response:
+        return b"".join(encode()).decode()
+    if materialize:
+        return Response(content=b"".join(encode()), media_type="application/json")
+    return StreamingResponse(encode(), media_type="application/json")
 
 
 def _dump_records(res: list) -> bytes:

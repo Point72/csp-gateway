@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from csp_gateway.utils import NoProviderException
 
 from ..utils import get_default_responses
-from .shared import get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +23,11 @@ def add_send_routes(
     field: str,
     model: BaseModel | list[BaseModel] = None,
     subroute_key: Any = None,
+    *,
+    batch_size: int = 500,
+    materialize: bool = True,
 ) -> None:
+    _validate_batch_size(batch_size)
     if model and get_origin(model) is list:
         is_list_model = True
         base_model = get_args(model)[0]
@@ -79,7 +83,7 @@ def add_send_routes(
 
             # Emit the pydantic model back as it
             # will now have the `id` and `timestamp`
-            return prepare_response(data, is_list_model=is_list_model)
+            return prepare_response(data, is_list_model=is_list_model, batch_size=batch_size, materialize=materialize)
 
         api_router.post(
             f"/{field}/{{key:path}}",
@@ -116,7 +120,7 @@ def add_send_routes(
 
             # Emit the pydantic model back as it
             # will now have the `id` and `timestamp`
-            return prepare_response(data, is_list_model=is_list_model, is_dict_basket=True)
+            return prepare_response(data, is_list_model=is_list_model, is_dict_basket=True, batch_size=batch_size, materialize=materialize)
 
         api_router.post(
             f"/{field}",
@@ -173,7 +177,7 @@ def add_send_routes(
 
             # Emit the pydantic model back as it
             # will now have the `id` and `timestamp`
-            return prepare_response(data, is_list_model=is_list_model)
+            return prepare_response(data, is_list_model=is_list_model, batch_size=batch_size, materialize=materialize)
 
         api_router.post(
             f"/{field}",

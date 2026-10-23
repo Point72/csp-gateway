@@ -934,6 +934,8 @@ modules:
   mount_rest_routes:
     _target_: csp_gateway.MountRestRoutes
     force_mount_all: True
+    batch_size: 500
+    materialize: True
 ```
 
 > [!WARNING]
@@ -949,6 +951,13 @@ modules:
 - **mount_stage** (`ChannelSelection`): channels to include in stage routes (automatically includes channels with `Stage()` annotation or `set_stage` call)
 - **mount_state** (`ChannelSelection`): channels to include in state routes
 - **mount_lookup** (`ChannelSelection`): channels to include in lookup routes
+- **batch_size** (`int`, default `500`): maximum number of records encoded per JSON batch. Must be positive.
+- **materialize** (`bool`, default `True`): encode the complete JSON response in memory before sending headers, with `Content-Length`. When `False`, stream encoded batches without `Content-Length`.
+
+Batching applies to record-array responses from `last`, `next`, `send`, `state`, and `lookup`.
+With `materialize: False`, a serialization error after headers have been sent can leave an incomplete JSON response.
+State queries still collect their results before serialization; batching does not bound query memory.
+Middleware that reads and rebuilds responses, including `AuthFilterMiddleware`, may materialize them independently.
 
 > [!IMPORTANT]
 >
