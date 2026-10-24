@@ -86,6 +86,7 @@ class Gateway(ChannelsFactory[GatewayChannels]):
         False, description="(Running attribute). The gateway will set this field to True if the csp graph build has failed"
     )
     running: bool = Field(False, description="(Running attribute). The gateway will set this field to True once the csp graph is running")
+    _hydra_config: str | None = PrivateAttr(None)
     _in_test: bool = PrivateAttr(False)
     _module_shutdown_timeout: int = PrivateAttr()
     _dynamic_channels_instantiated: bool = PrivateAttr(False)

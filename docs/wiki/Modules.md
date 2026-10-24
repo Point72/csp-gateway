@@ -55,6 +55,7 @@
   - [Credential Sources](#credential-sources-2)
 - [MountChannelsGraph](#mountchannelsgraph)
   - [Configuration](#configuration-12)
+- [MountConfig](#mountconfig)
 - [MountControls](#mountcontrols)
   - [Configuration](#configuration-13)
   - [Functionality](#functionality)
@@ -847,6 +848,26 @@ When using Basic Auth, the middleware decodes the credentials and validates them
 modules:
   mount_channels_graph:
     _target_: csp_gateway.MountChannelsGraph
+```
+
+## MountConfig
+
+`MountConfig` adds a read-only **Config** tab to the spaday UI, opened from the right drawer.
+It displays the resolved application config loaded by the CLI, `load_config()`, or `load_gateway()` as an expandable tree.
+Objects and lists show child counts; strings, numbers, booleans, and null retain their types.
+Values under keys containing `password`, `passwd`, `secret`, `token`, `api_key` (including `apiKey` and `api-key`), or `credential` are redacted.
+Each gateway retains its own snapshot, including Hydra overrides and resolved interpolations.
+Gateways constructed directly in Python display an unavailable message.
+The tab uses the UI's existing authentication and is included in the demo and omnibus configurations.
+
+```yaml
+modules:
+  mount_config:
+    _target_: csp_gateway.MountConfig
+
+gateway:
+  modules:
+    - /modules/mount_config
 ```
 
 ## MountControls

@@ -13,6 +13,8 @@ modules:
     _target_: csp_gateway.server.demo.ExampleModuleCustomTable
   mount_channels_graph:
     _target_: csp_gateway.MountChannelsGraph
+  mount_config:
+    _target_: csp_gateway.MountConfig
   mount_controls:
     _target_: csp_gateway.MountControls
   mount_process_monitor:
@@ -62,6 +64,7 @@ gateway:
     - /modules/example_module_feedback
     - /modules/example_custom_table
     - /modules/mount_channels_graph
+    - /modules/mount_config
     - /modules/mount_controls
     - /modules/mount_process_monitor
     - /modules/mount_outputs

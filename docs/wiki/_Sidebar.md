@@ -45,6 +45,7 @@ Notes for editors:
   - [MountOutputsFolder](Modules#MountOutputsFolder)
   - [MountControls](Modules#MountControls)
   - [MountChannelsGraph](Modules#MountChannelsGraph)
+  - [MountConfig](Modules#MountConfig)
   - [MountAPIKeyMiddleware](Modules#MountAPIKeyMiddleware)
   - [MountExternalAPIKeyMiddleware](Modules#MountExternalAPIKeyMiddleware)
   - [AuthFilterMiddleware](Modules#AuthFilterMiddleware)

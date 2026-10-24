@@ -4,6 +4,7 @@ from pprint import pprint
 
 import hydra
 from ccflow import ModelRegistry
+from omegaconf import OmegaConf
 
 from csp_gateway import __version__
 
@@ -13,9 +14,12 @@ log = logging.getLogger(__name__)
 @hydra.main(config_path="config", config_name="base", version_base=None)
 def _main(cfg):
     log.info("Loading csp-gateway config...")
+    OmegaConf.resolve(cfg)
+    config_yaml = OmegaConf.to_yaml(cfg)
     registry = ModelRegistry.root()
     registry.load_config(cfg=cfg, overwrite=True)
     gateway = registry["gateway"]
+    gateway._hydra_config = config_yaml
 
     log.info(f"Starting csp_gateway version {__version__}")
     kwargs = cfg["start"]

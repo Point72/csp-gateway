@@ -25,6 +25,9 @@ mount_outputs_folder:
 mount_channels_graph:
   _target_: csp_gateway.MountChannelsGraph
 
+mount_config:
+  _target_: csp_gateway.MountConfig
+
 mount_perspective_tables:
   _target_: csp_gateway.MountPerspectiveTables
 

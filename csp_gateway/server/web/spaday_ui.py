@@ -333,6 +333,9 @@ class GatewayUI:
         helpers (`perspective_panel`, `layout_selector`, `send_panel`, `link_button`,
         `post_button`, `confirm_button`) or hand-author any spaday component.
 
+        In the settings drawer, primary controls use ``order=-100``, ordinary module buttons
+        use ``0``, and support links use ``100``.
+
         `component` may also be a zero-argument callable returning one. Module `ui()` hooks run
         once at startup, so a callable is the way to render server-side state that changes after
         that (it is re-invoked on each page build, i.e. per page load).
