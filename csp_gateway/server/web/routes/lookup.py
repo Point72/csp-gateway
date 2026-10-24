@@ -7,7 +7,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils.struct import global_lookup
 
 from ..utils import get_default_responses
-from .shared import get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_lookup_available_channels",
@@ -19,14 +19,18 @@ def add_lookup_routes(
     api_router: APIRouter,
     field: str,
     model: BaseModel | list[BaseModel],
+    *,
+    batch_size: int = 500,
+    materialize: bool = True,
 ) -> None:
+    _validate_batch_size(batch_size)
     if model and get_origin(model) is list:
         model = get_args(model)[0]
 
     # Get the fully qualified type name for the description
     fq_type_name = get_fully_qualified_type_name(model)
 
-    async def lookup(id: str, request: Request) -> list[model]:  # type: ignore[misc, valid-type]
+    def lookup(id: str, request: Request) -> list[model]:  # type: ignore[misc, valid-type]
         """
         This endpoint lets you lookup any GatewayStruct by its uniquely generated `id`.
         """
@@ -37,7 +41,7 @@ def add_lookup_routes(
         # lookup by id
         res = model.lookup(id)
 
-        return prepare_response(res, is_list_model=False)
+        return prepare_response(res, is_list_model=False, batch_size=batch_size, materialize=materialize)
 
     api_router.get(
         f"/{field}/{{id:path}}",
@@ -55,7 +59,9 @@ def add_lookup_routes(
     )(lookup)
 
 
-def add_lookup_available_channels(api_router: APIRouter, fields: set[str] | None = None) -> None:
+def add_lookup_available_channels(api_router: APIRouter, fields: set[str] | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
+    _validate_batch_size(batch_size)
+
     @api_router.get(
         "/",
         responses=get_default_responses(),
@@ -71,7 +77,7 @@ def add_lookup_available_channels(api_router: APIRouter, fields: set[str] | None
         "/id/{id:path}",
         responses=get_default_responses(),
     )
-    async def get_lookup_by_id(id: str, request: Request) -> Any:
+    def get_lookup_by_id(id: str, request: Request) -> Any:
         """
         This endpoint lets you lookup any GatewayStruct by its globally unique `id`.
         Returns the GatewayStruct instance if found, otherwise returns 404.
@@ -79,4 +85,4 @@ def add_lookup_available_channels(api_router: APIRouter, fields: set[str] | None
         result = global_lookup(id)
         if result is None:
             raise HTTPException(status_code=404, detail=f"No GatewayStruct found with id: {id}")
-        return prepare_response(result, is_list_model=False)
+        return prepare_response(result, is_list_model=False, batch_size=batch_size, materialize=materialize)

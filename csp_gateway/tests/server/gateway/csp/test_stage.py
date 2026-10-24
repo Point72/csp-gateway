@@ -1,5 +1,7 @@
 """Tests for the staging functionality."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta
 from typing import Annotated
 
@@ -110,6 +112,34 @@ class TestStagingArea:
 
 
 class TestStageManager:
+    def test_concurrent_release_preserves_added_event_order(self):
+        entered = threading.Event()
+        resume = threading.Event()
+        actions = []
+
+        def on_event(events):
+            if any(action == StagingAction.ADDED for action, _, _ in events):
+                entered.set()
+                assert resume.wait(timeout=5)
+            actions.extend(action for action, _, _ in events)
+
+        stage = _StageManager(on_event=on_event)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            added = executor.submit(stage.stage_add, OrderStruct(symbol="AAPL"))
+            try:
+                assert entered.wait(timeout=2)
+                released = executor.submit(stage.stage_release)
+                try:
+                    released.result(timeout=0.2)
+                except TimeoutError:
+                    pass
+            finally:
+                resume.set()
+            staging_ids = added.result(timeout=2)
+            assert list(released.result(timeout=2)) == staging_ids
+        assert actions == [StagingAction.CREATED, StagingAction.ADDED, StagingAction.RELEASED]
+        assert stage.stage_lookup() == {}
+
     @pytest.mark.parametrize("method", ["stage_add", "stage_remove"])
     @pytest.mark.parametrize("struct", [UnkeyedOrder(), PlainOrder(), PlainOrder(id=[])])
     @pytest.mark.parametrize("populated", [False, True])

@@ -3,6 +3,7 @@ import pytest
 from csp import ts
 from fastapi import Request
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from csp_gateway import (
     Channels,
@@ -15,6 +16,7 @@ from csp_gateway import (
     MountRestRoutes,
     MountSendForm,
 )
+from csp_gateway.server.web.routes import shared as response_module
 
 
 def _request(path: str, root_path: str = "") -> Request:
@@ -139,6 +141,49 @@ class TestRouterRegistry:
 
 
 class TestModuleApiVersion:
+    @pytest.mark.parametrize("materialize", [True, False])
+    def test_record_response_options_follow_mount_configuration(self, build, materialize, monkeypatch):
+        class EnableState(GatewayModule):
+            def connect(self, channels):
+                channels.set_state("example", "id")
+
+        gateway = build(EnableState(), MountRestRoutes(force_mount_all=True, batch_size=2, materialize=materialize))
+        sizes = []
+        original = response_module._dump_records
+
+        def encode(records):
+            sizes.append(len(records))
+            return original(records)
+
+        monkeypatch.setattr(response_module, "_dump_records", encode)
+        client = TestClient(gateway.web_app.get_fastapi())
+        sent = client.post("/api/v1/send/example", json=[{"value": index} for index in range(5)])
+        assert sent.status_code == 200
+        assert [record["value"] for record in sent.json()] == [0, 1, 2, 3, 4]
+        assert sum(sizes) == 5
+        assert max(sizes) <= 2
+        identity = sent.json()[-1]["id"]
+        responses = [
+            sent,
+            client.get("/api/v1/last/example"),
+            client.get("/api/v1/state/example"),
+            client.get(f"/api/v1/lookup/example/{identity}"),
+            client.get(f"/api/v1/lookup/id/{identity}"),
+        ]
+        assert [record["value"] for record in responses[1].json()] == [4]
+        assert sorted(record["value"] for record in responses[2].json()) == [0, 1, 2, 3, 4]
+        for response in responses:
+            assert response.status_code == 200
+            if materialize:
+                assert response.headers["content-length"] == str(len(response.content))
+            else:
+                assert "content-length" not in response.headers
+
+    @pytest.mark.parametrize("batch_size", [0, -1])
+    def test_mount_rejects_nonpositive_batch_size(self, batch_size):
+        with pytest.raises(ValidationError, match="batch_size"):
+            MountRestRoutes(batch_size=batch_size)
+
     def test_module_routes_move_to_its_version(self, build):
         gateway = build(MountRestRoutes(force_mount_all=True, api_version="v2"))
         client = TestClient(gateway.web_app.get_fastapi())

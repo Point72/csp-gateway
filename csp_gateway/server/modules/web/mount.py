@@ -12,6 +12,9 @@ log = logging.getLogger(__name__)
 
 
 class MountRestRoutes(GatewayModule):
+    batch_size: int = Field(500, gt=0, strict=True, description="Maximum number of records encoded per JSON batch.")
+    materialize: bool = Field(True, description="Encode the full JSON response before sending headers; disable to stream batches.")
+
     force_mount_all: bool = Field(
         False,
         description="For debugging, will mount all rest routes for every channel, including state and send routes, even if not added by any modules",
@@ -52,7 +55,7 @@ class MountRestRoutes(GatewayModule):
         # Bind every wire
         for name in channels_set:
             # Install on router
-            app.add_last_api(name, version=self.api_version)
+            app.add_last_api(name, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
 
         app.add_last_available_channels(channels_set, version=self.api_version)
 
@@ -63,7 +66,7 @@ class MountRestRoutes(GatewayModule):
         # Bind every wire
         for name in channels_set:
             # Install on router
-            app.add_next_api(name, version=self.api_version)
+            app.add_next_api(name, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
 
         app.add_next_available_channels(channels_set, version=self.api_version)
 
@@ -75,7 +78,7 @@ class MountRestRoutes(GatewayModule):
         # Bind every wire
         if self.force_mount_all:
             for channel in channels_set:
-                app.add_send_api(channel, version=self.api_version)
+                app.add_send_api(channel, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
             seen_channels = channels_set
 
         else:
@@ -84,7 +87,7 @@ class MountRestRoutes(GatewayModule):
                     continue
                 seen_channels.add(channel)
                 # Install on router
-                app.add_send_api(channel, version=self.api_version)
+                app.add_send_api(channel, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
 
             missing_channels = channels_set - seen_channels
             if missing_channels:
@@ -114,7 +117,7 @@ class MountRestRoutes(GatewayModule):
         # Bind every wire
         if self.force_mount_all:
             for state_channel in channels_set:
-                app.add_state_api(state_channel, version=self.api_version)
+                app.add_state_api(state_channel, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
             seen_channels = channels_set
 
         else:
@@ -123,7 +126,7 @@ class MountRestRoutes(GatewayModule):
                     continue
                 seen_channels.add(state_channel)
                 # Install on router
-                app.add_state_api(state_channel, version=self.api_version)
+                app.add_state_api(state_channel, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
 
             missing_channels = channels_set - seen_channels
             if missing_channels:
@@ -138,6 +141,6 @@ class MountRestRoutes(GatewayModule):
         # Bind every wire
         for name in selection.select_from(app.gateway.channels_model):
             # Install on router
-            app.add_lookup_api(name, version=self.api_version)
+            app.add_lookup_api(name, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)
 
-        app.add_lookup_available_channels(channels_set, version=self.api_version)
+        app.add_lookup_available_channels(channels_set, version=self.api_version, batch_size=self.batch_size, materialize=self.materialize)

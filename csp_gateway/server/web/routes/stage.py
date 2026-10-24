@@ -45,7 +45,7 @@ def add_stage_routes(
     """Mount REST routes for staging on a single channel ``field``."""
 
     # POST /stage/<channel> — stage_add
-    async def stage_add(
+    def stage_add(
         request: Request,
         id: str | None = Query(None, description="Comma-separated staging IDs to add to"),
         data: model | None = Body(None),
@@ -85,7 +85,7 @@ def add_stage_routes(
         )(stage_add)
 
     # DELETE /stage/<channel> — stage_remove
-    async def stage_remove(
+    def stage_remove(
         request: Request,
         id: str | None = Query(None, description="Comma-separated staging IDs to remove from"),
         data: model | None = Body(None),
@@ -126,7 +126,7 @@ def add_stage_routes(
         )(stage_remove)
 
     # PATCH /stage/<channel> — stage_release
-    async def stage_release(
+    def stage_release(
         request: Request,
         id: str | None = Query(None, description="Comma-separated staging IDs to release"),
     ):
@@ -159,7 +159,7 @@ def add_stage_routes(
         )(stage_release)
 
     # GET /stage/<channel> — stage_list
-    async def stage_list(
+    def stage_list(
         request: Request,
         id: str | None = Query(None, description="Specific staging ID to check"),
     ) -> list[str]:
@@ -190,7 +190,7 @@ def add_stage_routes(
         )(stage_list)
 
     # PUT /stage/<channel> — stage_lookup
-    async def stage_lookup(
+    def stage_lookup(
         request: Request,
         id: str | None = Query(None, description="Specific staging ID to look up"),
     ):

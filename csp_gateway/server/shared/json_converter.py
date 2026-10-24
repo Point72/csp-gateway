@@ -64,7 +64,12 @@ def read_engine_encoding_json_with_duckdb(channels: ChannelsType, filename: str)
     return duckdb.read_json(filename, columns=columns, format="newline_delimited")
 
 
+_PASSTHROUGH_TYPES = frozenset((str, int, float, bool, type(None), datetime))
+
+
 def _convert_orjson_compatible(obj: Any):
+    if type(obj) in _PASSTHROUGH_TYPES:
+        return obj
     if isinstance(obj, PydanticBaseModel):
         # Skip only the fields that are optional purely because csp had no required fields; one with a
         # declared default is a real value and is encoded.

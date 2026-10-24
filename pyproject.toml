@@ -53,6 +53,7 @@ develop = [
     "pytest",
     "pytest-aiohttp",
     "pytest-asyncio",
+    "pytest-benchmark",
     "pytest-cov",
     "python-magic",
     "ruff",

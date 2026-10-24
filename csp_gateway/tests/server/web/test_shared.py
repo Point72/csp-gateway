@@ -13,6 +13,7 @@ from pydantic_core import PydanticSerializationError, SchemaSerializer
 from csp_gateway import GatewayStruct
 from csp_gateway.server.demo import ExampleData
 from csp_gateway.server.web import prepare_response
+from csp_gateway.server.web.routes import shared as response_module
 from csp_gateway.server.web.routes.shared import get_fully_qualified_type_name
 from csp_gateway.utils.struct import base
 from csp_gateway.utils.struct.base import type_adapter_for
@@ -43,6 +44,87 @@ def test_prepare_response_dict():
 
     response = prepare_response(res={"foo": data}, is_list_model=False, is_dict_basket=True, wrap_in_response=False)
     assert json.loads(response) == [json.loads(data.type_adapter().dump_json(data))]
+
+
+@pytest.mark.parametrize("batch_size", [1, 2, 500])
+def test_prepare_response_materializes_configured_batches(batch_size, monkeypatch):
+    records = [ExampleData(x=index) for index in range(5)]
+    expected = b"[" + b",".join(type_adapter_for(record).dump_json(record) for record in records) + b"]"
+    sizes = []
+    original = response_module._dump_records
+
+    def encode(batch):
+        sizes.append(len(batch))
+        return original(batch)
+
+    monkeypatch.setattr(response_module, "_dump_records", encode)
+    response = prepare_response(records, is_list_model=True, batch_size=batch_size)
+    assert isinstance(response, starlette.responses.Response)
+    assert not isinstance(response, starlette.responses.StreamingResponse)
+    assert response.body == expected
+    assert response.headers["content-length"] == str(len(expected))
+    assert sum(sizes) == 5
+    assert max(sizes) <= batch_size
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch_size", [1, 2, 500])
+@pytest.mark.parametrize("empty", [False, True])
+async def test_prepare_response_streams_without_content_length(batch_size, empty):
+    records = [] if empty else [ExampleData(x=index) for index in range(5)]
+    expected = prepare_response(records, is_list_model=True).body
+    response = prepare_response(records, is_list_model=True, batch_size=batch_size, materialize=False)
+    assert isinstance(response, starlette.responses.StreamingResponse)
+    assert "content-length" not in response.headers
+    assert response.media_type == "application/json"
+    chunks = [chunk async for chunk in response.body_iterator]
+    assert b"".join(chunks) == expected
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_prepare_response_rejects_nonpositive_batch_size(batch_size):
+    with pytest.raises(ValueError, match="batch_size"):
+        prepare_response([], batch_size=batch_size)
+
+
+def test_prepare_response_unwrapped_remains_text_with_streaming_option():
+    record = ExampleData(x=1)
+    expected = prepare_response(record, wrap_in_response=False)
+    assert prepare_response(record, batch_size=1, materialize=False, wrap_in_response=False) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("materialize", [True, False])
+async def test_prepare_response_serialization_failure_timing(materialize):
+    class Fragile(BaseModel):
+        value: str
+
+        @field_serializer("value")
+        def encode(self, value):
+            if value == "invalid":
+                raise ValueError("Cannot encode value")
+            return value
+
+    records = [Fragile(value="valid"), Fragile(value="invalid")]
+    if materialize:
+        with pytest.raises(PydanticSerializationError):
+            prepare_response(records, is_list_model=True, batch_size=1)
+        return
+    response = prepare_response(records, is_list_model=True, batch_size=1, materialize=False)
+    messages = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        messages.append(message)
+
+    with pytest.raises(PydanticSerializationError):
+        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+    assert messages[0]["status"] == 200
+    body = b"".join(message.get("body", b"") for message in messages)
+    assert body.startswith(b"[{")
+    assert not body.endswith(b"]")
 
 
 def test_get_fully_qualified_type_name_with_model():
