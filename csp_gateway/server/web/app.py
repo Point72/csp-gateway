@@ -63,9 +63,9 @@ __all__ = (
     "GatewayWebApp",
 )
 
-build_files_dir = path.abspath(path.join(path.dirname(__file__), "..", "build"))
-static_files_dir = build_files_dir
-images_files_dir = path.join(build_files_dir, "img")
+# Assets the gateway ships itself. The spaday UI loads its own runtime from its packages, so this
+# is only the favicon, which doubles as the default header logo.
+static_files_dir = path.abspath(path.join(path.dirname(__file__), "static"))
 
 # Routers that live outside the versioned API prefix and are therefore shared by all versions.
 GLOBAL_ROUTER_KINDS = ("app", "public")
@@ -157,7 +157,7 @@ class GatewayWebApp:
         # here (not at module load) so the optional `spaday` dependency is only required when the
         # spaday frontend is actually served.
         self.ui: "GatewayUI | None" = None  # noqa: UP037
-        if self.settings.UI and self.settings.UI_PROVIDER == "spaday":
+        if self.settings.UI:
             from .spaday_ui import GatewayUI
 
             self.ui = GatewayUI(self, self.settings)
@@ -442,13 +442,6 @@ class GatewayWebApp:
             name="frontend",
         )
 
-        # Mount images
-        self.app.mount(
-            "/img",
-            CacheControlledStaticFiles(directory=images_files_dir, check_dir=False, html=True),
-            name="img",
-        )
-
         # Resolve UI customization assets (logos, custom js/css), serving local files
         self._resolve_ui_assets()
 
@@ -471,36 +464,16 @@ class GatewayWebApp:
         # Mount top level routes
         @self.app.get("/favicon.ico", include_in_schema=False, response_class=FileResponse)
         async def readFavicon():
-            return FileResponse(path.join(build_files_dir, "favicon.png"))
+            return FileResponse(path.join(static_files_dir, "favicon.png"))
 
         # Add UI if present, otherwise redirect to docs
-        if self.settings.UI:
-            if self.ui is not None:
-                # spaday provider: mount the spaday page (page, tree, and /js assets) at the root.
-                self.ui.mount()
-            else:
-
-                @app_router.get("/", include_in_schema=False, response_class=HTMLResponse)
-                async def serve_react_app(request: Request):
-                    root_path = request.scope.get("root_path", "")
-                    ui_config = self._prefixed_ui_config(root_path)
-                    return self.templates.TemplateResponse(
-                        request,
-                        "index.html.j2",
-                        {
-                            "title": ui_config["title"],
-                            "description": ui_config["description"],
-                            "base_path": root_path,
-                            "ui_config": ui_config,
-                            "custom_css": ui_config["customCss"],
-                            "custom_js": ui_config["customJs"],
-                        },
-                    )
-
+        if self.ui is not None:
+            # Mounts the spaday page, its tree, and the `/js` runtime at the root.
+            self.ui.mount()
         else:
 
             @self.app.get("/", include_in_schema=False, response_class=RedirectResponse)
-            async def serve_react_app(request: Request):
+            async def serve_docs_redirect(request: Request):
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(f"{root_path}/redoc")
 
