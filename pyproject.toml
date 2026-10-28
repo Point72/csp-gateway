@@ -84,6 +84,7 @@ develop = [
     "polars",
     "pandas",
     "logfire[fastapi]>=5.1.1",
+    "zstandard",
 ]
 server = [
     "atomic-counter>=0.1.3",
