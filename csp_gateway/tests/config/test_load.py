@@ -1,9 +1,8 @@
 import os
 
-import hydra
-
 import csp_gateway.server.config
 from csp_gateway import Gateway
+from csp_gateway._config_framework import hydra
 
 
 def test_config_file_load():
