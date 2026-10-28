@@ -442,12 +442,13 @@ class _StageManager:
             return {}
 
 
-def build_staging_node(element_type: type, channel: str = "") -> tuple:
+def build_staging_node(element_type: type, channel: str = "", batched: bool = False) -> tuple:
     """Build a _StageManager and the push adapters that carry its output into the graph.
 
     Returns (stage, push_adapter, event_adapter) where:
     - stage: the _StageManager instance for managing staging areas
-    - push_adapter: GenericPushAdapter[element_type] to push released items into the graph
+    - push_adapter: GenericPushAdapter to push released items into the graph, typed
+      ``List[element_type]`` when ``batched`` (a ``ts[List[T]]`` channel) and ``element_type`` otherwise
     - event_adapter: GenericPushAdapter[StagingEvent] carrying the staging delta stream
     """
     event_adapter = GenericPushAdapter(StagingEvent, name=f"StagingEvents<{element_type.__name__}>")
@@ -457,5 +458,6 @@ def build_staging_node(element_type: type, channel: str = "") -> tuple:
             event_adapter.push_tick(StagingEvent(channel=channel, staging_id=staging_id, action=action, items=items))
 
     stage = _StageManager(on_event=_on_event)
-    push_adapter = GenericPushAdapter(element_type, name=f"StagingRelease<{element_type.__name__}>")
+    release_type = list[element_type] if batched else element_type
+    push_adapter = GenericPushAdapter(release_type, name=f"StagingRelease<{element_type.__name__}>")
     return stage, push_adapter, event_adapter
