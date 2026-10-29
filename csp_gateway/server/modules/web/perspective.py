@@ -1,5 +1,7 @@
+from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import date, datetime, timedelta
+from hashlib import sha256
 from io import BytesIO
 from logging import getLogger
 from typing import (
@@ -41,6 +43,8 @@ T = TypeVar("T")
 log = getLogger(__name__)
 
 _MAX_LAYOUT_DOWNLOAD_BYTES = 16 * 1024 * 1024
+_MAX_SHARED_LAYOUT_BYTES = 1024 * 1024
+_MAX_SHARED_LAYOUTS = 1000
 
 _PSP_ARROW_MAP = {
     int: pyarrow.int64(),
@@ -296,6 +300,12 @@ class MountPerspectiveTables(GatewayModule):
         "is not set. Every table is still available to add by hand; this only bounds the generated "
         "layout, whose tabs get narrower the more it holds.",
     )
+    share_layouts: bool = Field(
+        False,
+        description="Adds a share button to the UI that stores the current layout on the server and puts its id "
+        "in the page URL (`?layout=<id>`), so the link opens the same layout for any user. Shared layouts are held "
+        "in memory and lost on restart; use `layouts` or the downloaded JSON to keep one.",
+    )
 
     @field_validator("layouts")
     @classmethod
@@ -341,6 +351,7 @@ class MountPerspectiveTables(GatewayModule):
     _client: Client = PrivateAttr(default=None)
 
     _layouts: dict[str, str] = PrivateAttr(default={})
+    _shared_layouts: OrderedDict[str, dict] = PrivateAttr(default_factory=OrderedDict)
     _schema_insts: dict[str, dict] = PrivateAttr(default_factory=dict)
     _arrow_schema_insts: dict[str, dict] = PrivateAttr(default_factory=dict)
     _arrow_schema_date_conversions: dict[str, set[str]] = PrivateAttr(default_factory=dict)
@@ -665,6 +676,38 @@ class MountPerspectiveTables(GatewayModule):
                 },
             )
 
+        if self.share_layouts:
+
+            @api_router.post("{}/{}".format(self._route, "shared-layouts"), include_in_schema=False)
+            async def share_perspective_layout(request: Request) -> dict[str, str]:
+                if int(request.headers.get("content-length", 0)) > _MAX_SHARED_LAYOUT_BYTES:
+                    raise HTTPException(status_code=413, detail="Layout is too large")
+                body = bytearray()
+                async for chunk in request.stream():
+                    body.extend(chunk)
+                    if len(body) > _MAX_SHARED_LAYOUT_BYTES:
+                        raise HTTPException(status_code=413, detail="Layout is too large")
+                try:
+                    layout = orjson.loads(body)
+                except orjson.JSONDecodeError as exc:
+                    raise HTTPException(status_code=400, detail="Invalid layout") from exc
+                if not isinstance(layout, dict) or not isinstance(layout.get("layout"), dict) or not isinstance(layout.get("panels"), dict):
+                    raise HTTPException(status_code=400, detail="Invalid layout")
+                # Content-addressed, so sharing the same layout twice gives the same link.
+                layout_id = sha256(orjson.dumps(layout, option=orjson.OPT_SORT_KEYS)).hexdigest()[:16]
+                self._shared_layouts[layout_id] = layout
+                self._shared_layouts.move_to_end(layout_id)
+                while len(self._shared_layouts) > _MAX_SHARED_LAYOUTS:
+                    self._shared_layouts.popitem(last=False)
+                return {"id": layout_id}
+
+            @api_router.get("{}/{}/{{layout_id}}".format(self._route, "shared-layouts"), include_in_schema=False)
+            async def get_shared_perspective_layout(layout_id: str) -> dict:
+                if layout_id not in self._shared_layouts:
+                    raise HTTPException(status_code=404, detail="Unknown layout")
+                self._shared_layouts.move_to_end(layout_id)
+                return self._shared_layouts[layout_id]
+
         # add route to fetch layouts
         @api_router.get(
             "{}/{}".format(self._route, "meta"),
@@ -750,6 +793,7 @@ class MountPerspectiveTables(GatewayModule):
                 schemas=tables,
                 default_layout=self.build_default_ui_layout(tables),
                 table_options={name: self._ui_table_options(name) for name in tables},
+                shared_layouts_route=app.web_app.api_path(f"{self._route}/shared-layouts", self.api_version) if self.share_layouts else None,
             ),
         )
         default_view = self.default_layout or "__default__"
@@ -757,6 +801,8 @@ class MountPerspectiveTables(GatewayModule):
         app.add(Region.HEADER_RIGHT, app.layout_selector(layouts, value=default_view), order=90)
         app.add(Region.HEADER_RIGHT, app.save_layout_button(), order=100)
         app.add(Region.HEADER_RIGHT, app.download_layout_button(), order=101)
+        if self.share_layouts:
+            app.add(Region.HEADER_RIGHT, app.share_layout_button(app.web_app.api_path(f"{self._route}/shared-layouts", self.api_version)), order=102)
 
     def run_perspective(self):
         """Launch the perspective threads"""

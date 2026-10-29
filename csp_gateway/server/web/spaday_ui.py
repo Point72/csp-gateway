@@ -103,6 +103,8 @@ _TOAST_ID = "gateway-toasts"
 _ACTION_RESULT = "action_result"
 _GRAPH_FOCUS = "graph_focus"
 _PERSPECTIVE_READY = "perspective_ready"
+_SHARED_LAYOUT_ID = "shared_layout_id"
+_SHARED_LAYOUT_PARAM = "layout"
 # Seeded from `?error=` so the auth middleware can say why it turned a request away.
 _AUTH_ERROR = "auth_error"
 
@@ -488,6 +490,7 @@ class GatewayUI:
         table_options: dict[str, dict[str, Any]] | None = None,
         channels: dict[str, dict[str, Any]] | None = None,
         master_theme: str | None = None,
+        shared_layouts_route: str | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
 
@@ -500,6 +503,7 @@ class GatewayUI:
         worker rather than reading it off the websocket. ``channels`` supplies configurations for
         channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
         ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
+        ``shared_layouts_route`` serves layouts by id; a page opened with ``?layout=<id>`` starts on it.
         """
         tables = list(tables or [])
         self._workspace_tables = list(tables)
@@ -526,6 +530,22 @@ class GatewayUI:
             "})()"
         )
         layout_expr = cond(eq(field("layout_view"), _CUSTOM_LAYOUT_NAME), field("custom_layout"), layout_expr)
+        if shared_layouts_route:
+            # Fetched before the tree mounts, so a shared link opens straight on its layout. It only
+            # applies while the URL still names it: picking or saving a layout clears the id.
+            shared_route = json.dumps(self.url(shared_layouts_route))
+            self._store_seeds["shared_layout"] = Js(
+                "await (async () => { "
+                f'const id = new URLSearchParams(location.search).get("{_SHARED_LAYOUT_PARAM}"); '
+                "if (!id) return null; "
+                f"try {{ const response = await fetch(`${{{shared_route}}}/${{encodeURIComponent(id)}}`); "
+                "return response.ok ? { id, config: await response.json() } : null; } "
+                "catch { return null; } "
+                "})()"
+            )
+            self._store_seeds.setdefault(_SHARED_LAYOUT_ID, "")
+            self.bind_url(**{_SHARED_LAYOUT_ID: _SHARED_LAYOUT_PARAM})
+            layout_expr = cond(eq(field("shared_layout.id"), field(_SHARED_LAYOUT_ID)), field("shared_layout.config"), layout_expr)
 
         # Focusing a table (from a channels-graph node) wins over the selected layout until the
         # selector or a save clears it, so these branches wrap the others.
@@ -615,7 +635,7 @@ class GatewayUI:
             WaSelect(value=value, size="s")
             .prop("id", "gateway-layout-selector")
             .bind("value", "view", mode="two-way")
-            .on("change", Sequence(SetField("layout_view", event_value()), SetField(_GRAPH_FOCUS, "")))
+            .on("change", Sequence(SetField("layout_view", event_value()), SetField(_GRAPH_FOCUS, ""), SetField(_SHARED_LAYOUT_ID, "")))
             .style(width="220px")
         )
         select = select.child(WaOption(value="__default__").text("All Tables"))
@@ -638,6 +658,7 @@ class GatewayUI:
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
                     SetField("saved_layout", field("custom_layout")),
                     SetField(_GRAPH_FOCUS, ""),
+                    SetField(_SHARED_LAYOUT_ID, ""),
                     SetField("view", _CUSTOM_LAYOUT_NAME),
                     SetField("layout_view", _CUSTOM_LAYOUT_NAME),
                 ),
@@ -661,6 +682,34 @@ class GatewayUI:
                 ),
             )
             .child(WaIcon(name="download"))
+        )
+
+    def share_layout_button(self, route: str) -> Any:
+        """A header button that stores the current Perspective workspace on the server for sharing.
+
+        The returned id goes into the URL as ``?layout=<id>`` and the link is copied to the clipboard.
+        """
+        return (
+            WaButton(appearance="plain", title="Share layout link")
+            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
+            .on(
+                "click",
+                Sequence(
+                    Invoke(by_id(_WORKSPACE_ID), "saveClean", result="share_layout"),
+                    CallEndpoint("POST", self.url(route), field("share_layout"), result="share_layout_result"),
+                    If(
+                        field("share_layout_result.ok"),
+                        Sequence(
+                            # Pointing the shared branch at what was just saved keeps the workspace as it is.
+                            SetField("shared_layout", obj({"id": field("share_layout_result.body.id"), "config": field("share_layout")})),
+                            SetField(_SHARED_LAYOUT_ID, field("share_layout_result.body.id")),
+                            NamedJs("gateway-copy-link"),
+                        ),
+                        Invoke(by_id(_TOAST_ID), "notify", obj({"message": "Sharing the layout failed", "tone": "danger"})),
+                    ),
+                ),
+            )
+            .child(WaIcon(name="share-nodes"))
         )
 
     def link_button(self, label: str, href: str, *, target: str = "_blank", variant: str | None = None) -> Any:

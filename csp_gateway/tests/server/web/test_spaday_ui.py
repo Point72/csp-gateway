@@ -902,6 +902,81 @@ class TestSpadayPerspectiveLayoutActions:
         assert oversized.status_code == 413
 
 
+class TestSharedLayouts:
+    @pytest.fixture(scope="class")
+    def gateway(self, free_port):
+        return Gateway(
+            modules=[ExampleModule(), MountPerspectiveTables(share_layouts=True)],
+            channels=ExampleChannels(),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday"),
+        )
+
+    @pytest.fixture(scope="class")
+    def client(self, gateway):
+        gateway.start(rest=True, ui=True, _in_test=True)
+        try:
+            yield TestClient(gateway.web_app.get_fastapi())
+        finally:
+            gateway.stop()
+
+    def test_shared_layout_round_trips_by_id(self, client: TestClient):
+        layout = {"layout": {"type": "tab-layout", "tabs": ["example"]}, "panels": {"example": {"table": "example"}}}
+
+        first = client.post("/api/v1/perspective/shared-layouts", json=layout)
+        again = client.post("/api/v1/perspective/shared-layouts", json={"panels": layout["panels"], "layout": layout["layout"]})
+
+        assert first.status_code == 200
+        assert first.json() == again.json()
+        assert client.get(f"/api/v1/perspective/shared-layouts/{first.json()['id']}").json() == layout
+
+    def test_shared_layout_rejects_invalid_oversized_and_unknown(self, client: TestClient):
+        assert client.post("/api/v1/perspective/shared-layouts", json=[1]).status_code == 400
+        assert client.post("/api/v1/perspective/shared-layouts", content=b"{").status_code == 400
+        oversized = client.post("/api/v1/perspective/shared-layouts", content=b"x", headers={"content-length": str(1024 * 1024 + 1)})
+        assert oversized.status_code == 413
+        assert client.get("/api/v1/perspective/shared-layouts/missing").status_code == 404
+
+    def test_shared_layouts_are_bounded(self, gateway, client: TestClient, monkeypatch):
+        from csp_gateway.server.modules.web import perspective
+
+        monkeypatch.setattr(perspective, "_MAX_SHARED_LAYOUTS", 2)
+        ids = [client.post("/api/v1/perspective/shared-layouts", json={"layout": {"n": n}, "panels": {}}).json()["id"] for n in range(3)]
+
+        assert client.get(f"/api/v1/perspective/shared-layouts/{ids[0]}").status_code == 404
+        assert client.get(f"/api/v1/perspective/shared-layouts/{ids[2]}").status_code == 200
+
+    def test_page_restores_the_layout_named_in_the_url(self, client: TestClient):
+        page = client.get("/").text
+        assert 'new URLSearchParams(location.search).get("layout")' in page
+        assert "/api/v1/perspective/shared-layouts" in page
+        assert '"shared_layout_id": "layout"' in page
+        tree = client.get("/tree.json").text
+        # The workspace still reads its data off the Perspective websocket, not the layout store.
+        assert '"ws_url": {"expr": "lit", "value": "/api/v1/perspective"}' in tree
+        assert "Share layout link" in tree
+        assert '"handler": "gateway-copy-link"' in tree
+
+    def test_choosing_a_layout_drops_the_shared_id(self):
+        change = _bare_ui().layout_selector({}).to_node()["events"]["change"]
+        cleared = [a for a in change["actions"] if a.get("field") == "shared_layout_id"]
+        assert cleared and cleared[0]["value"] == {"expr": "lit", "value": ""}
+
+    def test_sharing_is_off_by_default(self, free_port):
+        gateway = Gateway(
+            modules=[ExampleModule(), MountPerspectiveTables()],
+            channels=ExampleChannels(),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday"),
+        )
+        gateway.start(rest=True, ui=True, _in_test=True)
+        try:
+            client = TestClient(gateway.web_app.get_fastapi())
+            assert client.post("/api/v1/perspective/shared-layouts", json={"layout": {}, "panels": {}}).status_code in (404, 405)
+            assert "Share layout link" not in client.get("/tree.json").text
+            assert "shared_layout" not in client.get("/").text
+        finally:
+            gateway.stop()
+
+
 class TestMainTabs:
     """The main window's tab layout: workspace + on-demand closeable tabs (graph, send)."""
 
