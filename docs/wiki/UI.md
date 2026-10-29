@@ -85,3 +85,46 @@ def ui(self, app: GatewayUI) -> None:
 Either way the package's assets are served alongside the built-in ones, and the gateway's own packages are always loaded, so a contributed package can rely on them. Loading the same package twice is de-duplicated.
 
 Loading the package is what makes its elements *work*: the browser treats an unregistered tag as an inert unknown element, so a component built from an unloaded package renders an empty panel without raising anything. If a contributed panel is blank, check that its package is loaded before looking anywhere else.
+
+### Module panels and row actions
+
+A module contributes to the spaday UI from its `ui(self, app)` hook, which runs once at startup after every module's `rest()`.
+
+A main panel opens beside the Perspective workspace, the way the channels graph and logs do. Register it with `add_tab`, and give users a way to open it, such as a button in the settings drawer:
+
+```python
+from csp_gateway.server.web.spaday_ui import Region
+
+def ui(self, app):
+    app.add_tab("tickets", "Tickets", self._ticket_panel())
+    app.add(Region.DRAWER_RIGHT, app.tab_button("Tickets", "tickets"))
+```
+
+By default the main tabs open, select and close but cannot be dragged. Set `UI_LOCK_LAYOUT: false` to let users split and stack them beside the workspace. Tabs inside the Perspective workspace stay inside it either way.
+
+Live state reaches the browser through `app.model(namespace, Model, scope="session")`, called from `ui()`. It returns a handle whose `publish()` is safe to call from any thread. Fields arrive under `<namespace>.`, so several modules can each publish a model; namespaces must be Python identifiers. All of a page's models share one websocket at `/ws`.
+
+UI state is never shared between visitors. Each page load is its own session, and `scope` decides how far its copy of a model reaches:
+
+- `"session"` (the default): each page load has its own copy, so a half-filled form in one tab is not seen in another.
+- `"user"`: one copy per authenticated user, shared by that user's tabs and no one else's. Without authentication there is no user to share with, so it behaves like `"session"`.
+
+`publish` accepts either a value or a callable that receives the page's identity (`None` when unauthenticated), so a module can show each user only their own data. Identity comes from the `AuthFilterMiddleware` when one is configured, and otherwise from any identity-aware auth middleware (API key, OAuth, simple auth).
+
+`add_row_action` puts a button on every row of a workspace table and runs a spaday action when it is clicked. The click event's `detail` carries `table`, `action` and `key`, the row's index value:
+
+```python
+from spaday.actions import CallEndpoint, concat, event_prop, field, obj
+
+app.add_row_action(
+    "orders",
+    "cancel",
+    concat("Cancel into ", field("draft")),  # tooltip; labels may follow the store
+    icon="delete",  # or text="..."; built-in icons are copy, delete and add
+    handler=CallEndpoint("POST", "/api/v1/my_module/cancel", obj({"id": event_prop("detail.key")})),
+)
+```
+
+A table's buttons share one `actions` column at the start of its grids, next to the real columns. Only tables with an index get buttons, and they are disabled while a view is grouped or split.
+
+`app.focus_table(table, filter=None)` is an action that brings the workspace forward and selects the panel already showing `table`, opening a new tab only when none does. `filter` takes Perspective filter clauses, which may hold expressions, and applies them to that panel alone.

@@ -180,6 +180,11 @@ class TestGatewayWebserver:
         assert response.status_code == 404
         assert response.json() == {"detail": "Not Found"}
 
+    def test_favicon_is_never_a_server_error(self, rest_client: TestClient):
+        # A source checkout has no JS build, so there is no favicon to serve; that is a 404, not a 500.
+        response = rest_client.get("/favicon.ico?token=test")
+        assert response.status_code in (200, 404)
+
     def test_static_cachecontrol(self, rest_client: TestClient):
         response = rest_client.get("/static/favicon.png")
         assert response.status_code == 200

@@ -471,7 +471,11 @@ class GatewayWebApp:
         # Mount top level routes
         @self.app.get("/favicon.ico", include_in_schema=False, response_class=FileResponse)
         async def readFavicon():
-            return FileResponse(path.join(build_files_dir, "favicon.png"))
+            # Only a built distribution ships the JS build directory; a source checkout has none.
+            favicon = path.join(build_files_dir, "favicon.png")
+            if not path.isfile(favicon):
+                raise HTTPException(status_code=404, detail="Not found")
+            return FileResponse(favicon)
 
         # Add UI if present, otherwise redirect to docs
         if self.settings.UI:

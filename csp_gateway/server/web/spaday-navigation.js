@@ -89,3 +89,30 @@ registerHandler("gateway-log-selection", (event, tree) => {
   if (path && !tree.paths.includes(path)) return;
   emit(tree.closest("#gateway-log-panel"), "gateway-log-path", { path });
 });
+
+// Show one table in the workspace without replacing the user's layout: spaday-perspective selects
+// the panel already showing it or opens one beside the detail panels, then optionally filters that
+// panel alone. Both steps run on the panel's own queue, which also waits for the workspace to load.
+document.addEventListener("gateway-focus-table", async (event) => {
+  const { table, filter } = event.detail || {};
+  const panel = document.getElementById("gateway-workspace");
+  if (!table || !panel) return;
+  try {
+    await panel.openChannel(table);
+    if (!filter) return;
+    const workspace = await panel.save();
+    const masters = new Set(workspace.masters || []);
+    const [id, config] =
+      Object.entries(workspace.panels || {}).find(
+        ([key, p]) => p.table === table && !masters.has(key),
+      ) || [];
+    if (!id) return;
+    const columns = new Set(filter.map((clause) => clause[0]));
+    const kept = (config.filter || []).filter(
+      (clause) => !columns.has(clause[0]),
+    );
+    await panel.restorePanel(id, { filter: [...kept, ...filter] });
+  } catch (error) {
+    console.error("Gateway table focus failed", error);
+  }
+});

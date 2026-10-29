@@ -1292,6 +1292,9 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
     def add_stage_listener(self, field: str, listener: Any) -> None:
         """Call ``listener(events)`` whenever ``field``'s staging areas change.
 
+        ``events`` is a list of ``(action, staging_id, items)`` tuples -- the same deltas
+        :meth:`get_stage_events` ticks as `StagingEvent` structs, with ``action`` a `StagingAction`.
+
         The callback counterpart of :meth:`get_stage_events`, for observers that are not part of the
         graph. Stages declared by annotation are wired during finalization, after every module's
         ``connect``, so a listener -- unlike a graph edge -- can be attached from a later hook.

@@ -27,6 +27,7 @@ from csp_gateway.testing.mock_validators import mock_api_key_validator_by_user
 pytest.importorskip("spaday")
 
 # Imported below the skip: both of these pull in spaday, which is an optional dependency.
+from spaday.actions import SetField, concat, event_prop, field
 from spaday.packages import ComponentPackage
 
 from csp_gateway.server.web import spaday_ui
@@ -44,6 +45,8 @@ def _bare_ui():
     ui._store_persistence = {}
     ui._settings = GatewaySettings()
     ui._workspace_tables = []
+    ui._row_actions = {}
+    ui._workspace_panels = []
     return ui
 
 
@@ -610,12 +613,7 @@ class TestDefaultLayout:
         assert "columns" not in panel
 
     def test_custom_default_layout_replaces_generated_layout(self):
-        from csp_gateway.server.web.spaday_ui import GatewayUI
-
-        ui = object.__new__(GatewayUI)
-        ui._store_seeds = {}
-        ui._store_persistence = {}
-        ui._settings = GatewaySettings()
+        ui = _bare_ui()
         custom = {
             "layout": {"type": "tab-layout", "tabs": ["custom"]},
             "panels": {"custom": {"table": "orders", "plugin": "X Bar"}},
@@ -624,7 +622,7 @@ class TestDefaultLayout:
         panel = ui.perspective_panel(route="/perspective", tables=["orders"], default_layout=custom)
         layout = panel.to_node()["bindings"]["config"]["compute"]["fields"]["layout"]
 
-        # The layout is a cond chain (focus branches, then the saved layout); the final `else` is
+        # The layout is a cond chain (saved and custom layouts); the final `else` is
         # the default, and it is the supplied one rather than a generated CSP_GATEWAY_* layout.
         while layout.get("expr") == "cond":
             layout = layout["else"]
@@ -768,7 +766,7 @@ class TestWorkspaceSignals:
 
 
 class TestGraphFocus:
-    """Clicking a channel in the graph shows that one table in the workspace."""
+    """Clicking a channel in the graph shows that table in the workspace."""
 
     def test_no_action_without_a_workspace(self):
         assert _bare_ui().focus_table_action() is None
@@ -782,21 +780,7 @@ class TestGraphFocus:
         assert [branch["b"]["value"] for branch in action["cond"]["of"]] == ["orders", "fills"]
         assert action["cond"]["expr"] == "any"
         # Focusing also brings the workspace back to the front.
-        assert '"openPanel"' in json.dumps(action["then"]) and '"workspace"' in json.dumps(action["then"])
-
-    def test_layout_has_a_focus_branch_per_table(self):
-        ui = _bare_ui()
-        node = json.dumps(ui.perspective_panel(route="/perspective", tables=["orders", "fills"]).to_node())
-
-        assert node.count('"name": "graph_focus"') == 2
-        assert ui._store_seeds["graph_focus"] == ""
-
-    def test_selecting_a_layout_clears_the_focus(self):
-        change = _bare_ui().layout_selector({}).to_node()["events"]["change"]
-
-        # Picking a layout has to drop the focus, or the focused table would outrank the choice.
-        cleared = [a for a in change["actions"] if a.get("field") == "graph_focus"]
-        assert cleared and cleared[0]["value"] == {"expr": "lit", "value": ""}
+        assert '"openPanel"' in json.dumps(action["then"]) and '"gateway-focus-table"' in json.dumps(action["then"])
 
 
 class TestDarkBoot:
@@ -985,6 +969,14 @@ class TestMainTabs:
         # tabs select and close but cannot be drag-rearranged
         assert '"locked": {"Bool": true}' in tree
 
+    def test_main_layout_can_be_unlocked(self, gateway, client: TestClient):
+        gateway.web_app.ui._settings.UI_LOCK_LAYOUT = False
+        try:
+            tree = client.get("/tree.json").text
+        finally:
+            gateway.web_app.ui._settings.UI_LOCK_LAYOUT = True
+        assert '"locked": {"Bool": false}' in tree
+
     def test_workspace_tab_is_not_closeable(self, client: TestClient):
         tree = json.loads(client.get("/tree.json").text)
 
@@ -1172,3 +1164,125 @@ class TestConfiguredPackagesAreServed:
 
         assert "/components/webawesome/" in page
         assert "/components/perspective/" in page
+
+
+class TestRowActions:
+    """Modules add buttons to workspace table rows and handle the clicks."""
+
+    @staticmethod
+    def _row_actions(node):
+        from spaday.render import _untag
+
+        return _untag(node["props"]["rowActions"])
+
+    def _panel(self, ui, tables=("orders", "fills"), **kwargs):
+        # Only `orders` is indexed; row buttons need an index to key the clicked row.
+        return ui.perspective_panel(route="/perspective", tables=list(tables), table_options={"orders": {"index": "id"}}, **kwargs)
+
+    def test_no_row_actions_leaves_the_panel_alone(self):
+        node = self._panel(_bare_ui()).to_node()
+        assert "rowActions" not in node.get("props", {})
+        assert "rowActions" not in node.get("bindings", {})
+        assert "perspective-row-action" not in node.get("events", {})
+
+    def test_a_table_gets_one_leading_actions_column(self):
+        ui = _bare_ui()
+        ui.add_row_action("orders", "cancel", "Cancel order", icon="delete", handler=SetField("picked", event_prop("detail.key")))
+        ui.add_row_action("orders", "modify", "Modify order", text="✎", handler=SetField("picked", event_prop("detail.key")))
+
+        column = self._row_actions(self._panel(ui).to_node())["orders"]["@actions"]
+        assert column["header"] == "actions" and column["position"] == "start"
+        assert column["buttons"] == [
+            {"action": "cancel", "label": "Cancel order", "icon": "delete"},
+            {"action": "modify", "label": "Modify order", "text": "✎"},
+        ]
+
+    def test_layouts_are_left_untouched(self):
+        ui = _bare_ui()
+        ui.add_row_action("orders", "cancel", "Cancel", handler=SetField("a", 1))
+        custom = {"layout": {"type": "tab-layout", "tabs": ["p"]}, "panels": {"p": {"table": "orders", "plugin": "Datagrid", "columns": ["qty"]}}}
+        before = json.dumps(custom)
+        schemas = {"orders": {"id": "string", "qty": "integer"}}
+        node = self._panel(ui, default_layout=custom, schemas=schemas).to_node()
+
+        # The actions column is generated by the panel, so the supplied layout is not edited and the
+        # generated one keeps hiding the id column.
+        assert json.dumps(custom) == before
+        assert node["props"]["rowActions"]
+        assert ui._default_layout(["orders"], schemas=schemas)["panels"]["CSP_GATEWAY_0"]["columns"] == ["qty"]
+
+    def test_unindexed_tables_get_no_buttons(self):
+        ui = _bare_ui()
+        ui.add_row_action("fills", "x", "X", handler=SetField("a", 1))
+        assert "rowActions" not in self._panel(ui).to_node().get("props", {})
+
+    def test_actions_added_after_the_panel_still_reach_it(self):
+        ui = _bare_ui()
+        panel = self._panel(ui)
+        ui.add_row_action("orders", "cancel", "Cancel", handler=SetField("a", 1))
+        assert self._row_actions(panel.to_node())["orders"]["@actions"]["buttons"] == [{"action": "cancel", "label": "Cancel"}]
+
+    def test_one_dispatcher_routes_each_action(self):
+        ui = _bare_ui()
+        ui.add_row_action("orders", "cancel", "Cancel", handler=SetField("a", "orders-cancel"))
+        ui.add_row_action("orders", "modify", "Modify", handler=SetField("a", "orders-modify"))
+        handler = json.dumps(self._panel(ui).to_node()["events"]["perspective-row-action"])
+
+        assert handler.count('"detail.table"') == 2
+        assert handler.count('"detail.action"') == 2
+        assert "orders-cancel" in handler and "orders-modify" in handler
+
+    def test_labels_may_follow_the_store(self):
+        ui = _bare_ui()
+        ui.add_row_action("orders", "buy", concat("Buy into ", field("draft")), text=concat("+", field("draft")), handler=SetField("a", 1))
+        node = self._panel(ui).to_node()
+
+        # Any expression makes the whole prop computed, so it re-renders when `draft` changes.
+        assert "rowActions" not in node.get("props", {})
+        assert '"draft"' in json.dumps(node["bindings"]["rowActions"])
+
+    def test_switching_to_computed_labels_drops_the_literal(self):
+        ui = _bare_ui()
+        panel = self._panel(ui)
+        ui.add_row_action("orders", "cancel", "Cancel", handler=SetField("a", 1))
+        ui.add_row_action("orders", "buy", concat("Buy into ", field("draft")), handler=SetField("a", 2))
+        node = panel.to_node()
+        assert "rowActions" not in node.get("props", {})
+        assert "rowActions" in node["bindings"]
+
+    def test_actions_for_tables_outside_the_workspace_are_dropped(self):
+        ui = _bare_ui()
+        ui.add_row_action("nope", "x", "X", handler=SetField("a", 1))
+        node = self._panel(ui).to_node()
+        assert "rowActions" not in node.get("props", {})
+        assert "perspective-row-action" not in node.get("events", {})
+
+    def test_duplicate_actions_are_rejected(self):
+        ui = _bare_ui()
+        ui.add_row_action("orders", "cancel", "Cancel", handler=SetField("a", 1))
+        with pytest.raises(ValueError, match="already registered"):
+            ui.add_row_action("orders", "cancel", "Cancel again", handler=SetField("a", 2))
+
+
+class TestFocusTable:
+    """Focusing a table selects its existing workspace panel instead of replacing the layout."""
+
+    def test_focus_brings_the_workspace_forward_and_opens_the_table(self):
+        ui = _bare_ui()
+        ui.perspective_panel(route="/perspective", tables=["orders"])
+        action = json.dumps(ui.focus_table("orders").to_dict())
+
+        assert '"openPanel"' in action and '"workspace"' in action
+        assert '"gateway-focus-table"' in action and '"orders"' in action
+
+    def test_focus_can_filter_that_panel(self):
+        ui = _bare_ui()
+        ui.perspective_panel(route="/perspective", tables=["orders"])
+        action = json.dumps(ui.focus_table("orders", filter=[["draft", "==", field("draft")]]).to_dict())
+        assert '"draft"' in action and '"=="' in action
+
+    def test_focus_table_action_no_longer_relayouts(self):
+        ui = _bare_ui()
+        node = json.dumps(ui.perspective_panel(route="/perspective", tables=["orders", "fills"]).to_node())
+        assert "graph_focus" not in node
+        assert "graph_focus" not in ui._store_seeds

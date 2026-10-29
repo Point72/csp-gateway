@@ -113,6 +113,12 @@ class Settings(BaseSettings):
         "*.js and *.css files are additionally auto-injected into the UI in sorted filename order. Do "
         "not point this at a directory containing private files.",
     )
+    UI_LOCK_LAYOUT: bool = Field(
+        default=True,
+        description="Whether the spaday UI's main tabs (the workspace and module panels such as Logs) are locked "
+        "against drag-rearranging. Unlock to split and stack panels beside the Perspective workspace; the "
+        "workspace's own tabs stay inside it either way. Only applies to the spaday UI provider.",
+    )
     UI_PACKAGES: list[str] = Field(
         default_factory=list,
         description="Extra spaday component packages to load into the UI, on top of the ones the "

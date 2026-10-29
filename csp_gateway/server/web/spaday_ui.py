@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
@@ -23,7 +25,7 @@ from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, create_model
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, Response
 from starlette.routing import Mount, WebSocketRoute
@@ -41,6 +43,8 @@ from spaday import Js, Wire, element
 from spaday.actions import (
     CallEndpoint,
     Download,
+    Emit,
+    Expr,
     If,
     Invoke,
     NamedJs,
@@ -50,6 +54,7 @@ from spaday.actions import (
     ToggleField,
     all_,
     any_,
+    arr,
     by_id,
     concat,
     cond,
@@ -92,16 +97,16 @@ __all__ = (
 log = logging.getLogger(__name__)
 
 # The tenant every connection shares when no auth middleware can identify it.
-_ANONYMOUS_TENANT = "__anonymous__"
 _CUSTOM_LAYOUT_NAME = "Custom Layout"
 _CUSTOM_LAYOUT_STORAGE_KEY = "csp_gateway_demo_config"
 _MAIN_LAYOUT_ID = "gateway-main-layout"
 _WORKSPACE_ID = "gateway-workspace"
 _WORKSPACE_TAB = "workspace"
+# spaday-perspective's id for the generated column holding a table's row buttons.
+_ROW_ACTIONS_COLUMN = "@actions"
 _SEND_TAB = "send"
 _TOAST_ID = "gateway-toasts"
 _ACTION_RESULT = "action_result"
-_GRAPH_FOCUS = "graph_focus"
 _PERSPECTIVE_READY = "perspective_ready"
 # Seeded from `?error=` so the auth middleware can say why it turned a request away.
 _AUTH_ERROR = "auth_error"
@@ -111,6 +116,23 @@ _AUTH_ERROR = "auth_error"
 # workspace and channels graph need their layout and graph packages, so a page without them is not
 # a gateway page.
 _BUILTIN_COMPONENT_PACKAGES: tuple[Any, ...] = ("webawesome", "perspective", "regular-layout", "dagre", "trees")
+
+
+def _expr(value: Any) -> Any:
+    """``value`` as a spaday expression when it holds one anywhere, otherwise ``value`` unchanged.
+
+    Dicts and lists are rebuilt with ``obj``/``arr`` only if an expression is nested inside them, so
+    plain data stays a plain literal.
+    """
+    if isinstance(value, Expr):
+        return value
+    if isinstance(value, dict):
+        items = {key: _expr(item) for key, item in value.items()}
+        return obj(items) if any(isinstance(item, Expr) for item in items.values()) else value
+    if isinstance(value, (list, tuple)):
+        items = [_expr(item) for item in value]
+        return arr(*items) if any(isinstance(item, Expr) for item in items) else list(value)
+    return value
 
 
 def _resolve_component_package(value: Any) -> Any:
@@ -237,30 +259,35 @@ class _Contribution:
 
 
 class ModelHandle:
-    """A module's live UI state: one transports model, mirrored per authenticated tenant.
+    """A module's live UI state: one transports model, mirrored per page or per user.
 
     Obtained from `GatewayUI.model()` in a module's `ui()` hook, which runs once at startup, and used
     afterwards to push updates from wherever the state actually changes -- a csp node, a REST handler.
 
-    `publish` is safe to call from any thread. Values are computed per tenant, so a deployment running
-    `AuthFilterMiddleware` keeps its per-identity filtering: pass a callable to derive each tenant's
-    view of the state from its identity, or a plain value when every tenant may see the same thing.
+    `publish` is safe to call from any thread. Values are computed per identity, so a deployment running
+    `AuthFilterMiddleware` keeps its per-identity filtering: pass a callable to derive each user's view
+    of the state from their identity, or a plain value when every user may see the same thing.
     """
 
-    def __init__(self, ui: GatewayUI, namespace: str, model: Any) -> None:
+    def __init__(self, ui: GatewayUI, namespace: str, model: Any, scope: str) -> None:
         self._ui = ui
         self._namespace = namespace
         self._model = model
+        self._scope = scope
 
     @property
     def namespace(self) -> str:
         return self._namespace
 
-    def publish(self, value: Any) -> None:
-        """Push new state to every connected tenant.
+    @property
+    def scope(self) -> str:
+        return self._scope
 
-        ``value`` is either the state itself, or a callable taking a tenant's identity (``None`` when
-        unauthenticated) and returning that tenant's view of it.
+    def publish(self, value: Any) -> None:
+        """Push new state to every connected page.
+
+        ``value`` is either the state itself, or a callable taking a page's identity (``None`` when
+        unauthenticated) and returning that page's view of it.
         """
         self._ui._publish(self._namespace, value)
 
@@ -285,19 +312,34 @@ class GatewayUI:
         # Tables the workspace can show, recorded by `perspective_panel` so later contributions
         # (the channels graph) can drive it without knowing how it was configured.
         self._workspace_tables: list[str] = []
+        # Workspace panels built so far, as (panel, tables, table -> index column), kept so row actions
+        # added by later modules still reach them.
+        self._workspace_panels: list[tuple[Any, list[str], dict[str, str]]] = []
+        # Row buttons modules add to workspace tables: table -> [(action, label, text, icon, handler)].
+        self._row_actions: dict[str, list[tuple[str, Any, Any, str | None, Any]]] = {}
         # Component packages contributed by modules, loaded on top of `Settings.UI_PACKAGES`.
         self._packages: list[Any] = []
         # Live UI state: namespace -> (model, latest value factory). The hub and its models only exist
         # once a module declares one, so a gateway with no live state serves no websocket.
         self._models: dict[str, Any] = {}
         self._latest: dict[str, Any] = {}
-        self._tenant_models: dict[Any, dict[str, tuple]] = {}
+        # namespace -> "session" or "user"; see `model()`.
+        self._scopes: dict[str, str] = {}
+        # Each namespace is its own transports model (`<namespace>_UIModel`), selected by its wire on
+        # one shared websocket. A tenant is one page load, keyed (user, page session).
+        self._wire_models: dict[str, Any] = {}
+        self._tenant_models: dict[Any, dict[str, tuple[Any, int]]] = {}
         self._tenant_identity: dict[Any, Any] = {}
+        # User-scoped namespaces: (user, namespace) -> transports shared id, written by that user's pages only.
+        self._user_models: dict[tuple[Any, str], int] = {}
+        # `publish` runs on csp threads while connections are hosted on the server loop.
+        self._tenant_lock = threading.Lock()
         self._hub: Any = None
         self._loop: Any = None
         self._autosync: Any = None
+        self._mounted = False
 
-    def model(self, namespace: str, model: Any) -> ModelHandle:
+    def model(self, namespace: str, model: Any, *, scope: str = "session") -> ModelHandle:
         """Declare live UI state this module publishes, mirrored into the page's signal store.
 
         `ui()` runs once at startup, so a module declares its state here and pushes to the returned
@@ -307,13 +349,24 @@ class GatewayUI:
             self._staging = app.model("staging", StagingView)
             app.add(Region.GUTTER_RIGHT, Table().compute("rows", field("staging.rows")))
 
-        Each authenticated identity gets its own copy of the model, so what one user is shown is never
-        broadcast to another.
+        Nothing one visitor does reaches another. ``scope`` decides how far a copy reaches:
+
+        - ``"session"`` (default): every page load has its own copy. Edits made in a tab, such as a
+          half-typed form, stay in that tab.
+        - ``"user"``: one copy per authenticated user, shared by that user's tabs and no one else's.
+          Without an identity there is no user to share with, so it behaves like ``"session"``.
         """
+        if not namespace.isidentifier():
+            raise ValueError(f"UI model namespace must be an identifier: {namespace!r}")
+        if scope not in ("session", "user"):
+            raise ValueError(f"UI model scope must be 'session' or 'user', not {scope!r}")
         if namespace in self._models:
             raise ValueError(f"UI model namespace already declared: {namespace}")
+        if self._mounted:
+            raise RuntimeError(f"UI model {namespace!r} declared after the UI was mounted; declare it from a module's ui() hook")
         self._models[namespace] = model
-        return ModelHandle(self, namespace, model)
+        self._scopes[namespace] = scope
+        return ModelHandle(self, namespace, model, scope)
 
     @property
     def settings(self) -> Any:
@@ -527,16 +580,11 @@ class GatewayUI:
         )
         layout_expr = cond(eq(field("layout_view"), _CUSTOM_LAYOUT_NAME), field("custom_layout"), layout_expr)
 
-        # Focusing a table (from a channels-graph node) wins over the selected layout until the
-        # selector or a save clears it, so these branches wrap the others.
-        for name in tables:
-            layout_expr = cond(eq(field(_GRAPH_FOCUS), name), self._default_layout([name], schemas=schemas), layout_expr)
-        self._store_seeds.setdefault(_GRAPH_FOCUS, "")
         self._store_seeds.setdefault(_PERSPECTIVE_READY, False)
         self._store_seeds.setdefault("saved_layout", None)
         self.persist_store(saved_layout=_CUSTOM_LAYOUT_STORAGE_KEY)
 
-        return (
+        panel = (
             PerspectivePanel()
             .prop("id", _WORKSPACE_ID)
             .style(height="100%", display="block", overflow="hidden")
@@ -590,6 +638,73 @@ class GatewayUI:
             )
             .on("perspective-ready", SetField(_PERSPECTIVE_READY, True))
         )
+        indexes = {name: spec["index"] for name, spec in options.items() if isinstance(spec, dict) and isinstance(spec.get("index"), str)}
+        self._workspace_panels.append((panel, tables, indexes))
+        self._apply_row_actions(panel, tables, indexes)
+        return panel
+
+    def add_row_action(self, table: str, action: str, label: Any, *, handler: Any, text: Any = None, icon: str | None = None) -> None:
+        """Add a button to every row of a workspace table, running ``handler`` when it is clicked.
+
+        ``handler`` is a spaday action. It runs with the ``perspective-row-action`` event, whose
+        ``detail`` carries ``table``, ``action`` and ``key`` (the row's index value), so a handler
+        reads the clicked row as ``event_prop("detail.key")``. ``label`` (the tooltip and accessible
+        name) and ``text`` (the button face) may be expressions, so a button can name the state it
+        acts on. ``icon`` is one of spaday-perspective's built-in icons: ``copy``, ``delete`` or ``add``.
+
+        A table's buttons share one ``actions`` column at the start of its grids. They need an
+        indexed table; they are ignored for tables the workspace does not show or that have no index,
+        and are disabled while a view is grouped or split.
+        """
+        actions = self._row_actions.setdefault(table, [])
+        if any(existing[0] == action for existing in actions):
+            raise ValueError(f"row action already registered: {table}.{action}")
+        actions.append((action, label, text, icon, handler))
+        for panel, tables, indexes in self._workspace_panels:
+            self._apply_row_actions(panel, tables, indexes)
+
+    def _apply_row_actions(self, panel: Any, tables: list[str], indexes: dict[str, str]) -> None:
+        """Put the registered row buttons on a workspace panel, with one dispatcher for their clicks."""
+        with_actions = {table: actions for table, actions in self._row_actions.items() if actions and table in tables and table in indexes}
+        if not with_actions:
+            return
+
+        def button(action: str, label: Any, text: Any, icon: str | None) -> dict[str, Any]:
+            spec = {"action": action, "label": label}
+            if text is not None:
+                spec["text"] = text
+            if icon is not None:
+                spec["icon"] = icon
+            return spec
+
+        config = {
+            table: {_ROW_ACTIONS_COLUMN: {"header": "actions", "position": "start", "buttons": [button(*spec[:4]) for spec in actions]}}
+            for table, actions in with_actions.items()
+        }
+        value = _expr(config)
+        if isinstance(value, Expr):
+            panel._props.pop("rowActions", None)
+            panel.compute("rowActions", value)
+        else:
+            panel._bindings.pop("rowActions", None)
+            panel.prop("rowActions", value)
+
+        dispatch: Any = None
+        for table, actions in reversed(with_actions.items()):
+            for action, *_, handler in reversed(actions):
+                matches = all_(eq(event_prop("detail.table"), table), eq(event_prop("detail.action"), action))
+                dispatch = If(matches, handler, dispatch)
+        panel.on("perspective-row-action", dispatch)
+
+    def focus_table(self, table: Any, *, filter: list | None = None) -> Any:
+        """An action that brings the workspace forward and shows ``table`` in it.
+
+        The panel already showing ``table`` is selected, so the user's layout is kept; a table that
+        is not open gets a new tab. ``filter`` (Perspective filter clauses, which may hold
+        expressions) is applied to that panel only, replacing any clauses on the same columns.
+        """
+        detail = {"table": table, "filter": _expr(filter) if filter is not None else None}
+        return Sequence(Invoke(by_id(_MAIN_LAYOUT_ID), "openPanel", _WORKSPACE_TAB), Emit("gateway-focus-table", _expr(detail)))
 
     def focus_table_action(self, *, event_path: str = "detail.id") -> Any:
         """An action that shows one table in the workspace, named by ``event_path`` on the event.
@@ -601,10 +716,7 @@ class GatewayUI:
         if not self._workspace_tables:
             return None
         name = event_prop(event_path)
-        return If(
-            any_(*[eq(name, table) for table in self._workspace_tables]),
-            Sequence(SetField(_GRAPH_FOCUS, name), Invoke(by_id(_MAIN_LAYOUT_ID), "openPanel", _WORKSPACE_TAB)),
-        )
+        return If(any_(*[eq(name, table) for table in self._workspace_tables]), self.focus_table(name))
 
     def layout_selector(self, layouts: dict[str, str], *, value: str | None = None) -> Any:
         """A dropdown bound to `view`, listing the generated, saved, and custom layouts.
@@ -615,7 +727,7 @@ class GatewayUI:
             WaSelect(value=value, size="s")
             .prop("id", "gateway-layout-selector")
             .bind("value", "view", mode="two-way")
-            .on("change", Sequence(SetField("layout_view", event_value()), SetField(_GRAPH_FOCUS, "")))
+            .on("change", SetField("layout_view", event_value()))
             .style(width="220px")
         )
         select = select.child(WaOption(value="__default__").text("All Tables"))
@@ -637,7 +749,6 @@ class GatewayUI:
                 Sequence(
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
                     SetField("saved_layout", field("custom_layout")),
-                    SetField(_GRAPH_FOCUS, ""),
                     SetField("view", _CUSTOM_LAYOUT_NAME),
                     SetField("layout_view", _CUSTOM_LAYOUT_NAME),
                 ),
@@ -891,9 +1002,9 @@ class GatewayUI:
             RegularLayout(*frames, layout={"type": "tab-layout", "tabs": [_WORKSPACE_TAB]})
             .prop("id", _MAIN_LAYOUT_ID)
             .compute("data-active-tab", field("main_tab"))
-            # Tabs open, select, and close, but drag-rearranging is disabled: the nested
-            # Perspective workspace is itself a regular-layout, which makes drags confusing.
-            .prop("locked", True)
+            # Tabs always open, select, and close. Drag-rearranging is off by default: the nested
+            # Perspective workspace is itself a regular-layout, which can make drags confusing.
+            .prop("locked", getattr(self._settings, "UI_LOCK_LAYOUT", True))
             .prop("style", "; ".join(titles))
             .compute("class", cond(field("main_tabbed"), "spa", "spa spa-solo"))
             .on("regular-layout-update", Sequence(SetField("main_tabbed", not_(eq(open_count, 1))), NamedJs("gateway-tabs")))
@@ -1037,23 +1148,48 @@ class GatewayUI:
         """The configured `AuthFilterMiddleware`, if any -- the same one the REST and websocket paths use."""
         return getattr(self._web_app.app.state, "auth_filter_middleware", None)
 
-    async def _tenant_for(self, websocket: Any) -> tuple[Any, Any]:
-        """The ``(tenant key, identity)`` a connection belongs to.
+    async def _identity_for(self, websocket: Any) -> Any:
+        """The authenticated identity behind a connection, or ``None``.
 
-        Identity resolution is async (an external validator may do I/O), which is why it happens here
-        rather than in the hub's key function -- that one is called synchronously.
+        Asks the `AuthFilterMiddleware` when there is one, so its choice of auth middleware applies;
+        otherwise asks each identity-aware auth middleware directly. Identity resolution is async (an
+        external validator may do I/O), which is why it happens here rather than in the hub's key
+        function -- that one is called synchronously.
         """
-        auth_filter = self._auth_filter
-        if auth_filter is None:
-            return _ANONYMOUS_TENANT, None
+        from csp_gateway.server.middleware.base import IdentityAwareMiddlewareMixin
+
         try:
-            identity = await auth_filter.get_identity_from_websocket(websocket)
+            auth_filter = self._auth_filter
+            if auth_filter is not None:
+                return await auth_filter.get_identity_from_websocket(websocket) or None
+            credentials = {"cookies": dict(websocket.cookies), "headers": dict(websocket.headers), "query_params": dict(websocket.query_params)}
+            for module in getattr(self._web_app.gateway, "modules", None) or []:
+                if isinstance(module, IdentityAwareMiddlewareMixin):
+                    identity = await module.get_identity_from_credentials(**credentials)
+                    if identity:
+                        return identity
         except Exception:
-            log.exception("Failed to resolve UI websocket identity; serving the anonymous tenant")
-            return _ANONYMOUS_TENANT, None
-        if not identity:
-            return _ANONYMOUS_TENANT, None
-        return json.dumps(identity, sort_keys=True, default=str), identity
+            log.exception("Failed to resolve UI websocket identity; serving an anonymous page")
+        return None
+
+    @staticmethod
+    def _user_key(identity: Any) -> Any:
+        """A stable key for an identity, or ``None`` for an anonymous visitor."""
+        return json.dumps(identity, sort_keys=True, default=str) if identity else None
+
+    def _tenant_key(self, identity: Any, session: str | None) -> tuple[Any, str]:
+        """The tenant a page belongs to: its user plus its page session.
+
+        Pages send a fresh session id per load. The id comes from the client, so it only ever selects
+        a tenant that is not already live: a connection without one, or naming a session another
+        connection holds, gets a fresh id instead of joining. That keeps one visitor out of another's
+        page even when both are anonymous.
+        """
+        user = self._user_key(identity)
+        with self._tenant_lock:
+            if not session or (user, session) in self._tenant_models:
+                session = uuid.uuid4().hex
+        return user, session
 
     def _view_for(self, namespace: str, identity: Any) -> Any:
         """One tenant's view of a namespace's latest published state."""
@@ -1069,42 +1205,78 @@ class GatewayUI:
             setattr(target, name, field_value)
 
     def _host_tenant(self, tenant: Any, identity: Any) -> None:
-        """Give a tenant its own instance of every declared model, seeded with current state."""
-        if tenant in self._tenant_models:
-            return
-        session = self._hub.tenant(tenant)
-        hosted: dict[str, tuple] = {}
-        for namespace, model in self._models.items():
-            instance = model()
-            self._apply(instance, self._view_for(namespace, identity))
-            hosted[namespace] = (instance, session.host(instance))
-        self._tenant_models[tenant] = hosted
-        self._tenant_identity[tenant] = identity
+        """Give a page its models, seeded with current state.
+
+        Session-scoped namespaces are hosted in the page's own session. User-scoped ones are shared
+        models, one per user and namespace, that only that user's pages subscribe to (and may write).
+        """
+        import transports
+
+        user = tenant[0]
+        with self._tenant_lock:
+            if tenant in self._tenant_models:
+                return
+            session = self._hub.tenant(tenant)
+            hosted: dict[str, tuple[Any, int]] = {}
+            for namespace, model_type in self._wire_models.items():
+                if self._scopes[namespace] == "user" and user is not None:
+                    sid = self._user_models.get((user, namespace))
+                    if sid is None:
+                        instance = model_type()
+                        self._apply(instance, self._view_for(namespace, identity))
+                        sid = self._user_models[(user, namespace)] = self._hub.share(instance)
+                    self._hub.subscribe(tenant, sid, transports.WRITE)
+                    hosted[namespace] = (None, sid)
+                else:
+                    instance = model_type()
+                    self._apply(instance, self._view_for(namespace, identity))
+                    hosted[namespace] = (instance, session.host(instance))
+            self._tenant_models[tenant] = hosted
+            self._tenant_identity[tenant] = identity
+
+    def _drop_tenant(self, tenant: Any) -> None:
+        """Forget a page once its connection closes, so later publishes skip it."""
+        with self._tenant_lock:
+            self._tenant_models.pop(tenant, None)
+            self._tenant_identity.pop(tenant, None)
 
     def _publish(self, namespace: str, value: Any) -> None:
         """Push new state for a namespace to every connected tenant, from any thread."""
         self._latest[namespace] = value
-        if self._hub is None:
+        hub = self._hub
+        if hub is None:
             return
 
-        # Apply to each tenant's model here, so state is correct even before a loop exists; only the
-        # emit needs to be marshalled onto the server loop.
+        # Session models are updated here, so state is correct even before a loop exists; only the emit
+        # is marshalled onto the server loop. Shared (user) models are written on the loop, since the
+        # hub mutates them there too.
         updates = []
-        for tenant, hosted in self._tenant_models.items():
-            entry = hosted.get(namespace)
-            if entry is None:
-                continue
-            instance, mid = entry
-            self._apply(instance, self._view_for(namespace, self._tenant_identity.get(tenant)))
-            updates.append((tenant, mid))
+        shared: dict[int, Any] = {}
+        with self._tenant_lock:
+            for tenant, hosted in self._tenant_models.items():
+                instance, mid = hosted.get(namespace, (None, None))
+                if mid is None:
+                    continue
+                view = self._view_for(namespace, self._tenant_identity.get(tenant))
+                if instance is None:
+                    shared[mid] = view
+                else:
+                    self._apply(instance, view)
+                    updates.append((tenant, mid))
 
         loop = self._loop
-        if not updates or loop is None or not loop.is_running():
+        if not (updates or shared) or loop is None or not loop.is_running():
             return
+        model_type = self._wire_models[namespace]
 
         def _emit() -> None:
             for tenant, mid in updates:
-                self._hub.tenant(tenant).update(mid)
+                hub.tenant(tenant).update(mid)
+            for sid, view in shared.items():
+                if view is not None:
+                    instance = model_type()
+                    self._apply(instance, view)
+                    hub.set_shared(sid, instance)
 
         loop.call_soon_threadsafe(_emit)
 
@@ -1112,19 +1284,23 @@ class GatewayUI:
         """The websocket serving the hub, with each connection routed to its authenticated tenant."""
         import transports
 
-        self._hub = transports.Hub(key=lambda conn: getattr(conn.state, "csp_gateway_tenant", _ANONYMOUS_TENANT))
-        inner = transports.ws_endpoint(self._hub)
+        hub = self._hub = transports.Hub(key=lambda conn: conn.state.csp_gateway_tenant)
+        inner = transports.ws_endpoint(hub)
 
         # Annotated, not `Any`: FastAPI resolves the signature and would treat an unrecognised
         # annotation as a required query parameter, rejecting every connection with a 1008.
         async def endpoint(websocket: WebSocket) -> None:
-            tenant, identity = await self._tenant_for(websocket)
+            identity = await self._identity_for(websocket)
+            tenant = self._tenant_key(identity, websocket.query_params.get("session"))
             websocket.state.csp_gateway_tenant = tenant
             self._loop = asyncio.get_running_loop()
             self._host_tenant(tenant, identity)
             if self._autosync is None:
-                self._autosync = asyncio.create_task(transports.autosync(self._hub))
-            await inner(websocket)
+                self._autosync = asyncio.create_task(transports.autosync(hub))
+            try:
+                await inner(websocket)
+            finally:
+                self._drop_tenant(tenant)
 
         return endpoint
 
@@ -1341,8 +1517,12 @@ class GatewayUI:
         # static tree and no websocket is served.
         wire: Any = None
         routes: list = []
+        self._mounted = True
         if self._models:
-            wire = [Wire("/ws", namespace=namespace) for namespace in self._models]
+            # One transports model per namespace, each with a unique type name so its wire can select it
+            # from the shared connection; `session=True` gives every page load its own tenant.
+            self._wire_models = {namespace: create_model(f"{namespace}_UIModel", __base__=model) for namespace, model in self._models.items()}
+            wire = [Wire("/ws", model=f"{namespace}_UIModel", namespace=namespace, session=True) for namespace in self._models]
             routes = [WebSocketRoute("/ws", self._ws_endpoint())]
         # Built rather than mounted, so each route can be registered where it belongs: spaday's own
         # routes carry no FastAPI dependencies, and the page and tree have to. The ROOT_PATH prefix
