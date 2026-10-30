@@ -935,7 +935,7 @@ modules:
 Additional configuration is available:
 
 - **limits** (`Dict[str, int] = {}`): configuration of Perspective table limits
-- **indexes** (`Dict[str, str] = {}`): configuration of Perspective table indexes
+- **indexes** (`Dict[str, str | List[str]] = {}`): configuration of Perspective table indexes. A list of fields makes a composite index, which keys rows by every field together.
 - **update_interval** (`timedelta = Field(default=timedelta(seconds=2)`): default perspective table update interval
 - **default_index** (`Optional[str]`): default index on all perspective tables, e.g. `id`
 - **perspective_field** (`str`): Optional field to allow a `perspective.Server` to be mounted on a `GatewayChannels` instance, to allow `GatewayModules` to interact with Perspective independent of this module

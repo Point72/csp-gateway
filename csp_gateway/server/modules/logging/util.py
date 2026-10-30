@@ -4,9 +4,7 @@ from datetime import UTC, timezone
 from enum import Enum
 from typing import ClassVar
 
-import orjson
 from pydantic import BaseModel
-from typing_extensions import override
 
 from csp_gateway.utils.struct.base import GatewayStruct
 
@@ -57,11 +55,9 @@ class MonitoringBase(GatewayStruct):
 
     Attributes:
         tags (Dict[str, str]): Monitoring tags.
-        tag_str (str): String representation of tags.
     """
 
     tags: dict[str, str] = {}
-    tag_str: str = ""
 
     def get_tags(self, extra_tags: dict[str, str] | None = None) -> list[str]:
         """
@@ -134,20 +130,6 @@ class MonitoringBase(GatewayStruct):
             opsgenie_sdk.CloseAlertPayload: OpsGenie payload.
         """
         raise NotImplementedError
-
-    @override
-    def psp_flatten(self, custom_jsonifier=None):
-        """
-        Flattens the object for PSP.
-
-        Args:
-            custom_jsonifier (optional): Custom JSON serializer.
-
-        Returns:
-            The flattened object.
-        """
-        self.tag_str = orjson.dumps(self.tags).decode()
-        return super().psp_flatten(custom_jsonifier)
 
 
 class MonitoringEvent(MonitoringBase):

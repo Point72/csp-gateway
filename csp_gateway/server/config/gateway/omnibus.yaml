@@ -30,6 +30,7 @@ modules:
       # Primary table with multi-index
       example:
         index: ["x", "y"]
+        list_flatten: stringify
       # Additional table: same channel, no index (full append-only history)
       example_full_history:
         channel: example

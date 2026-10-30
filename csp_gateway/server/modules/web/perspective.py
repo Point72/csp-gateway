@@ -1,8 +1,7 @@
 from collections import OrderedDict
 from collections.abc import Iterable
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from hashlib import sha256
-from io import BytesIO
 from logging import getLogger
 from typing import (
     TYPE_CHECKING,
@@ -14,8 +13,6 @@ from urllib.parse import parse_qs
 
 import csp
 import orjson
-import pyarrow
-import pyarrow.json
 from csp import ts
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket
 from perspective import Client, Server, Table
@@ -27,6 +24,7 @@ from typing_extensions import TypeAliasType
 from csp_gateway.server import ChannelSelection, GatewayChannels, GatewayModule
 from csp_gateway.server.web import GatewayWebApp, get_default_responses
 from csp_gateway.utils import PickleableQueue, get_args, get_origin, get_thread
+from csp_gateway.utils.struct.psp import PspArrowEncoder
 
 if TYPE_CHECKING:
     from csp_gateway.server.web.spaday_ui import GatewayUI
@@ -34,8 +32,6 @@ if TYPE_CHECKING:
 __all__ = (
     "MountPerspectiveTables",
     "TableConfig",
-    "create_pyarrow_table",
-    "psp_schema_to_arrow_schema",
 )
 
 T = TypeVar("T")
@@ -46,74 +42,12 @@ _MAX_LAYOUT_DOWNLOAD_BYTES = 16 * 1024 * 1024
 _MAX_SHARED_LAYOUT_BYTES = 1024 * 1024
 _MAX_SHARED_LAYOUTS = 1000
 
-_PSP_ARROW_MAP = {
-    int: pyarrow.int64(),
-    float: pyarrow.float64(),
-    bool: pyarrow.bool_(),
-    str: pyarrow.string(),
-    date: pyarrow.string(),
-    datetime: pyarrow.timestamp("us", tz="UTC"),
-}
 
-
-def psp_schema_to_arrow_schema(psp_schema):
-    return pyarrow.schema([(k, _PSP_ARROW_MAP[v]) for k, v in psp_schema.items()])
-
-
-def create_pyarrow_table(key_name, data, computed_index, arrow_schema, date_conversion_set):
-    new_data = []
-    for item in data:
-        flattened_items = item.psp_flatten()
-        if key_name:
-            for f in flattened_items:
-                # TODO better
-                f["basket-key"] = key_name
-        if computed_index:
-            index_name, index_fields = computed_index
-            for f in flattened_items:
-                computed_index_value = "-".join(str(f[field]) for field in index_fields)
-                f[index_name] = computed_index_value
-        new_data.extend(flattened_items)
-
-    # convert to arrow
-    json = b"\n".join(orjson.dumps(_) for _ in new_data)
-    b = BytesIO()
-    b.write(json)
-    b.seek(0)
-    table = pyarrow.json.read_json(
-        b,
-        parse_options=pyarrow.json.ParseOptions(explicit_schema=arrow_schema, unexpected_field_behavior="ignore"),
-    )
-    if date_conversion_set:
-        table = pyarrow.Table.from_arrays(
-            [table.column(name).cast(pyarrow.date32()) if name in date_conversion_set else table.column(name) for name in table.column_names],
-            names=table.column_names,
-        )
-    return table
-
-
-def pull_data_thread(
-    queue: PickleableQueue,
-    table_insts,
-    computed_indexes,
-    arrow_schema_insts,
-    arrow_schema_date_conversions,
-):
+def pull_data_thread(queue: PickleableQueue, table_insts, encoders):
     while True:
         try:
-            for (table_name, key_name), timeserieses in queue.get().items():
-                table = create_pyarrow_table(
-                    key_name,
-                    timeserieses,
-                    computed_indexes.get(table_name),
-                    arrow_schema_insts[table_name],
-                    arrow_schema_date_conversions[table_name],
-                )
-                stream = pyarrow.BufferOutputStream()
-                writer = pyarrow.RecordBatchStreamWriter(stream, table.schema)
-                writer.write_table(table)
-                writer.close()
-                table_insts[table_name].update(stream.getvalue().to_pybytes())
+            for table_name, timeserieses in queue.get().items():
+                table_insts[table_name].update(encoders[table_name].encode(timeserieses))
         except KeyboardInterrupt:
             raise
         except Exception:
@@ -121,6 +55,9 @@ def pull_data_thread(
 
 
 ExcludedColumns = TypeAliasType("ExcludedColumns", "set[str] | dict[str, bool | ExcludedColumns]")
+
+ListFlatten = Literal["cartesian", "zip", "stringify", "stringify_formatted"]
+MapFlatten = Literal["pivot", "stringify", "stringify_formatted"]
 
 ViewConfig = dict[
     Literal["table", "group_by", "split_by", "aggregates", "columns", "sort", "filter", "expressions"],
@@ -139,9 +76,17 @@ class TableConfig(BaseModel):
 
     channel: str | None = Field(None, description="The source channel name. Defaults to the table name if omitted.")
     limit: int | None = Field(None, description="Row limit for this table.")
-    index: str | list[str] | None = Field(None, description="Index field(s) for this table.")
+    index: str | list[str] | None = Field(None, description="Index field for this table, or a list of fields for a composite index.")
     architecture: Literal["server", "client-server"] = Field("client-server", description="Perspective data architecture for this table.")
     excluded_columns: ExcludedColumns | None = Field(None, description="Columns to exclude from the schema.")
+    list_flatten: ListFlatten = Field(
+        "cartesian",
+        description=("How Perspective flattens list columns."),
+    )
+    map_flatten: MapFlatten = Field(
+        "stringify_formatted",
+        description=("How Perspective shows dict fields sent as Arrow maps."),
+    )
 
 
 # Backwards compat alias
@@ -259,11 +204,11 @@ class MountPerspectiveTables(GatewayModule):
     )
     default_limit: int | None = Field(None, description="Default limit for all tables, i.e. 1000")
     indexes: dict[str, str | list[str] | None] = Field(
-        description="Dict mapping table name to [perspective index](https://perspective-dev.github.io/guide/explanation/table/options.html). If a multi-index is provided, will create a new computed index field.",
+        description="Dict mapping table name to [perspective index](https://perspective-dev.github.io/guide/explanation/table/options.html). A list of fields makes a composite index.",
         default={},
     )
     default_index: str | list[str] | None = Field(
-        None, description="Default index field for all tables, i.e. 'id'. If a multi-index is provided, will create a new computed index field."
+        None, description="Default index field for all tables, i.e. 'id'. A list of fields makes a composite index."
     )
     architectures: dict[str, Literal["server", "client-server"]] = Field(
         description="Dict mapping table name to [perspective data architecture](https://perspective-dev.github.io/guide/explanation/architecture.html), default is client-server",
@@ -352,12 +297,8 @@ class MountPerspectiveTables(GatewayModule):
 
     _layouts: dict[str, str] = PrivateAttr(default={})
     _shared_layouts: OrderedDict[str, dict] = PrivateAttr(default_factory=OrderedDict)
-    _schema_insts: dict[str, dict] = PrivateAttr(default_factory=dict)
-    _arrow_schema_insts: dict[str, dict] = PrivateAttr(default_factory=dict)
-    _arrow_schema_date_conversions: dict[str, set[str]] = PrivateAttr(default_factory=dict)
+    _encoders: dict[str, PspArrowEncoder] = PrivateAttr(default_factory=dict)
     _table_insts: dict[str, Table] = PrivateAttr(default={})
-    # Mapping from table name to (computed index field name, list of fields used to compute index)
-    _computed_indexes: dict[str, tuple[str, list[str]]] = PrivateAttr(default={})
 
     _queue: PickleableQueue = PrivateAttr(default_factory=PickleableQueue)
 
@@ -373,22 +314,53 @@ class MountPerspectiveTables(GatewayModule):
         return v
 
     def _get_effective_config(self, table_name: str) -> TableConfig:
-        """Get effective config for a table, merging tables dict entry with legacy fields and defaults."""
+        """Get effective config for a table, merging tables dict entry with legacy fields and defaults.
+
+        Perspective takes an `index` or a `limit` for a table, never both. A `default_limit` or a
+        `default_index` gives way to anything set for the table itself. Setting both on one table is
+        passed through, for Perspective to reject.
+        """
         config = self.tables.get(table_name)
-        if config:
-            return TableConfig(
-                channel=config.channel,
-                limit=config.limit if config.limit is not None else self.limits.get(table_name, self.default_limit),
-                index=config.index if config.index is not None else self.indexes.get(table_name, self.default_index),
-                architecture=config.architecture or self.architectures.get(table_name, self.default_architecture),
-                excluded_columns=config.excluded_columns if config.excluded_columns is not None else self.excluded_table_columns.get(table_name),
-            )
+        limit = config.limit if config and config.limit is not None else self.limits.get(table_name)
+        index = config.index if config and config.index is not None else self.indexes.get(table_name)
+        # An index the table lists as None opts it out of `default_index`.
+        if index is None and limit is None and table_name not in self.indexes:
+            index = self.default_index
+        if index is None and limit is None:
+            limit = self.default_limit
         return TableConfig(
-            limit=self.limits.get(table_name, self.default_limit),
-            index=self.indexes.get(table_name, self.default_index),
-            architecture=self.architectures.get(table_name, self.default_architecture),
-            excluded_columns=self.excluded_table_columns.get(table_name),
+            channel=config.channel if config else None,
+            limit=limit,
+            index=index,
+            architecture=(config.architecture if config else None) or self.architectures.get(table_name, self.default_architecture),
+            list_flatten=config.list_flatten if config else "cartesian",
+            map_flatten=config.map_flatten if config else "stringify_formatted",
+            excluded_columns=config.excluded_columns
+            if config and config.excluded_columns is not None
+            else self.excluded_table_columns.get(table_name),
         )
+
+    @staticmethod
+    def _row_type(channels: GatewayChannels, channel: str):
+        """The struct type of a channel."""
+        edge = channels.get_channel(channel)
+        if isinstance(edge, dict):
+            if not edge:
+                raise ValueError(f"No keys defined for dict basket channel {channel}.")
+            ts_type = channels.get_channel(channel, next(iter(edge))).tstype.typ
+        else:
+            ts_type = edge.tstype.typ
+        return get_args(ts_type)[0] if get_origin(ts_type) is list else ts_type
+
+    def _push_channel(self, channels: GatewayChannels, channel: str, table_name: str) -> None:
+        """Wire a channel (flattened into one stream if it is a dict basket) to a Table."""
+        edge = channels.get_channel(channel)
+        if isinstance(edge, dict):
+            self.push_to_perspective(csp.flatten([channels.get_channel(channel, key) for key in edge]), table_name)
+        elif get_origin(edge.tstype.typ) is list:
+            self.push_to_perspective(csp.unroll(edge), table_name)
+        else:
+            self.push_to_perspective(edge, table_name)
 
     def _connect_all_tables(self, channels: GatewayChannels) -> None:
         # Determine primary channels from channel_selection + server_views + tables entries without explicit channel
@@ -401,58 +373,10 @@ class MountPerspectiveTables(GatewayModule):
         # Register primary tables (table_name == channel_name)
         for field in selected_channels:
             config = self._get_effective_config(field)
-            edge = channels.get_channel(field)
-            excluded_columns = config.excluded_columns
-            if isinstance(edge, dict):
-                if not edge:
-                    raise ValueError(f"No keys defined for dict basket channel {field}.")
-
-                to_flatten = []
-                for subfield in edge:
-                    to_flatten.append(channels.get_channel(field, subfield))
-
-                # save perspective schema
-                schema = channels.get_channel(field, subfield).tstype.typ.psp_schema(excluded_columns)
-
-                # save pyarrow schema
-                self.add_table(
-                    field,
-                    schema,
-                    limit=config.limit,
-                    index=config.index,
-                )
-
-                if hasattr(subfield, "name"):
-                    self.push_to_perspective(csp.flatten(to_flatten), field, subfield.name)
-                else:
-                    self.push_to_perspective(csp.flatten(to_flatten), field, subfield)
-
-            else:
-                ts_type = channels.get_channel(field).tstype.typ
-                if get_origin(ts_type) is list:
-                    schema = get_args(ts_type)[0].psp_schema(excluded_columns)
-                    edge = csp.unroll(channels.get_channel(field))
-                else:
-                    schema = ts_type.psp_schema(excluded_columns)
-                    edge = channels.get_channel(field)
-
-                self.add_table(
-                    field,
-                    schema,
-                    limit=config.limit,
-                    index=config.index,
-                )
-                self.push_to_perspective(
-                    edge,
-                    field,
-                )
-            self._schema_insts[field] = schema
-            self._arrow_schema_insts[field] = psp_schema_to_arrow_schema(schema)
-            self._arrow_schema_date_conversions[field] = set()
-            # annoying workaround for pyarrow reading dates
-            for k, v in self._schema_insts[field].items():
-                if v is date:
-                    self._arrow_schema_date_conversions[field].add(k)
+            encoder = PspArrowEncoder(self._row_type(channels, field), config.excluded_columns)
+            self._encoders[field] = encoder
+            self.add_table(field, encoder, limit=config.limit, index=config.index, list_flatten=config.list_flatten, map_flatten=config.map_flatten)
+            self._push_channel(channels, field, field)
 
         # Add server-defined views
         for new_table_name, view_config in self.server_views.items():
@@ -468,66 +392,41 @@ class MountPerspectiveTables(GatewayModule):
             if channel == table_name:
                 continue  # Already handled as a primary table above
 
-            if channel not in self._schema_insts:
+            if channel not in self._encoders:
                 raise ValueError(
                     f"Table '{table_name}' references channel '{channel}' which is not a registered table. "
                     f"Ensure '{channel}' is included in the channel selection or as a primary table."
                 )
             config = self._get_effective_config(table_name)
-            excluded_columns = config.excluded_columns
-            if excluded_columns is not None:
-                # Recompute schema with different exclusions
-                edge = channels.get_channel(channel)
-                if isinstance(edge, dict):
-                    a_subfield = next(iter(edge.keys()))
-                    ts_type = channels.get_channel(channel, a_subfield).tstype.typ
-                else:
-                    ts_type = edge.tstype.typ
-                    if get_origin(ts_type) is list:
-                        ts_type = get_args(ts_type)[0]
-                schema = ts_type.psp_schema(excluded_columns)
+            if config.excluded_columns is not None:
+                # Recompute the schema with different exclusions
+                encoder = PspArrowEncoder(self._row_type(channels, channel), config.excluded_columns)
             else:
-                schema = self._schema_insts[channel].copy()
-
+                encoder = self._encoders[channel]
+            self._encoders[table_name] = encoder
             self.add_table(
-                table_name,
-                schema,
-                limit=config.limit,
-                index=config.index,
+                table_name, encoder, limit=config.limit, index=config.index, list_flatten=config.list_flatten, map_flatten=config.map_flatten
             )
-            self._schema_insts[table_name] = schema
-            self._arrow_schema_insts[table_name] = psp_schema_to_arrow_schema(schema)
-            self._arrow_schema_date_conversions[table_name] = set()
-            for k, v in schema.items():
-                if v is date:
-                    self._arrow_schema_date_conversions[table_name].add(k)
-
             # Wire up data flow: push same channel data to the additional table
-            edge = channels.get_channel(channel)
-            if isinstance(edge, dict):
-                to_flatten = []
-                for subfield in edge:
-                    to_flatten.append(channels.get_channel(channel, subfield))
-                if hasattr(subfield, "name"):
-                    self.push_to_perspective(csp.flatten(to_flatten), table_name, subfield.name)
-                else:
-                    self.push_to_perspective(csp.flatten(to_flatten), table_name, subfield)
-            else:
-                ts_type = channels.get_channel(channel).tstype.typ
-                if get_origin(ts_type) is list:
-                    edge = csp.unroll(channels.get_channel(channel))
-                else:
-                    edge = channels.get_channel(channel)
-                self.push_to_perspective(edge, table_name)
+            self._push_channel(channels, channel, table_name)
 
-    def add_table(self, field: str, schema, limit: int | None = None, index: str | None = None):
-        if isinstance(index, list):
-            # create a new computed index field
-            index_fields = index
-            index = "index" if "index" not in schema else "-".join(index)
-            schema[index] = str
-            self._computed_indexes[field] = (index, index_fields)
-        self._table_insts[field] = self._client.table(schema, limit, index, name=field)
+    def add_table(
+        self,
+        field: str,
+        schema: "PspArrowEncoder | dict",
+        limit: int | None = None,
+        index: str | list[str] | None = None,
+        list_flatten: ListFlatten = "cartesian",
+        map_flatten: MapFlatten = "stringify_formatted",
+    ):
+        """Create a Perspective table, from an encoder or a Perspective schema.
+
+        An encoder's table is created from its nested Arrow schema, so Perspective can check the
+        index against the list columns here, at startup, rather than on the first update.
+        """
+        if isinstance(schema, PspArrowEncoder):
+            schema = schema.empty_ipc()
+        self._table_insts[field] = self._client.table(schema, limit, index, name=field, list_flatten=list_flatten, map_flatten=map_flatten)
 
     def connect(self, channels: GatewayChannels) -> None:
         if self.perspective_field:
@@ -549,25 +448,22 @@ class MountPerspectiveTables(GatewayModule):
         self,
         timeseries: ts["T"],
         table_name: str,
-        key_name: str = "",
     ):
         with csp.alarms():
             alarm: ts[bool] = csp.alarm(bool)
         with csp.state():
-            s_buffer = {}
+            s_buffer = []
 
         with csp.start():
             csp.schedule_alarm(alarm, self.update_interval, True)
 
         if csp.ticked(timeseries):
-            if (table_name, key_name) not in s_buffer:
-                s_buffer[(table_name, key_name)] = []
-            s_buffer[(table_name, key_name)].append(timeseries)
+            s_buffer.append(timeseries)
 
         if csp.ticked(alarm):
             if len(s_buffer) > 0:
-                self._queue.put(s_buffer)
-                s_buffer = {}
+                self._queue.put({table_name: s_buffer})
+                s_buffer = []
             csp.schedule_alarm(alarm, self.update_interval, True)
 
     def _get_tables(self) -> dict[str, dict[str, str]]:
@@ -729,21 +625,18 @@ class MountPerspectiveTables(GatewayModule):
             This endpoint exposes perspective meta information, including limits,
             indexes, and architecture.
             """
+            tables = self._get_tables()
             return {
                 "limits": {**self.limits, **{k: v.limit for k, v in self.tables.items() if v.limit is not None}},
                 "default_limit": self.default_limit,
-                "indexes": {
-                    **self.indexes,
-                    **{k: v.index for k, v in self.tables.items() if v.index is not None},
-                    **{k: v[0] for k, v in self._computed_indexes.items()},
-                },
+                "indexes": {**self.indexes, **{k: v.index for k, v in self.tables.items() if v.index is not None}},
                 "default_index": self.default_index,
                 "architectures": {**self.architectures, **{k: v.architecture for k, v in self.tables.items()}},
                 "default_architecture": self.default_architecture,
                 "layouts": self.layouts,
                 "default_layout": self.default_layout,
-                "default_layout_tables": self._select_default_layout_tables(self._get_tables()),
-                "tables": self._get_tables(),
+                "default_layout_tables": self._select_default_layout_tables(tables),
+                "tables": tables,
                 "unused_tables": self._unused_tables,
                 "table_sizes": self._get_table_sizes(),
             }
@@ -757,18 +650,15 @@ class MountPerspectiveTables(GatewayModule):
         return sorted(names)[: self.default_layout_max_tables]
 
     def _ui_table_options(self, table_name: str) -> dict[str, Any]:
-        """The per-table `architecture`/`index`/`limit` the Spaday Perspective panel needs.
+        """The per-table options the Spaday Perspective panel needs.
 
-        A multi-index table is indexed client-side by the computed field, not the fields it is
-        computed from, so those tables report the computed name here.
+        The panel mirrors a `client-server` table as a replica of the server table's view, which
+        inherits the server's index and limit.
         """
         config = self._get_effective_config(table_name)
-        index = self._computed_indexes[table_name][0] if table_name in self._computed_indexes else config.index
         options: dict[str, Any] = {"architecture": config.architecture}
-        if isinstance(index, str):
-            options["index"] = index
-        if config.limit is not None:
-            options["limit"] = config.limit
+        if config.index is not None:
+            options["index"] = config.index
         return options
 
     def build_default_ui_layout(self, tables: dict[str, dict[str, str]]) -> dict[str, Any] | None:
@@ -808,12 +698,6 @@ class MountPerspectiveTables(GatewayModule):
         """Launch the perspective threads"""
         psp_load_thread = get_thread(
             target=pull_data_thread,
-            args=(
-                self._queue,
-                self._table_insts,
-                self._computed_indexes,
-                self._arrow_schema_insts,
-                self._arrow_schema_date_conversions,
-            ),
+            args=(self._queue, self._table_insts, self._encoders),
         )
         psp_load_thread.start()

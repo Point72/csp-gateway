@@ -667,21 +667,22 @@ class TestTableOptions:
             "fills",
         ]
 
-    def test_module_reports_effective_architecture_index_and_limit(self):
+    def test_module_reports_effective_architecture_and_index(self):
         module = MountPerspectiveTables(
             channel_selection=["example"],
             default_architecture="server",
             architectures={"example": "client-server"},
             indexes={"example": "id"},
-            limits={"example": 5},
         )
-        assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id", "limit": 5}
+        assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id"}
 
-    def test_multi_index_table_reports_the_computed_index(self):
+        # The client-side replica inherits its limit from the server table, so the panel is not sent it.
+        module = MountPerspectiveTables(channel_selection=["example"], limits={"example": 5}, default_index="id")
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
+
+    def test_composite_index_is_sent_as_a_list(self):
         module = MountPerspectiveTables(channel_selection=["example"], indexes={"example": ["a", "b"]})
-        module._computed_indexes["example"] = ("a-b", ["a", "b"])
-
-        assert module._ui_table_options("example")["index"] == "a-b"
+        assert module._ui_table_options("example") == {"architecture": "client-server", "index": ["a", "b"]}
 
 
 class TestActionFailureToast:
