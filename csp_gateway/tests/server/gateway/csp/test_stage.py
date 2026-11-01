@@ -856,3 +856,60 @@ class TestStagingRequests:
         channels = GatewayChannels()
         with pytest.raises(NoProviderException, match="No staging enabled"):
             channels.get_stage_events("nope")
+
+
+class TestStagingListChannels:
+    """A staging released into a ``ts[List[T]]`` channel ticks once, with the whole staging as the list."""
+
+    def test_release_ticks_each_staging_as_one_list(self):
+        import socket
+
+        from csp_gateway import GatewaySettings, MountRestRoutes
+
+        class ListChannels(GatewayChannels):
+            orders: ts[list[OrderStruct]] = None
+
+        ticks = []
+
+        @csp.node
+        def record(x: ts[list[OrderStruct]], sink: object):
+            if csp.ticked(x):
+                sink.append([o.symbol for o in x])
+
+        class ListStagingModule(GatewayModule):
+            def connect(self, channels: ListChannels) -> None:
+                channels.set_stage(ListChannels.orders)
+                record(channels.get_channel(ListChannels.orders), ticks)
+
+            def shutdown(self) -> None:
+                pass
+
+        class ListGateway(Gateway):
+            channels_model: type[Channels] = ListChannels  # type: ignore[assignment]
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+
+        gateway = ListGateway(
+            modules=[ListStagingModule(), MountRestRoutes(force_mount_all=True)],
+            channels=ListChannels(),
+            settings=GatewaySettings(PORT=port),
+        )
+        gateway.start(rest=True, _in_test=True)
+        try:
+            first = gateway.channels.stage_add("orders", OrderStruct(symbol="AAPL"))
+            gateway.channels.stage_add("orders", OrderStruct(symbol="GOOG"), staging_ids=first)
+            gateway.channels.stage_add("orders", None)
+            second = gateway.channels.stage_add("orders", OrderStruct(symbol="MSFT"))
+            assert first != second
+
+            gateway.channels.stage_release("orders")
+            for _ in range(50):
+                if len(ticks) >= 2:
+                    break
+                threading.Event().wait(0.1)
+            assert sorted(ticks) == [["AAPL", "GOOG"], ["MSFT"]]
+        finally:
+            gateway.stop()

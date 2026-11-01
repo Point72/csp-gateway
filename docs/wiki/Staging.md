@@ -68,8 +68,10 @@ Returns the list of staging ids affected.
 
 ### `stage_release(field, staging_ids=None)`
 
-Releases the staged structs into the channel — each is ticked individually. Passing no ids releases
-every staging area. Returns `{staging_id: [structs]}`.
+Releases the staged structs into the channel. On a `ts[List[T]]` channel each staging area ticks once,
+with its structs as the list, so a staging released into a channel of waves arrives as one wave; on
+any other channel each struct is ticked individually. Passing no ids releases every staging area.
+Returns `{staging_id: [structs]}`.
 
 A released staging area is **dropped**, not archived: its contents have been delivered on the channel
 and on the release event, so it no longer appears in `stage_list` or `stage_lookup`.
