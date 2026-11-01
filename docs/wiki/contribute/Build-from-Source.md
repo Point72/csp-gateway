@@ -1,9 +1,8 @@
-`csp-gateway` is written in Python and JavaScript. While prebuilt wheels are provided for end users, it is also straightforward to build `csp-gateway` from either the Python [source distribution](https://packaging.python.org/en/latest/specifications/source-distribution-format/) or the GitHub repository.
+`csp-gateway` is written in Python. While prebuilt wheels are provided for end users, it is also straightforward to build `csp-gateway` from either the Python [source distribution](https://packaging.python.org/en/latest/specifications/source-distribution-format/) or the GitHub repository.
 
 - [Make commands](#make-commands)
 - [Prerequisites](#prerequisites)
 - [Clone](#clone)
-- [Install NodeJS](#install-nodejs)
 - [Install Python dependencies](#install-python-dependencies)
 - [Build](#build)
 - [Lint and Autoformat](#lint-and-autoformat)
@@ -35,14 +34,6 @@ Clone the repo with:
 ```bash
 git clone https://github.com/Point72/csp-gateway.git
 cd csp-gateway
-```
-
-## Install NodeJS
-
-Follow the instructions for [installing NodeJS](https://nodejs.org/en/download/package-manager/all) for your system. Once installed, you can [install `pnpm`](https://pnpm.io/installation) with:
-
-```bash
-npm install --global pnpm
 ```
 
 ## Install Python dependencies
@@ -87,18 +78,6 @@ make lint-py
 make fix-py
 ```
 
-**JavaScript Linting**
-
-```bash
-make lint-js
-```
-
-**JavaScript Autoformatting**
-
-```bash
-make fix-js
-```
-
 **Documentation Linting**
 
 ```bash
@@ -123,10 +102,4 @@ make develop
 
 ```bash
 make test-py
-```
-
-**JavaScript**
-
-```bash
-make test-js
 ```

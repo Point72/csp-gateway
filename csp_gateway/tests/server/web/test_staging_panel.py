@@ -306,19 +306,19 @@ class TestStagingPanelSharesTheBottomDrawer:
         assert '"textContent": {"Str": "Staged data"}' in tree
 
 
-class TestStagingPanelDefaultUI:
-    """Under the legacy (React) provider the module contributes no UI at all."""
+class TestStagingPanelWithoutUI:
+    """With the UI switched off the module contributes none of it, and the gateway still starts."""
 
     @pytest.fixture(scope="class")
     def gateway(self, free_port):
         return Gateway(
             modules=[StagingModule(), MountRestRoutes(force_mount_all=True), MountStagingPanel()],
             channels=StagedChannels(),
-            settings=GatewaySettings(PORT=free_port, UI=True, UI_PROVIDER="default"),
+            settings=GatewaySettings(PORT=free_port, UI=False),
         )
 
-    def test_gateway_starts_without_the_spaday_provider(self, gateway):
-        gateway.start(rest=True, ui=True, _in_test=True)
+    def test_gateway_starts_without_a_ui(self, gateway):
+        gateway.start(rest=True, _in_test=True)
         try:
             assert gateway.web_app.ui is None
         finally:
