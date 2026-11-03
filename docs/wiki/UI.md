@@ -71,6 +71,27 @@ html.wa-dark spa-app { --spa-surface: #222b39; --spa-border: #3b4860; }
 
 Component internals are shadow DOM and cannot be selected from an external stylesheet, so restyling those means setting the WebAwesome custom properties they document rather than writing rules against their markup.
 
+### Main panels
+
+Register an on-demand panel from a module's `ui()` hook. Frame dimensions accept `px`, `rem`, `em`, or percentages of the main layout. `beside` refers to `workspace` or another registered main tab.
+
+```python
+from spaday import element
+from spaday.components.shell import Region
+
+def ui(self, app):
+  app.add_tab(
+    "editor", "Editor", element("div").text("Editor content"),
+    min_width="20rem", preferred_width="24rem", max_width="36rem",
+    beside="workspace", side="right", stack_below=800,
+  )
+  app.add(Region.HEADER_RIGHT, app.tab_button("Editor", "editor"))
+```
+
+`side` accepts `left`, `right`, `top`, or `bottom`. Below the main layout width `stack_below` (pixels), the panel opens below its anchor. Height constraints use `min_height`, `preferred_height`, and `max_height`.
+
+Placement applies when the panel is absent; opening an existing panel preserves its position. `on_open` runs after placement and selection, including for shared URLs and direct `openPanel()` calls. Omit placement and dimension options for the standard tab behavior.
+
 ### Bringing your own components
 
 Restyling only goes as far as the elements the page already loads. A deployment with its own element library adds it with `UI_PACKAGES`, which takes either the name a distribution registers under its `spaday.components` entry point, or a dotted path to a `ComponentPackage` (or to a callable returning one):
