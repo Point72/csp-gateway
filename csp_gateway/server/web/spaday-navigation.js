@@ -89,3 +89,13 @@ registerHandler("gateway-log-selection", (event, tree) => {
   if (path && !tree.paths.includes(path)) return;
   emit(tree.closest("#gateway-log-panel"), "gateway-log-path", { path });
 });
+
+registerHandler("gateway-copy-link", async () => {
+  const toasts = document.getElementById("gateway-toasts");
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    toasts?.notify({ message: "Layout link copied", tone: "success" });
+  } catch {
+    toasts?.notify({ message: "Layout link is in the address bar", tone: "info" });
+  }
+});

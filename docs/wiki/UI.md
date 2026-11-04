@@ -26,6 +26,15 @@ modules:
       A Layout Name: "<The JSON you downloaded>"
 ```
 
+With `share_layouts: true`, the top bar also has a share button. It stores the current layout on the server, adds `?layout=<id>` to the page URL, and copies the link. Anyone who opens the link gets that layout. Shared layouts are kept in memory, so they are lost when the server restarts; download the JSON or add it to `layouts` to keep one.
+
+```yaml
+modules:
+  mount_perspective_tables:
+    _target_: csp_gateway.MountPerspectiveTables
+    share_layouts: true
+```
+
 ## Settings
 
 The rightmost top bar button opens the settings drawer. Depending on your server configuration, this has one or more [Controls](MountControls).
