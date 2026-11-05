@@ -21,22 +21,6 @@ class PublishSymphony(GatewayModule):
     """
     Takes a set of channels (selections) and turns them into symphony messages.
 
-    To get setup with symphony:
-    1. Email 'Tech - Symphony Admin' to create a new symphony account for your bot and for them to generate a pfx keyc.
-        You should include the following in your email:
-            * Bot Display Name (AAAA Alerts)
-            * Distribution Email Address (e.g. trading-AAAA@cubistsystematic.com)
-    2. Create a key.pem and crt.pem file locally (these will be used to authenticate your bot on your machine of choice):
-    ( replace pfx_file with your filename)
-
-    ```bash
-        PFX="mypfxfile.pfx"
-        openssl pkcs12 -in $PFX -out key.pem -nocerts -nodes
-        openssl pkcs12 -in $PFX -out crt.pem -clcerts -nokeys
-    ```
-
-    3. On your target machine move your newly created key.pem and crt.pem files to an accessible directory.
-
     Args
     -----
     cert_path: str
