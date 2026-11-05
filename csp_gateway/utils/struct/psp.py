@@ -1,14 +1,12 @@
-import _thread
-import itertools
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date, datetime
 from enum import Enum as PyEnum
-from functools import cache
 from logging import getLogger
-from typing import Annotated, Any, Optional, Union, get_args, get_origin
+from typing import Annotated, Any, NamedTuple, Optional, Union, get_args, get_origin
 
 import orjson
+import pyarrow
 from csp import Enum as CspEnum
 from csp.impl.types.container_type_normalizer import ContainerTypeNormalizer
 from numpy import ndarray
@@ -16,13 +14,10 @@ from pydantic import BaseModel
 from typing_extensions import TypeAliasType
 
 __all__ = (
-    "CustomJsonifier",
     "ExcludedColumns",
     "PerspectiveUtilityMixin",
+    "PspArrowEncoder",
     "model_metadata",
-    "psp_flatten",
-    "psp_flatten_dict",
-    "psp_flatten_list",
     "psp_schema",
 )
 
@@ -73,95 +68,6 @@ def model_metadata(cls, typed: bool = False) -> dict[str, Any]:
     return out
 
 
-CustomJsonifier = Callable[[Any], tuple[Any, bool]]
-
-
-# We expose these functions separate from the class definition
-# so that they can be called recursively.
-# However, the top level call should always come from a
-# a PerspectiveUtilityMixin subclass or instance of such.
-def psp_flatten_dict(obj: dict[str, Any]) -> Any:
-    """Flatten dicts of values into a top level dict"""
-
-    # Base template to use for creating copies later
-    base_dict = {}
-    # List of deltas that will be applied to the base dict
-    # to create final dicts
-    list_items = []
-    for obj_key, obj_val in obj.items():
-        # Flatten every item
-        res = psp_flatten(obj_val)
-        if isinstance(res, list):
-            if len(res) == 0:
-                # Key needs to be deleted, use empty dict as delta
-                list_items.append([{}])
-
-            else:
-                # Delta options for current key
-                delta_list = []
-                for res_val in res:
-                    # NOTE: We should never receive a non-empty list as an item here
-
-                    # Delta dict for the current item in list
-                    delta_dict = {}
-                    if isinstance(res_val, dict):
-                        # Merge the sub-dict with parent key
-                        for k, v in res_val.items():
-                            delta_dict[f"{obj_key}.{k}"] = v
-                        delta_list.append(delta_dict)
-                    elif isinstance(res_val, list) and len(res) == 0:
-                        # Key needs to be deleted, use empty dict as delta
-                        delta_list.append({})
-                    else:
-                        # Create new delta dict with key, val
-                        delta_list.append({obj_key: res_val})
-                list_items.append(delta_list)
-        else:
-            # Non-list item found, use as is
-            base_dict[obj_key] = res
-
-    ret = []
-    # Process all possible combinations of delta options for keys
-    for combination in itertools.product(*list_items):
-        # Make a copy from the base template
-        new_dict = base_dict.copy()
-        for elem in combination:
-            # Merge the delta into copy
-            new_dict.update(elem)
-        ret.append(new_dict)
-
-    return ret
-
-
-def psp_flatten_list(obj: list[Any]) -> list[Any]:
-    """Flatten list of complex types (sub-lists, dicts) to a top level list"""
-
-    ret = []
-    for val in obj:
-        res = psp_flatten(val)
-        if isinstance(res, list) and res:
-            # Flatten sub-lists into a single list
-            # NOTE: Special handling for empty list
-            #  Empty list indicate key should be deleted
-            #  so we preserve empty list during flattening
-            ret.extend(res)
-        else:
-            ret.append(res)
-    return ret
-
-
-def psp_flatten(obj: Any) -> Any:
-    """Flatten an object"""
-
-    #  This should only return simple objects or lists of simple objects (not dicts)
-    ret = obj
-    if isinstance(obj, list):
-        ret = psp_flatten_list(obj)
-    elif isinstance(obj, dict):
-        ret = psp_flatten_dict(obj)
-    return ret
-
-
 ExcludedColumns = TypeAliasType("ExcludedColumns", "set[str] | dict[str, bool | ExcludedColumns]")
 
 
@@ -187,182 +93,252 @@ def _get_type_from_optional(t: type):
     return args[0]
 
 
+class _Column(NamedTuple):
+    """One field of a struct as Perspective sees it."""
+
+    name: str
+    #: The element type for a list field, otherwise the field type.
+    py: type
+    is_list: bool
+    #: One of "scalar", "dict", "map", "enum" or "struct".
+    kind: str
+    #: Exclusions for the columns of a struct field.
+    sub_excluded: ExcludedColumns | None
+    #: The key and value types of a "map" field.
+    map_types: tuple[type, type] | None = None
+
+
+def _scalar_arrow_type(py: Any) -> pyarrow.DataType | None:
+    """The Arrow type of a plain scalar, or None if `py` is not one. Enums are not plain scalars."""
+    if not isinstance(py, type) or issubclass(py, (PyEnum, CspEnum)):
+        return None
+    if issubclass(py, bool):
+        return pyarrow.bool_()
+    if issubclass(py, int):
+        return pyarrow.int64()
+    if issubclass(py, float):
+        return pyarrow.float64()
+    if issubclass(py, str):
+        return pyarrow.string()
+    if issubclass(py, datetime):
+        return pyarrow.timestamp("us", tz="UTC")
+    if issubclass(py, date):
+        return pyarrow.date32()
+    return None
+
+
+def _map_types(annotation: Any) -> tuple[type, type] | None:
+    """The key and value types of a dict annotation, if both are plain scalars."""
+    if _is_optional(annotation):
+        annotation = _get_type_from_optional(annotation)
+    args = get_args(_strip_annotated(annotation))
+    if len(args) == 2 and all(_scalar_arrow_type(arg) is not None for arg in args):
+        return args
+    return None
+
+
+def _list_element_type(cls, name: str):
+    """The element type of a list or ndarray field, read off the annotation, or `str` if there is none."""
+    try:
+        try:
+            annotation = cls.__annotations__[name]
+        except KeyError:
+            annotation = None
+            for base in cls.__mro__[1:]:
+                anns = getattr(base, "__annotations__", {})
+                if name in anns:
+                    annotation = anns[name]
+                    break
+            if annotation is None:
+                raise KeyError(name)
+        annotation = _strip_annotated(annotation)
+        if _is_optional(annotation):
+            annotation = _get_type_from_optional(annotation)
+        return get_args(annotation)[0]
+    except (KeyError, IndexError):
+        return str
+
+
+def _columns(cls, excluded_columns: ExcludedColumns | None) -> list[_Column]:
+    """The top level columns of a struct, in field order, after exclusions."""
+    # Pydantic doesn't support fields that start with underscore
+    schema = {k: v for k, v in model_metadata(cls, typed=False).items() if not k.startswith("_")}
+    annotated = {k: v for k, v in model_metadata(cls, typed=True).items() if not k.startswith("_")}
+    out = []
+    for name, value in schema.items():
+        # Make sure its a type so `issubclass` calls don't fail
+        if _is_optional(annotated[name]):
+            value = ContainerTypeNormalizer.normalized_type_to_actual_python_type(_get_type_from_optional(annotated[name]))
+
+        is_list = False
+        if not isinstance(value, type):
+            if not isinstance(value, list):
+                log.warning(f"Type is not actually a type: {name} {value}")
+                continue
+            value, is_list = value[0], True
+
+        if issubclass(value, (list, ndarray)):
+            # will be unrolled into root type
+            value, is_list = _list_element_type(cls, name), True
+        if not isinstance(value, type):
+            log.warning(f"Type is not actually a type: {name} {value}")
+            continue
+
+        excluded = excluded_columns and _is_excluded(name, excluded_columns)
+        sub_excluded = None
+        if excluded:
+            if isinstance(excluded, bool) or not issubclass(value, BaseModel):
+                continue
+            sub_excluded = excluded
+
+        map_types = None
+        if issubclass(value, dict):
+            # A dict of scalars is an Arrow map, which Perspective shows as JSON text. Any other dict is serialized here.
+            map_types = None if is_list else _map_types(annotated[name])
+            kind = "dict" if map_types is None else "map"
+        elif issubclass(value, (PyEnum, CspEnum)):
+            kind = "enum"
+        elif issubclass(value, (str, int, float, bool, datetime, date)):
+            kind = "scalar"
+        elif issubclass(value, BaseModel):
+            kind = "struct"
+        else:
+            log.warning(f"Type {value} on has no perspective conversion, ignoring in perspective tables: {cls.__name__}.{name}")
+            continue
+        out.append(_Column(name, value, is_list, kind, sub_excluded, map_types))
+    return out
+
+
 def psp_schema(cls, excluded_columns: ExcludedColumns | None = None) -> dict[str, type]:
-    """Returns the perspective schema for a class.
+    """Returns the flattened perspective schema for a class.
+
+    Structs become dotted column names, lists become their element type, and enums, dicts and maps become `str`.
 
     Args:
         excluded_columns: Columns to exclude from the schema.
     """
-    return _psp_schema(cls, excluded_columns)[0]
+    out: dict[str, type] = {}
+    for column in _columns(cls, excluded_columns):
+        if column.kind == "struct":
+            for key, value in psp_schema(column.py, column.sub_excluded).items():
+                out[f"{column.name}.{key}"] = value
+        elif column.kind in ("dict", "map", "enum"):
+            out[column.name] = str
+        else:
+            out[column.name] = column.py
+    return out
 
 
-@cache
-def psp_enum_columns(cls) -> dict[str, type]:
-    """The enum behind each column `psp_schema` promotes to str, by column name.
-
-    `psp_flatten` needs these to name the members csp serialises as their values.
-    """
-    return _psp_schema(cls, None)[1]
+def _json_str(value: Any) -> str:
+    return orjson.dumps(value, default=str, option=orjson.OPT_NON_STR_KEYS).decode()
 
 
-def _psp_schema(cls, excluded_columns: ExcludedColumns | None = None) -> tuple[dict[str, type], dict[str, type]]:
-    """The perspective schema, and the enum each of its str-promoted columns came from."""
-    enum_columns: dict[str, type] = {}
-
-    # Pydantic doesn't support fields that start with underscore
-    schema = {k: v for k, v in model_metadata(cls, typed=False).items() if not k.startswith("_")}
-    schema_annotated = {k: v for k, v in model_metadata(cls, typed=True).items() if not k.startswith("_")}
-    add = {}
-    remove = []
-
-    for field, value in schema.items():
-        # Make sure its a type so `issubclass`
-        # calls don't fail
-        if _is_optional(schema_annotated[field]):
-            value = _get_type_from_optional(schema_annotated[field])
-            value = ContainerTypeNormalizer.normalized_type_to_actual_python_type(value)
-
-        if not isinstance(value, type):
-            # TODO other generics
-            if isinstance(value, list):
-                value = value[0]
-                schema[field] = value
-            else:
-                remove.append(field)
-                # TODO deal with dropped
-                log.warning(f"Type is not actually a type: {field} {value}")
-                continue
-
-        is_excluded = excluded_columns and _is_excluded(field, excluded_columns)
-        if is_excluded:
-            remove.append(field)
-
-        if issubclass(value, list) or issubclass(value, ndarray):
+def _enum_name(enum_cls: type) -> Callable[[Any], str]:
+    def convert(value):
+        if isinstance(value, (PyEnum, CspEnum)):
+            return value.name
+        # csp enums subclass int, so a numpy object array of them can hand back the bare value.
+        if isinstance(value, int) and not isinstance(value, bool):
             try:
-                # will be unrolled into root type
-                try:
-                    annotation = cls.__annotations__[field]
-                except KeyError:
-                    # Fallback: search bases for annotation
-                    annotation = None
-                    for base in cls.__mro__[1:]:
-                        anns = getattr(base, "__annotations__", {})
-                        if field in anns:
-                            annotation = anns[field]
-                            break
-                    if annotation is None:
-                        raise KeyError(field)
+                return enum_cls(value).name
+            except ValueError:
+                log.warning(f"{value} is not a {enum_cls.__name__}, leaving it as is")
+        return str(value)
 
-                # get arg type
-                annotation = _strip_annotated(annotation)
-                if _is_optional(annotation):
-                    annotation = _get_type_from_optional(annotation)
-                arg = get_args(annotation)[0]
+    return convert
 
-                # use this as type
-                value = arg
-            except (KeyError, IndexError):
-                # just use str
-                value = str
-            finally:
-                schema[field] = value
 
-        # If its a complicated type that we just serialize to json, leave as str
-        if issubclass(value, dict):
-            schema[field] = str
-            continue
+def _struct_fixer(fixers: dict[str, Callable[[Any], Any]]) -> Callable[[dict | None], dict | None]:
+    def fix(row):
+        if row is not None:
+            for name, fn in fixers.items():
+                value = row.get(name)
+                if value is not None:
+                    row[name] = fn(value)
+        return row
 
-        # If its an enum, promote to str
-        if issubclass(value, (PyEnum, CspEnum)):
-            schema[field] = str
-            enum_columns[field] = value
-            continue
+    return fix
 
-        # Otherwise if its not a handled type
-        if (
-            not issubclass(value, str)
-            and not issubclass(value, int)
-            and not issubclass(value, float)
-            and not issubclass(value, bool)
-            and not issubclass(value, datetime)
-            and not issubclass(value, date)
-        ):
-            excluded_sub_fields = None
-            if is_excluded:
-                # no need to add field to remove, it has been added already
-                if isinstance(is_excluded, bool):
-                    if is_excluded:
-                        continue
 
-                else:
-                    excluded_sub_fields = is_excluded
+def _list_fixer(element: Callable[[Any], Any] | None) -> Callable[[Any], list]:
+    def fix(value):
+        if isinstance(value, ndarray):
+            value = value.tolist()
+        elif not isinstance(value, list):
+            value = list(value)
+        return [element(v) if v is not None else None for v in value] if element else value
 
-            else:
-                # remove it from the schema
-                remove.append(field)
+    return fix
 
-            # if its a struct, flatten
-            if issubclass(value, BaseModel):
-                if hasattr(value, "psp_schema"):
-                    struct_items = value.psp_schema(excluded_sub_fields).items()
-                else:
-                    struct_items = psp_schema(value, excluded_sub_fields).items()
 
-                # add subschema
-                for subkey, subvalue in struct_items:
-                    add[f"{field}.{subkey}"] = subvalue
-                # A nested struct's columns are flattened under its own name, and so are its enums.
-                for subkey, subenum in psp_enum_columns(value).items():
-                    enum_columns[f"{field}.{subkey}"] = subenum
-            else:
-                # TODO deal with dropped
-                log.warning(f"Type {value} on has no perspective conversion, ignoring in perspective tables: {cls.__name__}.{field}")
+class _ArrowSpec(NamedTuple):
+    fields: list[pyarrow.Field]
+    fixers: dict[str, Callable[[Any], Any]]
 
-    # remove all that need to be removed
-    for to_remove in remove:
-        schema.pop(to_remove)
 
-    for key, value in schema.items():
-        if value is object and _is_optional(schema_annotated[key]):
-            schema[key] = _get_type_from_optional(schema_annotated[key])
+def _arrow_spec(cls, excluded_columns: ExcludedColumns | None) -> _ArrowSpec:
+    spec = _ArrowSpec([], {})
+    for column in _columns(cls, excluded_columns):
+        fix = None
+        if column.kind == "struct":
+            sub = _arrow_spec(column.py, column.sub_excluded)
+            arrow_type = pyarrow.struct(sub.fields)
+            fix = _struct_fixer(sub.fixers) if sub.fixers else None
+        elif column.kind == "map":
+            arrow_type = pyarrow.map_(*(_scalar_arrow_type(t) for t in column.map_types))
+        elif column.kind == "dict":
+            arrow_type, fix = pyarrow.string(), _json_str
+        elif column.kind == "enum":
+            arrow_type, fix = pyarrow.string(), _enum_name(column.py)
+        else:
+            arrow_type = _scalar_arrow_type(column.py)
+        if column.is_list:
+            arrow_type, fix = pyarrow.list_(arrow_type), _list_fixer(fix)
+        spec.fields.append(pyarrow.field(column.name, arrow_type))
+        if fix is not None:
+            spec.fixers[column.name] = fix
+    return spec
 
-    schema.update(add)
-    return schema, enum_columns
+
+class PspArrowEncoder:
+    """Turns structs into an Arrow table that Perspective flattens itself.
+
+    The Arrow schema keeps nested structs, lists and maps nested. Perspective explodes structs and
+    lists into dotted columns and rows on ingest, in native code, and shows maps as JSON text, so the
+    only work left here is the few values Arrow has no type for: enums become their names, and dicts
+    that are not a map of scalars become JSON strings.
+    """
+
+    def __init__(self, cls: type, excluded_columns: ExcludedColumns | None = None):
+        spec = _arrow_spec(cls, excluded_columns)
+        self.cls = cls
+        #: The nested Arrow schema of the rows `encode` produces.
+        self.schema = pyarrow.schema(spec.fields)
+        self._fix = _struct_fixer(spec.fixers) if spec.fixers else None
+
+    def empty_ipc(self) -> bytes:
+        """An Arrow IPC stream of the schema with no rows, which creates a Perspective table of these rows."""
+        out = pyarrow.BufferOutputStream()
+        with pyarrow.RecordBatchStreamWriter(out, self.schema):
+            pass
+        return out.getvalue().to_pybytes()
+
+    def encode(self, items: Iterable[Any]) -> pyarrow.Table:
+        rows = []
+        for item in items:
+            prepare = getattr(item, "psp_prepare", None)
+            if prepare is not None:
+                prepare()
+            rows.append(item.model_dump(by_alias=False, warnings=False))
+        if self._fix is not None:
+            for row in rows:
+                self._fix(row)
+        return pyarrow.Table.from_pylist(rows, schema=self.schema)
 
 
 class PerspectiveUtilityMixin:
-    def psp_flatten(self, custom_jsonifier: CustomJsonifier | None = None) -> list[dict[str, Any]]:
-        def _callback(obj):
-            """Callback helper that either calls custom_jsonifier or a default set of conversions"""
-            if custom_jsonifier:
-                obj = custom_jsonifier(obj)
-            if isinstance(obj, ndarray):
-                return obj.tolist()
-            elif isinstance(obj, set):
-                return list(obj)
-            elif isinstance(obj, (PyEnum, CspEnum)):
-                return obj.name
-            elif isinstance(obj, _thread.LockType):
-                return "<Lock>"
-            else:
-                log.warning(f"No serializer for {obj}, converting to ''")
-                return ""
-
-        json_obj = orjson.loads(self.to_json(_callback))
-        flat_obj = psp_flatten(json_obj)
-        # csp enums subclass int, so `to_json` renders the members of an object array as their
-        # values, never offering them to the callback above. The schema calls those columns str.
-        enum_columns = psp_enum_columns(type(self))
-        if enum_columns:
-            for row in flat_obj:
-                for column, enum_cls in enum_columns.items():
-                    value = row.get(column)
-                    if isinstance(value, int) and not isinstance(value, bool):
-                        try:
-                            row[column] = enum_cls(value).name
-                        except ValueError:
-                            log.warning(f"{value} is not a {enum_cls.__name__}, leaving it as is")
-        return flat_obj
+    def psp_prepare(self) -> None:
+        """Hook run on each instance just before it is encoded for Perspective, to fill derived fields."""
 
     @classmethod
     def psp_schema(cls, excluded_columns: ExcludedColumns | None = None) -> dict[str, type]:
@@ -372,3 +348,8 @@ class PerspectiveUtilityMixin:
             excluded_columns: Columns to exclude from the schema.
         """
         return psp_schema(cls, excluded_columns)
+
+    @classmethod
+    def psp_arrow_encoder(cls, excluded_columns: ExcludedColumns | None = None) -> PspArrowEncoder:
+        """Return the encoder that turns instances into an Arrow table for Perspective."""
+        return PspArrowEncoder(cls, excluded_columns)

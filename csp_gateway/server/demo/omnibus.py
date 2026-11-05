@@ -36,6 +36,7 @@ from csp_gateway import (
     MountWebSocketRoutes,
     Stage,
     State,
+    TableConfig,
 )
 from csp_gateway.server.config import load_gateway
 
@@ -324,6 +325,7 @@ if __name__ == "__main__":
                 limits={"str_basket": 20},
                 architectures={"basket": "server"},
                 indexes={"example": ["x", "y"]},
+                tables={"example": TableConfig(list_flatten="stringify")},
                 server_views={
                     "server_view": {
                         "table": "example",
