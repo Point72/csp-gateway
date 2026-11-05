@@ -217,9 +217,8 @@ class ChannelsMetaclass(ModelMetaclass):
                         keyby=_normalize_keyby(meta._meta_keyby),
                         indexer=meta._meta_indexer,
                     )
-                elif isinstance(meta, Stage):
-                    if field_name not in declared_stages:
-                        declared_stages.append(field_name)
+                elif isinstance(meta, Stage) and field_name not in declared_stages:
+                    declared_stages.append(field_name)
 
         cls._declared_states = declared_states
         cls._declared_stages = declared_stages
