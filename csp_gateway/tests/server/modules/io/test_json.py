@@ -1,3 +1,4 @@
+import sys
 from datetime import datetime, timedelta
 from typing import Annotated
 
@@ -422,3 +423,99 @@ def test_overwrite_json(read_write_mode, tmpdir):
             assert actual_date == datetime(2020, 1, 1)
         else:
             raise TypeError(f"read_write_mode should be a ReadWriteMode enum, got {read_write_mode}")
+
+
+def _fixed(foo):
+    # Fixed identity, so separate runs write byte-identical cycles.
+    return MyStruct(id=f"id{foo}", timestamp=datetime(2020, 1, 1), foo=foo)
+
+
+def _write_and_read(file, compression, overwrite=False, runs=1):
+    setter = MySetModule(
+        my_data=csp.const(_fixed(1.0)),
+        my_data2=csp.const(_fixed(2.0)),
+        my_list_data=csp.const([_fixed(1.0), _fixed(2.0)]),
+        by_key=True,
+    )
+    channels = [MyGatewayChannels.my_channel, MyGatewayChannels.my_list_channel, MyGatewayChannels.my_enum_basket]
+    for _ in range(runs):
+        writer = ReplayEngineJSON(
+            selection=channels, filename=file, read_write_mode=ReadWriteMode.WRITE, compression=compression, overwrite_if_writing=overwrite
+        )
+        csp.run(MyGateway(modules=[setter, writer, setter], channels=MyGatewayChannels()).graph, starttime=datetime(2020, 1, 1), endtime=timedelta(1))
+    reader = ReplayEngineJSON(
+        selection=channels,
+        filename=file,
+        read_write_mode=ReadWriteMode.READ,
+        compression=compression,
+        start_writing=datetime(2099, 1, 1),
+    )
+    out = csp.run(
+        MyGateway(modules=[reader, AddChannelsToGraphOutput(selection=channels)], channels=MyGatewayChannels()).graph,
+        starttime=datetime(2020, 1, 1),
+        endtime=timedelta(1),
+    )
+    return out
+
+
+def test_json_module_zstd_matches_uncompressed(tmpdir):
+    zstandard = pytest.importorskip("zstandard")
+    plain, compressed = str(tmpdir.join("cycles.json")), str(tmpdir.join("cycles.json.zst"))
+    out_plain = _write_and_read(plain, None)
+    out_compressed = _write_and_read(compressed, "zstd")
+    # Same cycles on disk once decompressed, and the same values replayed back through the graph.
+    with open(compressed, "rb") as f:
+        decompressed = zstandard.ZstdDecompressor().stream_reader(f).read()
+    with open(plain, "rb") as f:
+        assert decompressed == f.read()
+    assert out_compressed == out_plain
+
+
+def test_json_module_zstd_appends_across_runs(tmpdir):
+    pytest.importorskip("zstandard")
+    file = str(tmpdir.join("cycles.json.zst"))
+    once = _write_and_read(str(tmpdir.join("once.json.zst")), "zstd")
+    twice = _write_and_read(file, "zstd", runs=2)
+    # Each run appends complete frames, so the file stays readable and holds both runs' cycles.
+    assert len(twice["my_channel"]) == 2 * len(once["my_channel"])
+
+
+def test_json_module_zstd_readable_by_duckdb(tmpdir):
+    pytest.importorskip("zstandard")
+    duckdb = pytest.importorskip("duckdb")
+    plain, compressed = str(tmpdir.join("cycles.json")), str(tmpdir.join("cycles.json.zst"))
+    _write_and_read(plain, None)
+    _write_and_read(compressed, "zstd")
+    rows = lambda path: duckdb.read_json(path, format="newline_delimited").fetchall()
+    assert rows(compressed) == rows(plain)
+
+
+@pytest.mark.parametrize("filename, compression", [("cycles.json", "zstd"), ("cycles.json.zst", None)])
+def test_json_module_zstd_filename_and_setting_must_agree(tmpdir, filename, compression):
+    with pytest.raises(ValueError, match=r"\.zst"):
+        ReplayEngineJSON(filename=str(tmpdir.join(filename)), compression=compression)
+
+
+def test_json_module_zstd_missing_library_fails_at_config(tmpdir, monkeypatch):
+    # Without zstandard the writer thread would die on import and leave csp.stop() waiting on its queue forever.
+    monkeypatch.setitem(sys.modules, "zstandard", None)
+    with pytest.raises(ImportError):
+        ReplayEngineJSON(filename=str(tmpdir.join("cycles.json.zst")), compression="zstd")
+
+
+def test_json_module_zstd_round_trips_non_ascii(tmpdir):
+    pytest.importorskip("zstandard")
+    file = str(tmpdir.join("cycles.json.zst"))
+    setter = MySetStrStructModule(my_data=csp.const(MyStrStruct(id="s", timestamp=datetime(2020, 1, 1), foo="caf\u00e9 \u2014 \u6771\u4eac")))
+    channels = [MySmallGatewayChannels.struct_with_str]
+    writer = ReplayEngineJSON(selection=channels, filename=file, read_write_mode=ReadWriteMode.WRITE, compression="zstd")
+    csp.run(MySmallGateway(modules=[setter, writer], channels=MySmallGatewayChannels()).graph, starttime=datetime(2020, 1, 1), endtime=timedelta(1))
+    reader = ReplayEngineJSON(
+        selection=channels, filename=file, read_write_mode=ReadWriteMode.READ, compression="zstd", start_writing=datetime(2099, 1, 1)
+    )
+    out = csp.run(
+        MySmallGateway(modules=[reader, AddChannelsToGraphOutput(selection=channels)], channels=MySmallGatewayChannels()).graph,
+        starttime=datetime(2020, 1, 1),
+        endtime=timedelta(1),
+    )
+    assert out["struct_with_str"][0][1].foo == "caf\u00e9 \u2014 \u6771\u4eac"

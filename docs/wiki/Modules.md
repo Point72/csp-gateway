@@ -1138,6 +1138,7 @@ Configuration options:
 
 - **file_path** (`str`): Path to the JSON file containing recorded data
 - **selection** (`ChannelSelection`): Which channels to replay
+- **compression** (`"zstd"`, optional): Write the file zstd-compressed, on the writer thread rather than the engine thread, and read it back the same way. Needs a filename ending in `.zst`, and `zstandard` installed. Each write is a complete zstd frame, so the ratio depends on how many cycles queue up between writes: about 12x for bursts and replays, about 2.5x for a live gateway ticking a few cycles per second.
 
 ## ReplayEngineKafka
 
