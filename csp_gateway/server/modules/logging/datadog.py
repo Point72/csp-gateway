@@ -100,6 +100,7 @@ class PublishDatadog(GatewayModule):
     )
 
     dd_tags: dict[str, str] | None = Field(default=None, description="Tags to be included with Datadog submissions.")
+    include_monitoring_id: bool = Field(default=False, description="Include the monitoring_id tag in Datadog metric submissions.")
 
     @model_validator(mode="before")
     def check_import(cls, values):
@@ -131,7 +132,7 @@ class PublishDatadog(GatewayModule):
             args=(dd_queue, self.dd_latency_log_threshold_seconds),
         )
         dd_thread.start()
-        self._publish_datadog(events, metrics, dd_queue, dd_thread, self.dd_tags)
+        self._publish_datadog(events, metrics, dd_queue, dd_thread, self.dd_tags, self.include_monitoring_id)
 
     @staticmethod
     @csp.node
@@ -141,6 +142,7 @@ class PublishDatadog(GatewayModule):
         dd_queue: Queue,
         dd_thread: Thread,
         dd_tags: dict[str, str],
+        include_monitoring_id: bool = False,
     ):
         with csp.start():
             # send starting event to Datadog
@@ -165,5 +167,10 @@ class PublishDatadog(GatewayModule):
             new_events_or_metrics.extend(metrics)
 
         if new_events_or_metrics:
-            new_events_or_metrics_and_body = [(type(x), x.to_datadog(dd_tags)) for x in new_events_or_metrics]
+            new_events_or_metrics_and_body = []
+            for item in new_events_or_metrics:
+                body = item.to_datadog(dd_tags)
+                if isinstance(item, MonitoringMetric) and not include_monitoring_id and "tags" in body:
+                    body["tags"] = [tag for tag in body["tags"] if not tag.startswith("monitoring_id:")]
+                new_events_or_metrics_and_body.append((type(item), body))
             dd_queue.put(new_events_or_metrics_and_body)

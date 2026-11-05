@@ -1038,6 +1038,7 @@ modules:
       environment: production
       service: my-gateway
     dd_latency_log_threshold_seconds: 30
+    include_monitoring_id: false
 ```
 
 Configuration options:
@@ -1046,6 +1047,7 @@ Configuration options:
 - **metrics_channel** (`Optional[str]`): Channel containing `MonitoringMetric` objects to publish
 - **dd_tags** (`Optional[Dict[str, str]]`): Tags to include with all Datadog submissions
 - **dd_latency_log_threshold_seconds** (`int = 30`): Log a warning if Datadog API calls exceed this duration
+- **include_monitoring_id** (`bool = False`): Include `monitoring_id` in metric submissions. When false, the tag is omitted even if supplied in `dd_tags` or metric tags. Event tags are unaffected.
 
 > [!NOTE]
 >
