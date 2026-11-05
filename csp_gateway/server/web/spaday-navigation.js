@@ -7,10 +7,28 @@ function emit(element, name, detail) {
   element.dispatchEvent(new CustomEvent(name, { detail, bubbles: true }));
 }
 
+function firstSelected(panel) {
+  if (panel.tabs) return panel.tabs[panel.selected ?? 0];
+  for (const child of panel.children ?? []) {
+    const selected = firstSelected(child);
+    if (selected) return selected;
+  }
+}
+
 function selectedTab(layout) {
   const saved = layout.save();
-  return saved.tabs?.[saved.selected ?? 0] ?? "workspace";
+  const active = layouts.get(layout)?.active;
+  const panel = active ? layout.getPanel(active, saved) : null;
+  return firstSelected(panel ?? saved) ?? "workspace";
 }
+
+registerHandler("gateway-open-tab", async (_event, button) => {
+  const layout = button.getRootNode().querySelector("#gateway-main-layout");
+  if (!layout) return;
+  const state = layouts.get(layout);
+  if (state) await state.open(button.dataset.tab, true);
+  else await layout.openPanel(button.dataset.tab);
+});
 
 registerHandler("gateway-tab-repeat", (_event, button) => {
   const layout = button.getRootNode().querySelector("#gateway-main-layout");
@@ -30,24 +48,43 @@ registerHandler("gateway-tabs", (event, layout) => {
       state.active = tab;
       emit(layout, "gateway-tab-open", { tab });
     };
-    const navigate = () => {
-      state.queue = state.queue
-        .then(async () => {
-          const requested = layout.dataset.activeTab || "workspace";
-          const names = [...layout.children].map((frame) =>
-            frame.getAttribute("name"),
-          );
-          const tab = names.includes(requested) ? requested : "workspace";
-          state.routing = true;
-          try {
-            if (selectedTab(layout) !== tab) await layout.openPanel(tab);
-            if (tab !== requested)
-              emit(layout, "gateway-tab-change", { tab: "" });
-            activate(tab);
-          } finally {
-            state.routing = false;
+    const nativeOpen = layout.openPanel.bind(layout);
+    state.open = (tab, repeat = false) => {
+      if (!tab) return Promise.resolve();
+      const opening = state.queue.then(async () => {
+        state.routing = true;
+        try {
+          if (
+            selectedTab(layout) !== tab ||
+            layout.calculatePath(tab) === null
+          ) {
+            const placement = JSON.parse(layout.dataset.tabPlacements || "{}")[
+              tab
+            ];
+            if (placement) await layout.ensurePanel(tab, placement);
+            else await nativeOpen(tab);
           }
-        })
+          const value = tab === "workspace" ? "" : tab;
+          if ((layout.dataset.activeTab || "") !== value)
+            emit(layout, "gateway-tab-change", { tab: value });
+          if (repeat && state.active === tab)
+            emit(layout, "gateway-tab-open", { tab });
+          else activate(tab);
+        } finally {
+          state.routing = false;
+        }
+      });
+      state.queue = opening.catch(() => {});
+      return opening;
+    };
+    layout.openPanel = (tab) => state.open(tab);
+    const navigate = () => {
+      const requested = layout.dataset.activeTab || "workspace";
+      const names = [...layout.children].map((frame) =>
+        frame.getAttribute("name"),
+      );
+      state
+        .open(names.includes(requested) ? requested : "workspace")
         .catch((error) =>
           console.error("Gateway tab navigation failed", error),
         );
@@ -61,8 +98,13 @@ registerHandler("gateway-tabs", (event, layout) => {
     return;
   }
   if (state.routing || layout.restoring) return;
-  const tab = selectedTab(layout);
-  emit(layout, "gateway-tab-change", { tab: tab === "workspace" ? "" : tab });
+  const tab =
+    event.type === "regular-layout-select"
+      ? event.detail.name
+      : selectedTab(layout);
+  const value = tab === "workspace" ? "" : tab;
+  if ((layout.dataset.activeTab || "") !== value)
+    emit(layout, "gateway-tab-change", { tab: value });
   state.activate(tab);
 });
 
@@ -96,6 +138,9 @@ registerHandler("gateway-copy-link", async () => {
     await navigator.clipboard.writeText(window.location.href);
     toasts?.notify({ message: "Layout link copied", tone: "success" });
   } catch {
-    toasts?.notify({ message: "Layout link is in the address bar", tone: "info" });
+    toasts?.notify({
+      message: "Layout link is in the address bar",
+      tone: "info",
+    });
   }
 });

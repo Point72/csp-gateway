@@ -980,6 +980,152 @@ class TestSharedLayouts:
 class TestMainTabs:
     """The main window's tab layout: workspace + on-demand closeable tabs (graph, send)."""
 
+    def test_registered_frame_dimensions_are_rendered(self):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        dimensions = {
+            "min_width": "26rem",
+            "preferred_width": "32rem",
+            "max_width": "40rem",
+            "min_height": "12rem",
+            "preferred_height": "24rem",
+            "max_height": "80%",
+        }
+        ui.add_tab("editor", "Editor", element("div"), **dimensions)
+        ui.add_tab("plain", "Plain", element("div"))
+
+        tree = ui._main_content(element("div"), [], [], False, "").to_node()
+        frames = {frame["props"]["name"]["Str"]: frame for frame in tree["slots"]["default"]}
+
+        for name, value in dimensions.items():
+            assert frames["editor"]["props"][name.replace("_", "-")] == {"Str": value}
+            assert name.replace("_", "-") not in frames["plain"]["props"]
+
+    def test_tab_placement_is_available_before_activation(self):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        ui.add_tab("editor", "Editor", element("div"), beside="anchor", side="right", stack_below=800)
+        ui.add_tab("anchor", "Anchor", element("div"))
+
+        tree = ui._main_content(element("div"), [], [], False, "").to_node()
+
+        assert json.loads(tree["props"]["data-tab-placements"]["Str"]) == {"editor": {"beside": "anchor", "side": "right", "stackBelow": 800}}
+        assert "regular-layout-select" in tree["events"]
+        assert ui.tab_button("Editor", "editor").to_node()["events"]["click"]["actions"][0] == {"kind": "js", "handler": "gateway-open-tab"}
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"beside": "editor"},
+            {"beside": ""},
+            {"beside": "workspace", "side": "diagonal"},
+            {"beside": "workspace", "stack_below": -1},
+            {"beside": "workspace", "stack_below": float("nan")},
+            {"beside": "workspace", "stack_below": True},
+            {"stack_below": 800},
+            {"side": "left"},
+        ],
+    )
+    def test_invalid_tab_placement_is_rejected(self, options):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        with pytest.raises(ValueError):
+            ui.add_tab("editor", "Editor", element("div"), **options)
+
+    def test_unknown_placement_anchor_is_rejected_when_building(self):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        ui.add_tab("editor", "Editor", element("div"), beside="missing")
+        with pytest.raises(ValueError, match="missing"):
+            ui._main_content(element("div"), [], [], False, "")
+
+    @pytest.mark.parametrize("width", [1440, 640])
+    @pytest.mark.parametrize("source", ["url", "button", "invoke"])
+    def test_placed_tabs_activate_after_placement_and_preserve_user_layout(self, width, source):
+        from types import SimpleNamespace
+
+        from spaday import element
+        from spaday.actions import SetField
+        from spaday.components.shell import Region
+
+        from csp_gateway.server.web.app import GatewayWebApp
+
+        playwright = pytest.importorskip("playwright.sync_api")
+        web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday", ROOT_PATH="/prefix"), ui=True)
+        web.ui.add(Region.MAIN, element("p").text("Workspace"))
+        web.ui.add_tab(
+            "editor",
+            "Editor",
+            element("p").text("Editor content"),
+            beside="workspace",
+            side="right",
+            stack_below=800,
+            min_width="20rem",
+            preferred_width="24rem",
+            max_width="36rem",
+            on_open=SetField("loaded", True),
+        )
+        web.ui.add(Region.HEADER_RIGHT, web.ui.tab_button("Editor", "editor"))
+        web._finalize()
+        client = TestClient(web.app)
+        with playwright.sync_playwright() as runtime:
+            browser = runtime.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": width, "height": 900})
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.add_init_script("""
+                window.editorActivations = [];
+                document.addEventListener('gateway-tab-open', event => {
+                    if (event.detail.tab === 'editor') {
+                        const frame = event.target.querySelector('[name="editor"]');
+                        editorActivations.push({layout: event.target.save(), width: frame.getBoundingClientRect().width});
+                    }
+                });
+            """)
+
+            def serve(route):
+                response = client.get(route.request.url)
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            page.route("http://csp-review.test/**", serve)
+            try:
+                page.goto("http://csp-review.test/prefix/" + ("?tab=editor" if source == "url" else ""))
+                page.locator("#gateway-main-layout").wait_for(state="visible")
+                if source == "button":
+                    page.get_by_role("button", name="Editor", exact=True).click()
+                elif source == "invoke":
+                    page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('editor')")
+                page.wait_for_function("editorActivations.length === 1")
+                activation = page.evaluate("editorActivations[0]")
+                assert activation["layout"]["orientation"] == ("horizontal" if width >= 800 else "vertical")
+                assert activation["layout"]["children"][1]["tabs"] == ["editor"]
+                assert activation["width"] >= 319
+
+                saved = page.locator("#gateway-main-layout").evaluate("""async layout => {
+                    await layout.restore({type:'split-layout', orientation:'horizontal', sizes:[0.4,0.6], children:[
+                        {type:'tab-layout', tabs:['editor'], selected:0},
+                        {type:'tab-layout', tabs:['workspace'], selected:0}
+                    ]});
+                    await layout.select('editor');
+                    return layout.save();
+                }""")
+                page.get_by_role("button", name="Editor", exact=True).click()
+                page.wait_for_function("editorActivations.length === 2")
+                assert page.locator("#gateway-main-layout").evaluate("layout => layout.save()") == saved
+
+                page.locator("#gateway-main-layout").evaluate("layout => layout.removePanel('editor')")
+                page.wait_for_function("!document.querySelector('#gateway-main-layout').dataset.activeTab")
+                page.get_by_role("button", name="Editor", exact=True).click()
+                page.wait_for_function("editorActivations.length === 3")
+                assert page.evaluate("editorActivations[2].layout.children[1].tabs") == ["editor"]
+                assert errors == []
+            finally:
+                browser.close()
+
     def test_tab_buttons_do_not_depend_on_registration_order(self):
         from spaday import element
         from spaday.actions import SetField
