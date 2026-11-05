@@ -180,6 +180,10 @@ class TestGatewayWebserver:
         assert response.status_code == 404
         assert response.json() == {"detail": "Not Found"}
 
+    def test_favicon_is_never_a_server_error(self, rest_client: TestClient):
+        response = rest_client.get("/favicon.ico?token=test")
+        assert response.status_code == 200
+
     def test_static_cachecontrol(self, rest_client: TestClient):
         response = rest_client.get("/static/favicon.png")
         assert response.status_code == 200

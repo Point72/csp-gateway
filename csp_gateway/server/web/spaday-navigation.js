@@ -144,3 +144,25 @@ registerHandler("gateway-copy-link", async () => {
     });
   }
 });
+
+document.addEventListener("gateway-focus-table", async (event) => {
+  const { table, filter } = event.detail || {};
+  const panel = document.getElementById("gateway-workspace");
+  if (!table || !panel) return;
+  try {
+    await panel.openChannel(table);
+    if (!filter) return;
+    const workspace = await panel.save();
+    const masters = new Set(workspace.masters || []);
+    const [id, config] =
+      Object.entries(workspace.panels || {}).find(
+        ([key, p]) => p.table === table && !masters.has(key),
+      ) || [];
+    if (!id) return;
+    const columns = new Set(filter.map((clause) => clause[0]));
+    const kept = (config.filter || []).filter((clause) => !columns.has(clause[0]));
+    await panel.restorePanel(id, { filter: [...kept, ...filter] });
+  } catch (error) {
+    console.error("Gateway table focus failed", error);
+  }
+});
