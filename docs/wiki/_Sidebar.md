@@ -59,7 +59,11 @@ Notes for editors:
   - [PublishLogfire](Modules#PublishLogfire)
   - [PublishSQLA](Modules#PublishSQLA)
   - [PublishDatadog](Modules#PublishDatadog)
+  - [PublishMetricsDatadog](Modules#PublishMetricsDatadog)
+  - [PublishEventsDatadog](Modules#PublishEventsDatadog)
   - [PublishOpsGenie](Modules#PublishOpsGenie)
+  - [PublishAlertsOpsGenie](Modules#PublishAlertsOpsGenie)
+  - [PublishHeartbeatsOpsGenie](Modules#PublishHeartbeatsOpsGenie)
   - [PublishSymphony](Modules#PublishSymphony)
 - Replay Engine Modules
   - [ReplayEngineJSON](Modules#ReplayEngineJSON)
