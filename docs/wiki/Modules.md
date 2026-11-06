@@ -73,8 +73,12 @@
   - [Configuration](#configuration-19)
 - [PublishDatadog](#publishdatadog)
   - [Configuration](#configuration-20)
+  - [PublishMetricsDatadog](#publishmetricsdatadog)
+  - [PublishEventsDatadog](#publisheventsdatadog)
 - [PublishOpsGenie](#publishopsgenie)
   - [Configuration](#configuration-21)
+  - [PublishAlertsOpsGenie](#publishalertsopsgenie)
+  - [PublishHeartbeatsOpsGenie](#publishheartbeatsopsgenie)
 - [PublishSQLA](#publishsqla)
   - [Configuration](#configuration-22)
 - [PublishSymphony](#publishsymphony)
@@ -1026,6 +1030,10 @@ print_channels:
 
 `PublishDatadog` is a `GatewayModule` for publishing events and metrics to [Datadog](https://www.datadoghq.com/). It integrates with Datadog's API to send monitoring data from your Gateway.
 
+Import from [`csp_gateway.server.modules.metrics`](../../csp_gateway/server/modules/metrics/__init__.py); existing root and `logging` import paths remain supported.
+
+The combined publisher uses one worker queue for events and metrics and sends one startup event.
+
 ### Configuration
 
 ```yaml
@@ -1038,6 +1046,7 @@ modules:
       environment: production
       service: my-gateway
     dd_latency_log_threshold_seconds: 30
+    include_monitoring_id: false
 ```
 
 Configuration options:
@@ -1046,14 +1055,42 @@ Configuration options:
 - **metrics_channel** (`Optional[str]`): Channel containing `MonitoringMetric` objects to publish
 - **dd_tags** (`Optional[Dict[str, str]]`): Tags to include with all Datadog submissions
 - **dd_latency_log_threshold_seconds** (`int = 30`): Log a warning if Datadog API calls exceed this duration
+- **include_monitoring_id** (`bool = False`): Include `monitoring_id` in metric submissions. When false, the tag is omitted even if supplied in `dd_tags` or metric tags. Event tags are unaffected.
 
 > [!NOTE]
 >
 > Requires the `datadog` package to be installed.
 
+### PublishMetricsDatadog
+
+[`PublishMetricsDatadog`](../../csp_gateway/server/modules/metrics/datadog.py) publishes metrics without sending native events or a startup event.
+It accepts the shared Datadog settings and metric-specific options above, but not `events_channel`.
+
+```yaml
+modules:
+  metrics:
+    _target_: csp_gateway.PublishMetricsDatadog
+    metrics_channel: my_metrics_channel
+    include_monitoring_id: false
+```
+
+### PublishEventsDatadog
+
+[`PublishEventsDatadog`](../../csp_gateway/server/modules/logging/datadog_events.py) publishes native events, including the startup notification.
+It accepts the shared Datadog settings and `events_channel`, but not `metrics_channel` or `include_monitoring_id`.
+
+```yaml
+modules:
+  events:
+    _target_: csp_gateway.PublishEventsDatadog
+    events_channel: my_events_channel
+```
+
 ## PublishOpsGenie
 
-`PublishOpsGenie` is a `GatewayModule` for creating alerts in [OpsGenie](https://www.atlassian.com/software/opsgenie). It monitors specified channels and creates alerts based on the data.
+`PublishOpsGenie` creates alerts and manages heartbeats in [OpsGenie](https://www.atlassian.com/software/opsgenie), using one shared API client.
+
+Import from [`csp_gateway.server.modules.alerts`](../../csp_gateway/server/modules/alerts/__init__.py); existing root and `logging` import paths remain supported.
 
 ### Configuration
 
@@ -1061,18 +1098,50 @@ Configuration options:
 modules:
   opsgenie:
     _target_: csp_gateway.PublishOpsGenie
-    api_key: ${oc.env:OPSGENIE_API_KEY}
-    alerts_channel: my_alerts_channel
+    ops_api_key: ${oc.env:OPSGENIE_API_KEY}
+    events_channel: my_events_channel
+    metrics_channel: my_metrics_channel
+    ops_heartbeat_name: my-gateway
 ```
 
 Configuration options:
 
-- **api_key** (`str`): OpsGenie API key
-- **alerts_channel** (`str`): Channel containing alert data
+- **ops_api_key** (`str`): OpsGenie API key
+- **events_channel** (`Optional[str]`): Channel containing `MonitoringEvent` objects to publish as alerts
+- **metrics_channel** (`Optional[str]`): Channel containing `MonitoringMetric` objects; only metrics named by `ops_heartbeat_metric_name` are pinged
+- **ops_heartbeat_name** (`str`): Heartbeat name; required by the combined publisher even when only alerts are configured
 
 > [!NOTE]
 >
 > Requires the `opsgenie-sdk` package to be installed.
+
+### PublishAlertsOpsGenie
+
+[`PublishAlertsOpsGenie`](../../csp_gateway/server/modules/alerts/opsgenie.py) publishes alerts without requiring or managing a heartbeat.
+It accepts the shared OpsGenie settings and alert-specific options, including severity thresholds and alias tags.
+
+```yaml
+modules:
+  alerts:
+    _target_: csp_gateway.PublishAlertsOpsGenie
+    ops_api_key: ${oc.env:OPSGENIE_API_KEY}
+    events_channel: my_events_channel
+```
+
+### PublishHeartbeatsOpsGenie
+
+[`PublishHeartbeatsOpsGenie`](../../csp_gateway/server/modules/heartbeats/opsgenie.py) provisions a heartbeat, pings it for matching metrics, and disables it on shutdown.
+It accepts the shared OpsGenie settings and heartbeat-specific options, but not alert channel or filtering settings.
+The default metric name is `heartbeat`; `ops_heartbeat_name` is required.
+
+```yaml
+modules:
+  heartbeats:
+    _target_: csp_gateway.PublishHeartbeatsOpsGenie
+    ops_api_key: ${oc.env:OPSGENIE_API_KEY}
+    ops_heartbeat_name: my-gateway
+    metrics_channel: my_metrics_channel
+```
 
 ## PublishSQLA
 
@@ -1100,6 +1169,8 @@ Configuration options:
 ## PublishSymphony
 
 `PublishSymphony` is a `GatewayModule` for publishing messages to [Symphony](https://symphony.com/), an enterprise communication platform.
+
+Import from [`csp_gateway.server.modules.chat`](../../csp_gateway/server/modules/chat/__init__.py); existing root and `logging` import paths remain supported.
 
 ### Configuration
 
