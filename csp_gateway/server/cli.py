@@ -2,11 +2,11 @@ import argparse
 import logging
 from pprint import pprint
 
-import hydra
 from ccflow import ModelRegistry
 from omegaconf import OmegaConf
 
 from csp_gateway import __version__
+from csp_gateway._config_framework import hydra
 
 log = logging.getLogger(__name__)
 

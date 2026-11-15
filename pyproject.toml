@@ -93,6 +93,7 @@ server = [
     "httpx2",
     "hydra-core",
     "janus",
+    "lerna",
     "orjson",
     "perspective-python>=5.6,<6",
     "pyarrow",
