@@ -60,6 +60,7 @@ class MountControls(GatewayModule):
             app.add(
                 Region.DRAWER_RIGHT,
                 app.confirm_button("Shutdown", app.web_app.api_path("/controls/shutdown", self.api_version), variant="danger"),
+                order=-100,
             )
 
     @csp.node

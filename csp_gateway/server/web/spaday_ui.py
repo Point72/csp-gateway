@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
@@ -103,6 +104,8 @@ _TOAST_ID = "gateway-toasts"
 _ACTION_RESULT = "action_result"
 _GRAPH_FOCUS = "graph_focus"
 _PERSPECTIVE_READY = "perspective_ready"
+_SHARED_LAYOUT_ID = "shared_layout_id"
+_SHARED_LAYOUT_PARAM = "layout"
 # Seeded from `?error=` so the auth middleware can say why it turned a request away.
 _AUTH_ERROR = "auth_error"
 
@@ -279,6 +282,8 @@ class GatewayUI:
         self._regions: dict[Region, list[_Contribution]] = {}
         self._tabs: list[tuple[int, str, str, Any, bool]] = []
         self._tab_actions: dict[str, Any] = {}
+        self._tab_dimensions: dict[str, dict[str, str]] = {}
+        self._tab_placements: dict[str, dict[str, Any]] = {}
         self._store_seeds: dict[str, Any] = {"main_tab": ""}
         self._url_fields: dict[str, str] = {"main_tab": "tab"}
         self._store_persistence: dict[str, str] = {}
@@ -333,6 +338,9 @@ class GatewayUI:
         helpers (`perspective_panel`, `layout_selector`, `send_panel`, `link_button`,
         `post_button`, `confirm_button`) or hand-author any spaday component.
 
+        In the settings drawer, primary controls use ``order=-100``, ordinary module buttons
+        use ``0``, and support links use ``100``.
+
         `component` may also be a zero-argument callable returning one. Module `ui()` hooks run
         once at startup, so a callable is the way to render server-side state that changes after
         that (it is re-invoked on each page build, i.e. per page load).
@@ -343,7 +351,25 @@ class GatewayUI:
         """
         self._regions.setdefault(Region(region), []).append(_Contribution(component=component, order=order, label=label))
 
-    def add_tab(self, name: str, label: str, component: Any, *, order: int = 0, closeable: bool = True, on_open: Any = None) -> None:
+    def add_tab(
+        self,
+        name: str,
+        label: str,
+        component: Any,
+        *,
+        order: int = 0,
+        closeable: bool = True,
+        on_open: Any = None,
+        min_width: str | None = None,
+        preferred_width: str | None = None,
+        max_width: str | None = None,
+        min_height: str | None = None,
+        preferred_height: str | None = None,
+        max_height: str | None = None,
+        beside: str | None = None,
+        side: str = "right",
+        stack_below: float | None = None,
+    ) -> None:
         """Register a tab for the main window's tab layout.
 
         The main region always shows the workspace; registered tabs open on demand (via a
@@ -354,10 +380,43 @@ class GatewayUI:
         opens); ``label`` is the tab text. ``closeable=False`` hides the tab's close
         control for tabs nothing could reopen (the workspace is always non-closeable).
         ``on_open`` runs when the tab is activated, including through a shared URL.
+        Frame dimensions accept ``px``, ``rem``, ``em``, or percentages of the layout;
+        omitted dimensions leave the frame's defaults unchanged.
+        ``beside`` names ``workspace`` or another registered tab. On first opening,
+        ``side`` places the panel to its left, right, top, or bottom; below the layout
+        width ``stack_below`` (pixels), it goes below the anchor. Existing placement
+        is preserved, and ``on_open`` runs after placement and selection.
         """
         if any(existing == name for _, existing, _, _, _ in self._tabs):
             raise ValueError(f"main tab already registered: {name}")
+        if beside is not None and (not isinstance(beside, str) or not beside.strip() or beside == name):
+            raise ValueError("beside must name another tab or workspace")
+        if side not in {"left", "right", "top", "bottom"}:
+            raise ValueError("side must be left, right, top, or bottom")
+        if beside is None and (side != "right" or stack_below is not None):
+            raise ValueError("side and stack_below require beside")
+        if stack_below is not None and (
+            isinstance(stack_below, bool) or not isinstance(stack_below, (int, float)) or not math.isfinite(stack_below) or stack_below < 0
+        ):
+            raise ValueError("stack_below must be a finite non-negative width")
         self._tabs.append((order, name, label, component, closeable))
+        self._tab_dimensions[name] = {
+            key: value
+            for key, value in {
+                "min_width": min_width,
+                "preferred_width": preferred_width,
+                "max_width": max_width,
+                "min_height": min_height,
+                "preferred_height": preferred_height,
+                "max_height": max_height,
+            }.items()
+            if value is not None
+        }
+        if beside is not None:
+            placement: dict[str, Any] = {"beside": beside, "side": side}
+            if stack_below is not None:
+                placement["stackBelow"] = stack_below
+            self._tab_placements[name] = placement
         if on_open is not None:
             self._tab_actions[name] = on_open
 
@@ -367,8 +426,7 @@ class GatewayUI:
         ``action`` runs on this button's click. Use ``add_tab(on_open=...)`` for data loading
         that must also run when the tab opens through a shared URL.
         """
-        open_tab = Invoke(by_id(_MAIN_LAYOUT_ID), "openPanel", event_prop("currentTarget.dataset.tab"))
-        actions = [NamedJs("gateway-tab-repeat"), open_tab]
+        actions = [NamedJs("gateway-open-tab")]
         if action is not None:
             actions.append(action)
         button = WaButton(appearance=appearance, title=label).prop("data-tab", tab).on("click", Sequence(*actions))
@@ -485,6 +543,7 @@ class GatewayUI:
         table_options: dict[str, dict[str, Any]] | None = None,
         channels: dict[str, dict[str, Any]] | None = None,
         master_theme: str | None = None,
+        shared_layouts_route: str | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
 
@@ -497,6 +556,7 @@ class GatewayUI:
         worker rather than reading it off the websocket. ``channels`` supplies configurations for
         channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
         ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
+        ``shared_layouts_route`` serves layouts by id; a page opened with ``?layout=<id>`` starts on it.
         """
         tables = list(tables or [])
         self._workspace_tables = list(tables)
@@ -523,6 +583,22 @@ class GatewayUI:
             "})()"
         )
         layout_expr = cond(eq(field("layout_view"), _CUSTOM_LAYOUT_NAME), field("custom_layout"), layout_expr)
+        if shared_layouts_route:
+            # Fetched before the tree mounts, so a shared link opens straight on its layout. It only
+            # applies while the URL still names it: picking or saving a layout clears the id.
+            shared_route = json.dumps(self.url(shared_layouts_route))
+            self._store_seeds["shared_layout"] = Js(
+                "await (async () => { "
+                f'const id = new URLSearchParams(location.search).get("{_SHARED_LAYOUT_PARAM}"); '
+                "if (!id) return null; "
+                f"try {{ const response = await fetch(`${{{shared_route}}}/${{encodeURIComponent(id)}}`); "
+                "return response.ok ? { id, config: await response.json() } : null; } "
+                "catch { return null; } "
+                "})()"
+            )
+            self._store_seeds.setdefault(_SHARED_LAYOUT_ID, "")
+            self.bind_url(**{_SHARED_LAYOUT_ID: _SHARED_LAYOUT_PARAM})
+            layout_expr = cond(eq(field("shared_layout.id"), field(_SHARED_LAYOUT_ID)), field("shared_layout.config"), layout_expr)
 
         # Focusing a table (from a channels-graph node) wins over the selected layout until the
         # selector or a save clears it, so these branches wrap the others.
@@ -612,7 +688,7 @@ class GatewayUI:
             WaSelect(value=value, size="s")
             .prop("id", "gateway-layout-selector")
             .bind("value", "view", mode="two-way")
-            .on("change", Sequence(SetField("layout_view", event_value()), SetField(_GRAPH_FOCUS, "")))
+            .on("change", Sequence(SetField("layout_view", event_value()), SetField(_GRAPH_FOCUS, ""), SetField(_SHARED_LAYOUT_ID, "")))
             .style(width="220px")
         )
         select = select.child(WaOption(value="__default__").text("All Tables"))
@@ -635,6 +711,7 @@ class GatewayUI:
                     Invoke(by_id(_WORKSPACE_ID), "saveClean", result="custom_layout"),
                     SetField("saved_layout", field("custom_layout")),
                     SetField(_GRAPH_FOCUS, ""),
+                    SetField(_SHARED_LAYOUT_ID, ""),
                     SetField("view", _CUSTOM_LAYOUT_NAME),
                     SetField("layout_view", _CUSTOM_LAYOUT_NAME),
                 ),
@@ -658,6 +735,34 @@ class GatewayUI:
                 ),
             )
             .child(WaIcon(name="download"))
+        )
+
+    def share_layout_button(self, route: str) -> Any:
+        """A header button that stores the current Perspective workspace on the server for sharing.
+
+        The returned id goes into the URL as ``?layout=<id>`` and the link is copied to the clipboard.
+        """
+        return (
+            WaButton(appearance="plain", title="Share layout link")
+            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
+            .on(
+                "click",
+                Sequence(
+                    Invoke(by_id(_WORKSPACE_ID), "saveClean", result="share_layout"),
+                    CallEndpoint("POST", self.url(route), field("share_layout"), result="share_layout_result"),
+                    If(
+                        field("share_layout_result.ok"),
+                        Sequence(
+                            # Pointing the shared branch at what was just saved keeps the workspace as it is.
+                            SetField("shared_layout", obj({"id": field("share_layout_result.body.id"), "config": field("share_layout")})),
+                            SetField(_SHARED_LAYOUT_ID, field("share_layout_result.body.id")),
+                            NamedJs("gateway-copy-link"),
+                        ),
+                        Invoke(by_id(_TOAST_ID), "notify", obj({"message": "Sharing the layout failed", "tone": "danger"})),
+                    ),
+                ),
+            )
+            .child(WaIcon(name="share-nodes"))
         )
 
     def link_button(self, label: str, href: str, *, target: str = "_blank", variant: str | None = None) -> Any:
@@ -872,12 +977,17 @@ class GatewayUI:
         if not tab_entries:
             return workspace
 
+        names = {_WORKSPACE_TAB, *(name for name, _, _, _ in tab_entries)}
+        for name, placement in self._tab_placements.items():
+            if placement["beside"] not in names:
+                raise ValueError(f"tab {name!r} has unknown placement anchor {placement['beside']!r}")
+
         # Nothing reopens a closed workspace, so its close control is hidden.
         frames = [RegularLayoutFrame(workspace, name=_WORKSPACE_TAB).prop("data-no-close", "true")]
         titles = [f'--regular-layout-{_WORKSPACE_TAB}--title: "Workspace"']
         for name, label, component, closeable in tab_entries:
             resolved = component() if callable(component) else component
-            frame = RegularLayoutFrame(resolved, name=name, style="box-sizing: border-box")
+            frame = RegularLayoutFrame(resolved, name=name, style="box-sizing: border-box", **self._tab_dimensions.get(name, {}))
             if not closeable:
                 frame = frame.prop("data-no-close", "true")
             frames.append(frame)
@@ -887,6 +997,7 @@ class GatewayUI:
         return (
             RegularLayout(*frames, layout={"type": "tab-layout", "tabs": [_WORKSPACE_TAB]})
             .prop("id", _MAIN_LAYOUT_ID)
+            .prop("data-tab-placements", json.dumps(self._tab_placements))
             .compute("data-active-tab", field("main_tab"))
             # Tabs open, select, and close, but drag-rearranging is disabled: the nested
             # Perspective workspace is itself a regular-layout, which makes drags confusing.
@@ -894,6 +1005,7 @@ class GatewayUI:
             .prop("style", "; ".join(titles))
             .compute("class", cond(field("main_tabbed"), "spa", "spa spa-solo"))
             .on("regular-layout-update", Sequence(SetField("main_tabbed", not_(eq(open_count, 1))), NamedJs("gateway-tabs")))
+            .on("regular-layout-select", NamedJs("gateway-tabs"))
             .on("gateway-tab-change", SetField("main_tab", event_value("tab")))
             .on(
                 "gateway-tab-open",

@@ -902,8 +902,229 @@ class TestSpadayPerspectiveLayoutActions:
         assert oversized.status_code == 413
 
 
+class TestSharedLayouts:
+    @pytest.fixture(scope="class")
+    def gateway(self, free_port):
+        return Gateway(
+            modules=[ExampleModule(), MountPerspectiveTables(share_layouts=True)],
+            channels=ExampleChannels(),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday"),
+        )
+
+    @pytest.fixture(scope="class")
+    def client(self, gateway):
+        gateway.start(rest=True, ui=True, _in_test=True)
+        try:
+            yield TestClient(gateway.web_app.get_fastapi())
+        finally:
+            gateway.stop()
+
+    def test_shared_layout_round_trips_by_id(self, client: TestClient):
+        layout = {"layout": {"type": "tab-layout", "tabs": ["example"]}, "panels": {"example": {"table": "example"}}}
+
+        first = client.post("/api/v1/perspective/shared-layouts", json=layout)
+        again = client.post("/api/v1/perspective/shared-layouts", json={"panels": layout["panels"], "layout": layout["layout"]})
+
+        assert first.status_code == 200
+        assert first.json() == again.json()
+        assert client.get(f"/api/v1/perspective/shared-layouts/{first.json()['id']}").json() == layout
+
+    def test_shared_layout_rejects_invalid_oversized_and_unknown(self, client: TestClient):
+        assert client.post("/api/v1/perspective/shared-layouts", json=[1]).status_code == 400
+        assert client.post("/api/v1/perspective/shared-layouts", content=b"{").status_code == 400
+        oversized = client.post("/api/v1/perspective/shared-layouts", content=b"x", headers={"content-length": str(1024 * 1024 + 1)})
+        assert oversized.status_code == 413
+        assert client.get("/api/v1/perspective/shared-layouts/missing").status_code == 404
+
+    def test_shared_layouts_are_bounded(self, gateway, client: TestClient, monkeypatch):
+        from csp_gateway.server.modules.web import perspective
+
+        monkeypatch.setattr(perspective, "_MAX_SHARED_LAYOUTS", 2)
+        ids = [client.post("/api/v1/perspective/shared-layouts", json={"layout": {"n": n}, "panels": {}}).json()["id"] for n in range(3)]
+
+        assert client.get(f"/api/v1/perspective/shared-layouts/{ids[0]}").status_code == 404
+        assert client.get(f"/api/v1/perspective/shared-layouts/{ids[2]}").status_code == 200
+
+    def test_page_restores_the_layout_named_in_the_url(self, client: TestClient):
+        page = client.get("/").text
+        assert 'new URLSearchParams(location.search).get("layout")' in page
+        assert "/api/v1/perspective/shared-layouts" in page
+        assert '"shared_layout_id": "layout"' in page
+        tree = client.get("/tree.json").text
+        # The workspace still reads its data off the Perspective websocket, not the layout store.
+        assert '"ws_url": {"expr": "lit", "value": "/api/v1/perspective"}' in tree
+        assert "Share layout link" in tree
+        assert '"handler": "gateway-copy-link"' in tree
+
+    def test_choosing_a_layout_drops_the_shared_id(self):
+        change = _bare_ui().layout_selector({}).to_node()["events"]["change"]
+        cleared = [a for a in change["actions"] if a.get("field") == "shared_layout_id"]
+        assert cleared and cleared[0]["value"] == {"expr": "lit", "value": ""}
+
+    def test_sharing_is_off_by_default(self, free_port):
+        gateway = Gateway(
+            modules=[ExampleModule(), MountPerspectiveTables()],
+            channels=ExampleChannels(),
+            settings=GatewaySettings(PORT=free_port, UI_PROVIDER="spaday"),
+        )
+        gateway.start(rest=True, ui=True, _in_test=True)
+        try:
+            client = TestClient(gateway.web_app.get_fastapi())
+            assert client.post("/api/v1/perspective/shared-layouts", json={"layout": {}, "panels": {}}).status_code in (404, 405)
+            assert "Share layout link" not in client.get("/tree.json").text
+            assert "shared_layout" not in client.get("/").text
+        finally:
+            gateway.stop()
+
+
 class TestMainTabs:
     """The main window's tab layout: workspace + on-demand closeable tabs (graph, send)."""
+
+    def test_registered_frame_dimensions_are_rendered(self):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        dimensions = {
+            "min_width": "26rem",
+            "preferred_width": "32rem",
+            "max_width": "40rem",
+            "min_height": "12rem",
+            "preferred_height": "24rem",
+            "max_height": "80%",
+        }
+        ui.add_tab("editor", "Editor", element("div"), **dimensions)
+        ui.add_tab("plain", "Plain", element("div"))
+
+        tree = ui._main_content(element("div"), [], [], False, "").to_node()
+        frames = {frame["props"]["name"]["Str"]: frame for frame in tree["slots"]["default"]}
+
+        for name, value in dimensions.items():
+            assert frames["editor"]["props"][name.replace("_", "-")] == {"Str": value}
+            assert name.replace("_", "-") not in frames["plain"]["props"]
+
+    def test_tab_placement_is_available_before_activation(self):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        ui.add_tab("editor", "Editor", element("div"), beside="anchor", side="right", stack_below=800)
+        ui.add_tab("anchor", "Anchor", element("div"))
+
+        tree = ui._main_content(element("div"), [], [], False, "").to_node()
+
+        assert json.loads(tree["props"]["data-tab-placements"]["Str"]) == {"editor": {"beside": "anchor", "side": "right", "stackBelow": 800}}
+        assert "regular-layout-select" in tree["events"]
+        assert ui.tab_button("Editor", "editor").to_node()["events"]["click"]["actions"][0] == {"kind": "js", "handler": "gateway-open-tab"}
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"beside": "editor"},
+            {"beside": ""},
+            {"beside": "workspace", "side": "diagonal"},
+            {"beside": "workspace", "stack_below": -1},
+            {"beside": "workspace", "stack_below": float("nan")},
+            {"beside": "workspace", "stack_below": True},
+            {"stack_below": 800},
+            {"side": "left"},
+        ],
+    )
+    def test_invalid_tab_placement_is_rejected(self, options):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        with pytest.raises(ValueError):
+            ui.add_tab("editor", "Editor", element("div"), **options)
+
+    def test_unknown_placement_anchor_is_rejected_when_building(self):
+        from spaday import element
+
+        ui = spaday_ui.GatewayUI(web_app=None, settings=GatewaySettings(PORT=0))
+        ui.add_tab("editor", "Editor", element("div"), beside="missing")
+        with pytest.raises(ValueError, match="missing"):
+            ui._main_content(element("div"), [], [], False, "")
+
+    @pytest.mark.parametrize("width", [1440, 640])
+    @pytest.mark.parametrize("source", ["url", "button", "invoke"])
+    def test_placed_tabs_activate_after_placement_and_preserve_user_layout(self, width, source):
+        from types import SimpleNamespace
+
+        from spaday import element
+        from spaday.actions import SetField
+        from spaday.components.shell import Region
+
+        from csp_gateway.server.web.app import GatewayWebApp
+
+        playwright = pytest.importorskip("playwright.sync_api")
+        web = GatewayWebApp(SimpleNamespace(modules=[]), None, GatewaySettings(UI=True, UI_PROVIDER="spaday", ROOT_PATH="/prefix"), ui=True)
+        web.ui.add(Region.MAIN, element("p").text("Workspace"))
+        web.ui.add_tab(
+            "editor",
+            "Editor",
+            element("p").text("Editor content"),
+            beside="workspace",
+            side="right",
+            stack_below=800,
+            min_width="20rem",
+            preferred_width="24rem",
+            max_width="36rem",
+            on_open=SetField("loaded", True),
+        )
+        web.ui.add(Region.HEADER_RIGHT, web.ui.tab_button("Editor", "editor"))
+        web._finalize()
+        client = TestClient(web.app)
+        with playwright.sync_playwright() as runtime:
+            browser = runtime.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": width, "height": 900})
+            errors = []
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.add_init_script("""
+                window.editorActivations = [];
+                document.addEventListener('gateway-tab-open', event => {
+                    if (event.detail.tab === 'editor') {
+                        const frame = event.target.querySelector('[name="editor"]');
+                        editorActivations.push({layout: event.target.save(), width: frame.getBoundingClientRect().width});
+                    }
+                });
+            """)
+
+            def serve(route):
+                response = client.get(route.request.url)
+                route.fulfill(status=response.status_code, headers=dict(response.headers), body=response.content)
+
+            page.route("http://csp-review.test/**", serve)
+            try:
+                page.goto("http://csp-review.test/prefix/" + ("?tab=editor" if source == "url" else ""))
+                page.locator("#gateway-main-layout").wait_for(state="visible")
+                if source == "button":
+                    page.get_by_role("button", name="Editor", exact=True).click()
+                elif source == "invoke":
+                    page.locator("#gateway-main-layout").evaluate("layout => layout.openPanel('editor')")
+                page.wait_for_function("editorActivations.length === 1")
+                activation = page.evaluate("editorActivations[0]")
+                assert activation["layout"]["orientation"] == ("horizontal" if width >= 800 else "vertical")
+                assert activation["layout"]["children"][1]["tabs"] == ["editor"]
+                assert activation["width"] >= 319
+
+                saved = page.locator("#gateway-main-layout").evaluate("""async layout => {
+                    await layout.restore({type:'split-layout', orientation:'horizontal', sizes:[0.4,0.6], children:[
+                        {type:'tab-layout', tabs:['editor'], selected:0},
+                        {type:'tab-layout', tabs:['workspace'], selected:0}
+                    ]});
+                    await layout.select('editor');
+                    return layout.save();
+                }""")
+                page.get_by_role("button", name="Editor", exact=True).click()
+                page.wait_for_function("editorActivations.length === 2")
+                assert page.locator("#gateway-main-layout").evaluate("layout => layout.save()") == saved
+
+                page.locator("#gateway-main-layout").evaluate("layout => layout.removePanel('editor')")
+                page.wait_for_function("!document.querySelector('#gateway-main-layout').dataset.activeTab")
+                page.get_by_role("button", name="Editor", exact=True).click()
+                page.wait_for_function("editorActivations.length === 3")
+                assert page.evaluate("editorActivations[2].layout.children[1].tabs") == ["editor"]
+                assert errors == []
+            finally:
+                browser.close()
 
     def test_tab_buttons_do_not_depend_on_registration_order(self):
         from spaday import element

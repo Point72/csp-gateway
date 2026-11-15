@@ -75,15 +75,15 @@ class Settings(BaseSettings):
 
     UI: bool = Field(False, description="Enables ui in the web application")
 
-    UI_PROVIDER: Literal["default", "spaday"] = Field(
+    # Kept at one value rather than dropped: a setting the gateway no longer knows is an error, so
+    # removing it would fail every config that names the provider it is already being given.
+    UI_PROVIDER: Literal["spaday"] = Field(
         "spaday",
-        description="Frontend provider for the UI. 'spaday' serves the spaday-based UI; "
-        "'default' serves the legacy Perspective/React UI, which requires the bundled "
-        "Javascript build and is slated for removal.",
+        description="Frontend provider for the UI. The legacy Perspective/React provider, 'default', was removed in favour of the spaday one.",
     )
 
     # UI customization fields that let downstream applications white-label the
-    # default UI from server-side config alone, without a custom Javascript bundle.
+    # UI from server-side config alone, without a custom Javascript bundle.
     HEADER_LOGO: str | None = Field(
         default=None,
         description="Header logo image, given as an http(s) URL, a data URI, an absolute "

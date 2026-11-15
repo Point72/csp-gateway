@@ -1,9 +1,12 @@
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from queue import Queue
+from threading import Thread
 from unittest import mock
 
 import csp
 import datadog
+import pytest
 from csp import ts
 
 from csp_gateway.server.gateway import Gateway, GatewayChannels, GatewayModule
@@ -123,6 +126,66 @@ def test_monitoring_init():
     assert isinstance(metric.tags["enum"], str)
 
 
+@pytest.mark.parametrize("metric_type", list(MonitoringMetric.MetricType))
+@pytest.mark.parametrize("include_monitoring_id", [False, True])
+@pytest.mark.parametrize("dd_tags", [None, {"monitoring_id": "global_id"}])
+@pytest.mark.parametrize("include_tags", [False, True])
+def test_datadog_metric_tags(metric_type, include_monitoring_id, dd_tags, include_tags):
+    class CustomMetric(MonitoringMetric):
+        def to_datadog(self, extra_tags=None):
+            payload = super().to_datadog(extra_tags)
+            payload["host"] = "test-host"
+            if not include_tags:
+                payload.pop("tags")
+            return payload
+
+    metrics = [
+        CustomMetric(id="first_id", metric="test.metric", metric_type=metric_type, value=1.0, tags={"env": "test"}),
+        CustomMetric(id="second_id", metric="test.metric", metric_type=metric_type, value=2.0, tags={"env": "test"}),
+    ]
+    for metric in metrics:
+        metric_dict = metric.to_dict()
+        if include_tags:
+            assert metric_dict["tags"] == ["env:test", f"monitoring_id:{metric.id}"]
+        else:
+            assert "tags" not in metric_dict
+
+    dd_queue = Queue()
+    dd_thread = Thread()
+    dd_thread.start()
+
+    def graph():
+        PublishDatadog._publish_datadog(
+            csp.null_ts([MonitoringEvent]),
+            csp.const(metrics),
+            dd_queue,
+            dd_thread,
+            dd_tags,
+            include_monitoring_id,
+        )
+
+    csp.run(graph, starttime=datetime.now(UTC), endtime=timedelta(seconds=1))
+
+    dd_queue.get_nowait()
+    submissions = dd_queue.get_nowait()
+    assert len(submissions) == 2
+    for metric, (submitted_type, payload) in zip(metrics, submissions, strict=True):
+        assert submitted_type is CustomMetric
+        assert payload["metric"] == "test.metric"
+        assert payload["host"] == "test-host"
+        if include_tags:
+            expected_tags = ["env:test"]
+            if include_monitoring_id:
+                expected_tags.append(f"monitoring_id:{'global_id' if dd_tags else metric.id}")
+            assert payload["tags"] == expected_tags
+        else:
+            assert "tags" not in payload
+        assert "monitoring_id" in metric.tags
+    assert [payload["points"][0][1] for _, payload in submissions] == [1.0, 2.0]
+    assert dd_queue.get_nowait() is None
+    assert dd_queue.empty()
+
+
 def test_datadog_bad_connection():
     # no connection provided should raise API error
     h = GatewayTestHarness(test_channels=["event", "metric"])
@@ -146,10 +209,14 @@ def test_datadog_bad_connection():
     )
 
 
+@pytest.mark.parametrize(
+    ("datadog_options", "include_monitoring_id"),
+    [({}, False), ({"include_monitoring_id": False}, False), ({"include_monitoring_id": True}, True)],
+)
 @mock.patch("datadog.initialize")
 @mock.patch.object(datadog.api.Event, "create")
 @mock.patch.object(datadog.api.Metric, "send")
-def test_datadog(mock_send_metric, mock_event_create, mock_initialize):
+def test_datadog(mock_send_metric, mock_event_create, mock_initialize, datadog_options, include_monitoring_id):
     mock_event_create.return_value = {"status": "ok"}
 
     h = GatewayTestHarness(test_channels=["event", "metric"])
@@ -161,6 +228,7 @@ def test_datadog(mock_send_metric, mock_event_create, mock_initialize):
                 dd_tags={"user": "test0123", "trading_area": "ABCD"},
                 events_channel="event",
                 metrics_channel="metric",
+                **datadog_options,
             ),
         ],
         channels=DatadogTestChannels(),
@@ -257,7 +325,6 @@ def test_datadog(mock_send_metric, mock_event_create, mock_initialize):
         "points",
         "user",
         "trading_area",
-        "monitoring_id",
     )
     metric_map = {}
     sum = 0
@@ -267,7 +334,8 @@ def test_datadog(mock_send_metric, mock_event_create, mock_initialize):
         res_dict.update(tags)
 
         # assert all keys are in the list
-        assert [key in res_dict for key in metric_keys] == [True] * 6
+        assert [key in res_dict for key in metric_keys] == [True] * 5
+        assert ("monitoring_id" in res_dict) == include_monitoring_id
 
         # count tag values
         for v in res_dict.values():

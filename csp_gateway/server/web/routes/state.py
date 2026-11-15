@@ -8,7 +8,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException, Query, query_json
 
 from ..utils import get_default_responses
-from .shared import get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
 
 __all__ = (
     "add_state_available_channels",
@@ -23,6 +23,9 @@ def add_state_routes(
     subroute_key: Any = None,
     keyby: tuple[str, ...] = (),
     indexer: str | int | None = None,
+    *,
+    batch_size: int = 500,
+    materialize: bool = True,
 ) -> None:
     """Mount REST routes for a single state ``field``.
 
@@ -33,6 +36,7 @@ def add_state_routes(
     ``keyby`` / ``indexer`` are surfaced in the route description so the
     accumulation semantics are visible in the OpenAPI schema.
     """
+    _validate_batch_size(batch_size)
     if model and get_origin(model) is list:
         list_model = model
     else:
@@ -50,8 +54,6 @@ def add_state_routes(
     if subroute_key:
         query_dependency = query_json()
 
-        # Sync, so FastAPI runs the query and serialization in its threadpool: a large state would
-        # otherwise hold the event loop and stall every other request until it finished.
         def get_state(key: str, query: Query | None = query_dependency, request: Request = None) -> list_model:  # type: ignore[valid-type]
             """
             Get state value on a dictionary basket channel, where `key` is the key of the dictionary basket.
@@ -67,7 +69,7 @@ def add_state_routes(
                     detail=f"State not found: {field}/{key}",
                 )
 
-            return prepare_response(res, is_list_model=True)
+            return prepare_response(res, is_list_model=True, batch_size=batch_size, materialize=materialize)
 
         api_router.get(
             f"/{field}/{{key:path}}",
@@ -89,8 +91,6 @@ def add_state_routes(
     if model:
         query_dependency = query_json()
 
-        # Sync, so FastAPI runs the query and serialization in its threadpool: a large state would
-        # otherwise hold the event loop and stall every other request until it finished.
         def get_state(query: Query | None = query_dependency, request: Request = None) -> list_model:  # type: ignore[misc, valid-type]
             """Get state value on a non-dict basket channel. This endpoint will flatten the state structure and return a list of the elements.
             Query parameters may be provided to perform server-side filtering and other functionality on the state object.
@@ -124,7 +124,7 @@ def add_state_routes(
                     detail=f"State not found: {field}",
                 )
 
-            return prepare_response(res, is_list_model=True)
+            return prepare_response(res, is_list_model=True, batch_size=batch_size, materialize=materialize)
 
         api_router.get(
             f"/{field}",

@@ -23,8 +23,6 @@ What actually happened. Include full error messages or tracebacks if available.
 **Environment**
 - OS: [e.g. Ubuntu 22.04, macOS 14.0, Windows 11]
 - Python version: [e.g. 3.11.5] (`python --version`)
-- Node.js version: [e.g. 22.0.0] (`node --version`)
-- pnpm version: [e.g. 9.0.0] (`pnpm --version`)
 - Package version: (`pip show csp-gateway | grep Version`)
 
 **Additional Context**

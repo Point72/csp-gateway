@@ -1,4 +1,5 @@
 import logging
+import os
 from abc import abstractmethod
 from asyncio import (
     AbstractEventLoop,
@@ -12,6 +13,7 @@ from asyncio import (
     wrap_future,
 )
 from collections.abc import Callable
+from contextlib import aclosing
 from copy import deepcopy
 from enum import Enum
 from functools import lru_cache
@@ -24,7 +26,7 @@ from httpx2 import AsyncClient as httpx2_AsyncClient, Response, get as GET, patc
 from jsonref import replace_refs
 from nest_asyncio import apply as applyAsyncioNesting
 from packaging import version
-from pydantic import Field, PrivateAttr, field_validator, model_validator
+from pydantic import AliasChoices, Field, PrivateAttr, field_validator, model_validator
 
 try:
     from ccflow import BaseModel
@@ -223,6 +225,14 @@ def _host(config) -> str:
 
 
 class GatewayClientConfig(BaseModel):
+    """Connection details for a gateway client.
+
+    Fields not passed explicitly are read from environment variables named after the upper-cased
+    field (``HOST``, ``PORT``, ``API_KEY``, ...), the convention the server's ``Settings`` uses
+    (e.g. ``PORT``, ``API_PREFIX``), before falling back to the defaults. Passing either
+    ``api_key`` or ``bearer_token`` explicitly stops both being read from the environment.
+    """
+
     model_config = {"extra": "forbid"}  # To raise error on misspelling/misspecification
 
     protocol: Literal["http", "https"] = "http"
@@ -254,6 +264,29 @@ class GatewayClientConfig(BaseModel):
             values.setdefault("api_prefix", prefix or "api")
             values.setdefault("api_version", version)
         return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_environment(cls, values):
+        if not isinstance(values, dict):
+            return values
+        by_name = cls.model_config.get("validate_by_name") or cls.model_config.get("populate_by_name")
+        given, keys = set(), {}
+        for name, field in cls.model_fields.items():
+            aliases = [
+                field.alias,
+                *(field.validation_alias.choices if isinstance(field.validation_alias, AliasChoices) else [field.validation_alias]),
+            ]
+            aliases = [alias for alias in aliases if isinstance(alias, str)]
+            if name in values or any(alias in values for alias in aliases):
+                given.add(name)
+            keys[name] = name if by_name or not aliases else aliases[0]
+        if "api_route" in values:
+            given |= {"api_prefix", "api_version"}
+        if given & {"api_key", "bearer_token"}:
+            given |= {"api_key", "bearer_token"}
+        environment = {keys[name]: value for name in cls.model_fields if name not in given and (value := os.environ.get(name.upper()))}
+        return {**values, **environment} if environment else values
 
     @field_validator("return_type", mode="before")
     @classmethod
@@ -445,8 +478,8 @@ class BaseGatewayClient(BaseModel):
     def __init__(self, config: GatewayClientConfig = None, **kwargs) -> None:
         # Exists for compatibility with positional argument instantiation
         if config is None:
-            config = GatewayClientConfig()
-        if kwargs:
+            config = GatewayClientConfig(**kwargs)
+        elif kwargs:
             config = GatewayClientConfig(**{**config.model_dump(exclude_unset=True), **kwargs})
         super().__init__(config=config)
 
@@ -780,8 +813,10 @@ class BaseGatewayClient(BaseModel):
             else:
                 await self._subscribe(channel)
 
-        async for data in self._connectAsync():
-            yield data
+        # aclosing makes closing this generator await the connection's cleanup instead of leaving it to a finalizer
+        async with aclosing(self._connectAsync()) as messages:
+            async for data in messages:
+                yield data
 
     async def _subscribe(self, channel: str, key: str | None = None):
         if not self._initialized_streaming:
@@ -904,6 +939,12 @@ class BaseGatewayClient(BaseModel):
     def openapi_spec(self):
         self._initialize()
         return deepcopy(self._openapi_spec)
+
+    @property
+    def mounted_apis(self) -> dict[str, list[str]]:
+        """Fields the server mounts under each API group (``last``, ``state``, ...), sorted by name."""
+        self._initialize()
+        return {group: sorted(fields) for group, fields in self._mounted_apis.items()}
 
     @abstractmethod
     def controls(self, field: str = "", data: Any = None, timeout: float = _DEFAULT_TIMEOUT) -> ResponseType: ...

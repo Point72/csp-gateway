@@ -1,8 +1,6 @@
-from json import dumps
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
-from fastapi.responses import HTMLResponse
 
 from csp_gateway.server import GatewayChannels, GatewayModule
 
@@ -27,7 +25,6 @@ class MountChannelsGraph(GatewayModule):
 
     def rest(self, app: GatewayWebApp) -> None:
         api_router = app.get_router("api", self.api_version)
-        app_router = app.get_router("app")
 
         # TODO subselect
         @api_router.get(
@@ -53,23 +50,6 @@ class MountChannelsGraph(GatewayModule):
             ```
             """
             return request.app.gateway.channels.graph()
-
-        # The spaday UI draws this graph in a tab of its own (see `ui` below), so the standalone
-        # page is only mounted for the legacy frontend that has nowhere else to show it.
-        if app.ui is not None:
-            return
-
-        @app_router.get("/channels_graph", response_class=HTMLResponse, tags=["Utility"])
-        def browse_channels_graph(request: Request):
-            """
-            This endpoint is a small webpage that shows the dependency relationship of the GatewayChannels graph powering this API.
-            """
-            channels_graph = request.app.gateway.channels.graph()
-            return app.templates.TemplateResponse(
-                request,
-                "channels_graph.html.j2",
-                context={"channels_graph": dumps(channels_graph)},
-            )
 
     def _graph(self) -> dict[str, Any]:
         """The channels graph as a spaday-dagre node/edge config.

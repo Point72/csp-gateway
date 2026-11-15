@@ -1,3 +1,4 @@
+import asyncio
 import warnings
 from collections import defaultdict, deque
 from contextlib import contextmanager
@@ -216,9 +217,8 @@ class ChannelsMetaclass(ModelMetaclass):
                         keyby=_normalize_keyby(meta._meta_keyby),
                         indexer=meta._meta_indexer,
                     )
-                elif isinstance(meta, Stage):
-                    if field_name not in declared_stages:
-                        declared_stages.append(field_name)
+                elif isinstance(meta, Stage) and field_name not in declared_stages:
+                    declared_stages.append(field_name)
 
         cls._declared_states = declared_states
         cls._declared_stages = declared_stages
@@ -288,6 +288,8 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
     _stage_triggers: dict[str, Any] = PrivateAttr(default_factory=dict)
     # Staging: channel_name -> GenericPushAdapter (StagingEvent delta stream)
     _stage_events: dict[str, Any] = PrivateAttr(default_factory=dict)
+    # Staging: ts[List[T]] channels, which release each staging as a single list tick
+    _stage_batched: set[str] = PrivateAttr(default_factory=set)
 
     # inside context, the module being attached
     _module_being_attached: Any = PrivateAttr(None)
@@ -575,10 +577,12 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             # Unwrap List[T] -> T
             from typing import get_args as _get_args, get_origin as _get_origin
 
-            if _get_origin(element_type) is list:
+            batched = _get_origin(element_type) is list
+            if batched:
                 element_type = _get_args(element_type)[0]
+                self._stage_batched.add(field_name)
 
-            stage, push_adapter, event_adapter = build_staging_node(element_type, field_name)
+            stage, push_adapter, event_adapter = build_staging_node(element_type, field_name, batched=batched)
             self._stages[field_name] = stage
             self._stage_triggers[field_name] = push_adapter
             self._stage_events[field_name] = event_adapter
@@ -1169,6 +1173,15 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
             return result.get(indexer)
         return result
 
+    async def last_async(self, field: str, indexer: str | int | None = None, *, timeout=None) -> Any:
+        """Return the last channel value asynchronously."""
+        self._check(field, self._last_requests, "last")
+        future = self._last_requests[field, None].push_tick()
+        result = await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), timeout=timeout)
+        if _has_indexer(indexer):
+            return result.get(indexer)
+        return result
+
     def next(self, field: str, indexer: str | int | None = None, *, timeout=None) -> None:
         self._check(field, self._last_requests, "last")
 
@@ -1226,8 +1239,9 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         """Enable staging mode for a channel.
 
         Once staging is enabled, the channel gains stage_add/stage_remove/
-        stage_release/stage_list/stage_lookup methods. Released items are
-        injected into the channel as a single tick via a feedback edge.
+        stage_release/stage_list/stage_lookup methods. On a ``ts[List[T]]`` channel each
+        released staging ticks once with its items as the list; otherwise each released
+        item ticks on its own.
 
         Must be called during module connect (before finalization).
         """
@@ -1249,10 +1263,12 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         # Unwrap List[T] -> T
         from typing import get_args as _get_args, get_origin as _get_origin
 
-        if _get_origin(element_type) is list:
+        batched = _get_origin(element_type) is list
+        if batched:
             element_type = _get_args(element_type)[0]
+            self._stage_batched.add(field)
 
-        stage, push_adapter, event_adapter = build_staging_node(element_type, field)
+        stage, push_adapter, event_adapter = build_staging_node(element_type, field, batched=batched)
         self._stages[field] = stage
         self._stage_triggers[field] = push_adapter
         self._stage_events[field] = event_adapter
@@ -1336,7 +1352,8 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
     ) -> dict[str, list[Any]]:
         """Release staged structs into the channel.
 
-        Released items are pushed into the csp graph individually.
+        On a ``ts[List[T]]`` channel each staging is pushed as one list tick; otherwise
+        items are pushed individually.
         Returns dict mapping staging_id -> list of released structs.
         """
         if field not in self._stages:
@@ -1345,11 +1362,14 @@ class Channels(BaseModel, metaclass=ChannelsMetaclass):
         stage = self._stages[field]
         released = stage.stage_release(staging_ids)
 
-        # Push each released item into the graph via the push adapter
         push_adapter = self._stage_triggers[field]
         for items in released.values():
-            for item in items:
-                push_adapter.push_tick(item)
+            if field in self._stage_batched:
+                if items:
+                    push_adapter.push_tick(list(items))
+            else:
+                for item in items:
+                    push_adapter.push_tick(item)
 
         return released
 

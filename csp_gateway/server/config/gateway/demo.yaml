@@ -9,6 +9,8 @@ modules:
     _target_: csp_gateway.server.demo.simple.ExampleModule
   mount_outputs:
     _target_: csp_gateway.MountOutputsFolder
+  mount_config:
+    _target_: csp_gateway.MountConfig
   mount_perspective_tables:
     _target_: csp_gateway.MountPerspectiveTables
     update_interval: 00:00:01
@@ -26,6 +28,7 @@ gateway:
   modules:
     - /modules/example_module
     - /modules/mount_outputs
+    - /modules/mount_config
     - /modules/mount_perspective_tables
     - /modules/mount_rest_routes
     - /modules/mount_send_form

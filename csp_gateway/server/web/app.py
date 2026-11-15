@@ -63,9 +63,9 @@ __all__ = (
     "GatewayWebApp",
 )
 
-build_files_dir = path.abspath(path.join(path.dirname(__file__), "..", "build"))
-static_files_dir = build_files_dir
-images_files_dir = path.join(build_files_dir, "img")
+# Assets the gateway ships itself. The spaday UI loads its own runtime from its packages, so this
+# is only the favicon, which doubles as the default header logo.
+static_files_dir = path.abspath(path.join(path.dirname(__file__), "static"))
 
 # Routers that live outside the versioned API prefix and are therefore shared by all versions.
 GLOBAL_ROUTER_KINDS = ("app", "public")
@@ -157,7 +157,7 @@ class GatewayWebApp:
         # here (not at module load) so the optional `spaday` dependency is only required when the
         # spaday frontend is actually served.
         self.ui: "GatewayUI | None" = None  # noqa: UP037
-        if self.settings.UI and self.settings.UI_PROVIDER == "spaday":
+        if self.settings.UI:
             from .spaday_ui import GatewayUI
 
             self.ui = GatewayUI(self, self.settings)
@@ -442,13 +442,6 @@ class GatewayWebApp:
             name="frontend",
         )
 
-        # Mount images
-        self.app.mount(
-            "/img",
-            CacheControlledStaticFiles(directory=images_files_dir, check_dir=False, html=True),
-            name="img",
-        )
-
         # Resolve UI customization assets (logos, custom js/css), serving local files
         self._resolve_ui_assets()
 
@@ -471,36 +464,16 @@ class GatewayWebApp:
         # Mount top level routes
         @self.app.get("/favicon.ico", include_in_schema=False, response_class=FileResponse)
         async def readFavicon():
-            return FileResponse(path.join(build_files_dir, "favicon.png"))
+            return FileResponse(path.join(static_files_dir, "favicon.png"))
 
         # Add UI if present, otherwise redirect to docs
-        if self.settings.UI:
-            if self.ui is not None:
-                # spaday provider: mount the spaday page (page, tree, and /js assets) at the root.
-                self.ui.mount()
-            else:
-
-                @app_router.get("/", include_in_schema=False, response_class=HTMLResponse)
-                async def serve_react_app(request: Request):
-                    root_path = request.scope.get("root_path", "")
-                    ui_config = self._prefixed_ui_config(root_path)
-                    return self.templates.TemplateResponse(
-                        request,
-                        "index.html.j2",
-                        {
-                            "title": ui_config["title"],
-                            "description": ui_config["description"],
-                            "base_path": root_path,
-                            "ui_config": ui_config,
-                            "custom_css": ui_config["customCss"],
-                            "custom_js": ui_config["customJs"],
-                        },
-                    )
-
+        if self.ui is not None:
+            # Mounts the spaday page, its tree, and the `/js` runtime at the root.
+            self.ui.mount()
         else:
 
             @self.app.get("/", include_in_schema=False, response_class=RedirectResponse)
-            async def serve_react_app(request: Request):
+            async def serve_docs_redirect(request: Request):
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(f"{root_path}/redoc")
 
@@ -569,7 +542,7 @@ class GatewayWebApp:
             return list[get_args(typ)[0]]
         return typ
 
-    def add_last_api(self, field: str, version: str | None = None) -> None:
+    def add_last_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("last", version)
         dict_basket = self._is_dict_basket_field(field=field)
 
@@ -580,13 +553,13 @@ class GatewayWebApp:
             model = self._get_field_pydantic_type(field)
             subroute_key = None
 
-        add_last_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
+        add_last_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key, batch_size=batch_size, materialize=materialize)
 
     def add_last_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
         api_router = self.get_router("last", version)
         add_last_available_channels(api_router=api_router, fields=fields)
 
-    def add_next_api(self, field: str, version: str | None = None) -> None:
+    def add_next_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("next", version)
 
         if dict_basket := self._is_dict_basket_field(field=field):
@@ -596,13 +569,13 @@ class GatewayWebApp:
             model = self._get_field_pydantic_type(field)
             subroute_key = None
 
-        add_next_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
+        add_next_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key, batch_size=batch_size, materialize=materialize)
 
     def add_next_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
         api_router = self.get_router("next", version)
         add_next_available_channels(api_router=api_router, fields=fields)
 
-    def add_lookup_api(self, field: str, version: str | None = None) -> None:
+    def add_lookup_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("lookup", version)
         dict_basket = self._is_dict_basket_field(field=field)
 
@@ -611,13 +584,15 @@ class GatewayWebApp:
         else:
             model = self._get_field_pydantic_type(field)
 
-        add_lookup_routes(api_router=api_router, field=field, model=model)
+        add_lookup_routes(api_router=api_router, field=field, model=model, batch_size=batch_size, materialize=materialize)
 
-    def add_lookup_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
+    def add_lookup_available_channels(
+        self, fields: set[str] | None = None, version: str | None = None, *, batch_size: int = 500, materialize: bool = True
+    ) -> None:
         api_router = self.get_router("lookup", version)
-        add_lookup_available_channels(api_router=api_router, fields=fields)
+        add_lookup_available_channels(api_router=api_router, fields=fields, batch_size=batch_size, materialize=materialize)
 
-    def add_send_api(self, field: str, version: str | None = None) -> None:
+    def add_send_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         api_router = self.get_router("send", version)
         dict_basket = self._is_dict_basket_field(field=field)
 
@@ -628,13 +603,13 @@ class GatewayWebApp:
             model = self._get_field_pydantic_type(field)
             subroute_key = None
 
-        add_send_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key)
+        add_send_routes(api_router=api_router, field=field, model=model, subroute_key=subroute_key, batch_size=batch_size, materialize=materialize)
 
     def add_send_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:
         api_router = self.get_router("send", version)
         add_send_available_channels(api_router=api_router, fields=fields)
 
-    def add_state_api(self, field: str, version: str | None = None) -> None:
+    def add_state_api(self, field: str, version: str | None = None, *, batch_size: int = 500, materialize: bool = True) -> None:
         """Mount REST routes for the given state ``field``.
 
         ``field`` must be a known state name on the gateway's channels — either
@@ -673,6 +648,8 @@ class GatewayWebApp:
             subroute_key=subroute_key,
             keyby=tuple(spec.keyby) if spec.keyby else (),
             indexer=spec.indexer,
+            batch_size=batch_size,
+            materialize=materialize,
         )
 
     def add_state_available_channels(self, fields: set[str] | None = None, version: str | None = None) -> None:

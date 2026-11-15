@@ -1,11 +1,11 @@
-from .datadog import PublishDatadog
+from .datadog import PublishDatadog, PublishEventsDatadog, PublishMetricsDatadog
 from .logfire import (
     Logfire,
     PublishLogfire,
     configure_logfire_early,
     is_logfire_configured,
 )
-from .opsgenie import PublishOpsGenie
+from .opsgenie import PublishAlertsOpsGenie, PublishHeartbeatsOpsGenie, PublishOpsGenie
 from .printing import PrintChannels
 from .stdlib import (
     LogChannels,

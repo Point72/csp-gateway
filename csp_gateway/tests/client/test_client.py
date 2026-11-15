@@ -342,6 +342,78 @@ def test_api_route_defaults():
     assert ClientConfig().api_route == "/api/v1"
 
 
+def test_config_reads_environment(monkeypatch):
+    monkeypatch.setenv("HOST", "env.example.org")
+    monkeypatch.setenv("PORT", "9100")
+    monkeypatch.setenv("API_PREFIX", "gw")
+    monkeypatch.setenv("API_VERSION", "v2")
+    monkeypatch.setenv("RETURN_TYPE", "wrapper")
+    config = ClientConfig()
+    assert (config.host, config.port, config.api_route, config.return_type) == ("env.example.org", 9100, "/gw/v2", ReturnType.Wrapper)
+    assert GatewayClient().config.port == 9100
+
+
+def test_explicit_config_values_override_environment(monkeypatch):
+    monkeypatch.setenv("HOST", "env.example.org")
+    monkeypatch.setenv("PORT", "9100")
+    config = ClientConfig(port=9200)
+    assert (config.host, config.port) == ("env.example.org", 9200)
+    assert GatewayClient(port=9300).config.port == 9300
+
+
+def test_empty_environment_values_are_ignored(monkeypatch):
+    monkeypatch.setenv("PORT", "")
+    assert ClientConfig().port == 8000
+
+
+def test_environment_credentials(monkeypatch):
+    monkeypatch.setenv("BEARER_TOKEN", "env-token")
+    assert ClientConfig().bearer_token == "env-token"
+
+    # An explicit credential of either kind replaces both environment credentials
+    monkeypatch.setenv("API_KEY", "env-key")
+    monkeypatch.delenv("BEARER_TOKEN")
+    config = ClientConfig(bearer_token="token")
+    assert (config.bearer_token, config.api_key) == ("token", "")
+    client = GatewayClient(protocol="https", host="app.example.org", port=None, bearer_token="token")
+    assert (client.config.bearer_token, client.config.api_key) == ("token", "")
+
+
+def test_aliased_config_fields_read_environment(monkeypatch):
+    from pydantic import AliasChoices, ConfigDict, Field
+
+    class Aliased(ClientConfig):
+        region: str = Field("us", alias="region_name")
+
+    class AliasOnly(ClientConfig):
+        model_config = ConfigDict(populate_by_name=False)
+        region: str = Field("us", alias="region_name")
+
+    class Choices(ClientConfig):
+        region: str = Field("us", validation_alias=AliasChoices("rgn", "region_code"))
+
+    monkeypatch.setenv("REGION", "eu")
+    for cls in (Aliased, AliasOnly, Choices):
+        assert cls().region == "eu"
+    assert Aliased(region_name="ap").region == "ap"
+    assert AliasOnly(region_name="ap").region == "ap"
+    assert Choices(region_code="ap").region == "ap"
+
+
+def test_deprecated_api_route_wins_over_environment(monkeypatch):
+    monkeypatch.setenv("API_PREFIX", "gw")
+    monkeypatch.setenv("API_VERSION", "v9")
+    assert ClientConfig(api_route="/api/v3").api_route == "/api/v3"
+
+
+def test_config_subclass_fields_read_environment(monkeypatch):
+    class AppConfig(ClientConfig):
+        region: str = "us"
+
+    monkeypatch.setenv("REGION", "eu")
+    assert AppConfig().region == "eu"
+
+
 def test_api_route_follows_version_and_prefix():
     assert ClientConfig(api_version="v2").api_route == "/api/v2"
     assert ClientConfig(api_prefix="rest", api_version="v2").api_route == "/rest/v2"

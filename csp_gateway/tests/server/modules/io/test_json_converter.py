@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Annotated, Any
 
 import csp
+import numpy as np
 import orjson
 import pytest
 from csp import ts
@@ -767,3 +768,42 @@ def test_decode(after_graph_ends):
         assert len(out["my_enum_basket[MyEnum.TWO]"]) == 1
         assert len(out["my_str_basket[my_key]"]) == 1
         assert len(out["my_str_basket[my_key2]"]) == 1
+
+
+class _LeafEnum(IntEnum):
+    ONE = 1
+
+
+class _Name(str):
+    pass
+
+
+class _StringEnum(str, Enum):
+    ONE = "one"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        pytest.param("text", b'"text"', id="str"),
+        pytest.param(_Name("sub"), b'"sub"', id="str_subclass"),
+        pytest.param(7, b"7", id="int"),
+        pytest.param(True, b"true", id="bool"),
+        pytest.param(1.5, b"1.5", id="float"),
+        pytest.param(float("nan"), b"null", id="nan"),
+        pytest.param(None, b"null", id="none"),
+        pytest.param(datetime(2026, 1, 1), b'"2026-01-01T00:00:00"', id="naive_datetime"),
+        pytest.param(datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=-5))), b'"2026-01-01T00:00:00-05:00"', id="aware_datetime"),
+        pytest.param(_LeafEnum.ONE, b'"ONE"', id="int_enum"),
+        pytest.param(_StringEnum.ONE, b'"ONE"', id="str_enum"),
+        pytest.param(MyCspEnum.ZERO, b'"ZERO"', id="csp_enum"),
+        pytest.param(np.int64(7), b"7", id="numpy_int"),
+        pytest.param(np.float64(1.5), b"1.5", id="numpy_float"),
+        pytest.param(np.array([1, 2]), b"[1,2]", id="numpy_array"),
+        pytest.param(timedelta(seconds=3), b"3.0", id="timedelta"),
+        pytest.param({"a": [1, "b", _LeafEnum.ONE, {"c": None}]}, b'{"a":[1,"b","ONE",{"c":null}]}', id="nested_containers"),
+    ],
+)
+def test_convert_orjson_compatible_wire_values(value, expected):
+    converted = _convert_orjson_compatible(value)
+    assert orjson.dumps(converted, option=orjson.OPT_SERIALIZE_NUMPY) == expected

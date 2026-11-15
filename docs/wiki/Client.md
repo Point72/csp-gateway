@@ -34,6 +34,18 @@ Bearer WebSocket connections require HTTPS for non-loopback hosts. Plain HTTP is
 loopback development endpoints. Construct a new client when replacing credentials; mutating the configured token is not
 a coordinated refresh of existing REST or WebSocket connections.
 
+### Environment variables
+
+Fields not passed to `GatewayClientConfig` are read from environment variables named after the upper-cased field, following the convention of the server's `Settings` (`PORT`, `API_PREFIX`, ...): `PROTOCOL`, `HOST`, `PORT`, `API_PREFIX`, `API_VERSION`, `API_KEY`, `BEARER_TOKEN` and `RETURN_TYPE`. Explicit values take precedence, and passing either `api_key` or `bearer_token` stops both credentials being read from the environment. Subclasses of `GatewayClientConfig` read their extra fields the same way.
+
+```bash
+export HOST=gateway.example.org PORT=443 BEARER_TOKEN=...
+```
+
+```python
+client = GatewayClient()  # connects to https://gateway.example.org with the bearer token
+```
+
 ### API version
 
 Requests go to `/{api_prefix}/{api_version}`, `/api/v1` by default. Point the client at a different
@@ -887,3 +899,83 @@ await print_all()
 {'channel': 'example_list', 'data': [{'id': '2319375449093844042', 'timestamp': '2024-02-08T15:43:58.674000+00:00', 'x': 2834, 'y': '283428342834', 'internal_csp_struct': {'z': 12}, 'data': [0.5913608421402291, 0.8327500322981758, 0.7335846102808938, 0.019410934029975624, 0.5931185456840745, 0.6139373901871275, 0.22799843163499478, 0.9269009414380454, 0.18223248762349398, 0.15142314141377], 'mapping': {'2834': 2834}}]}
 {'channel': 'example', 'data': [{'id': '2319375449093844042', 'timestamp': '2024-02-08T15:43:58.674000+00:00', 'x': 2834, 'y': '283428342834', 'internal_csp_struct': {'z': 12}, 'data': [0.5913608421402291, 0.8327500322981758, 0.7335846102808938, 0.019410934029975624, 0.5931185456840745, 0.6139373901871275, 0.22799843163499478, 0.9269009414380454, 0.18223248762349398, 0.15142314141377], 'mapping': {'2834': 2834}}]}
 ```
+
+## Command line
+
+`csp-gateway-client` wraps the synchronous client in a command line tool that prints responses as JSON, ready to pipe into `jq` or other tools. It can also be run as `python -m csp_gateway.client`.
+
+```bash
+csp-gateway-client --port 8000 last example
+csp-gateway-client state example --filter x '>=' 5 | jq length
+csp-gateway-client --pretty controls stats
+csp-gateway-client send example '{"x": 1, "y": "1"}'
+csp-gateway-client stream example basket/A -n 10 | jq '.data[].x'
+```
+
+The commands mirror the client methods:
+
+| Command    | Description                                                                    |
+| :--------- | :----------------------------------------------------------------------------- |
+| `last`     | last ticked value of a channel; with no channel, lists channels                |
+| `next`     | wait for the next ticked value of a channel                                    |
+| `state`    | state of a channel, filtered with `--filter ATTR OP VALUE` or a JSON `--query` |
+| `lookup`   | look up a value by `id`                                                        |
+| `send`     | send a JSON object or list into a channel                                      |
+| `controls` | run a management control such as `heartbeat`, `stats` or `shutdown`            |
+| `stage`    | `list`, `lookup`, `new`, `add`, `remove`, `clear` or `release` staging areas   |
+| `stream`   | stream channels over the websocket, one JSON message per line                  |
+| `routes`   | fields mounted under each API group                                            |
+| `openapi`  | the server's OpenAPI specification                                             |
+
+Use `channel/key` to address one key of a dict basket. JSON arguments (`send` data, `--data`, `--query`) accept inline JSON, `@path` to a file, or `-` for stdin. Run `csp-gateway-client COMMAND --help` for the options of each command.
+
+Connection options (`--host`, `--port`, `--protocol`, `--api-prefix`, `--api-version`, `--api-key`, `--bearer-token`) map to the `GatewayClientConfig` fields of the same name; unset options are read from the [environment](#environment-variables), then fall back to the defaults. Each JSON document is printed on a single line, which suits `jq`; `--pretty` indents the output and `--sort-keys` sorts keys. Global options may be given before or after the command.
+
+Responses are written to stdout. Errors are written to stderr and exit with status 1; usage errors exit with status 2. `stream` filters out the server's heartbeat messages unless `--heartbeats` is given, and stops after `--limit` messages, after `--idle-timeout` seconds without a message, or on Ctrl-C.
+
+### Building an application CLI
+
+Applications built on csp-gateway can subclass `GatewayClientCLI` to get the same connection handling, output and built-in commands, and add their own. Commands are methods decorated with `@command`; `@argument` takes the same parameters as `ArgumentParser.add_argument`. A command receives the client and the parsed arguments and returns JSON-serializable data. Returning an iterator prints each item as its own JSON document, and returning `None` prints nothing.
+
+```python
+from csp_gateway.client import GatewayClient
+from csp_gateway.client.cli import GatewayClientCLI, argument, command
+
+
+class MyAppClient(GatewayClient):
+    def orders_for(self, account: str):
+        return [order for order in self.last("orders") if order["account"] == account]
+
+
+class MyAppCLI(GatewayClientCLI):
+    prog = "my-app"
+    description = "Query a running my-app gateway."
+    client_class = MyAppClient
+
+    # Remove a built-in command
+    openapi = None
+
+    @command(aliases=["o"])
+    @argument("account")
+    def orders(self, client, args):
+        """Orders on the last tick for one account."""
+        return client.orders_for(args.account)
+
+
+def main():
+    return MyAppCLI.main()
+```
+
+Register `main` as a console script in the application's `pyproject.toml`:
+
+```toml
+[project.scripts]
+my-app = "my_app.cli:main"
+```
+
+Other extension points:
+
+- Redefine a built-in command method (such as `last`) with `@command` to replace it.
+- Set `config_class` to a `GatewayClientConfig` subclass, and override `add_global_arguments` and `config_kwargs` (calling `super()`) to expose its extra fields as options.
+- Override `make_client` for custom client construction, `emit` for a different output format, or `add_commands` to build subparsers directly.
+- `client_class` must be a synchronous client, such as a `GatewayClient` subclass.

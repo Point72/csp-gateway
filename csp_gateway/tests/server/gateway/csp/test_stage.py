@@ -1,5 +1,7 @@
 """Tests for the staging functionality."""
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta
 from typing import Annotated
 
@@ -110,6 +112,34 @@ class TestStagingArea:
 
 
 class TestStageManager:
+    def test_concurrent_release_preserves_added_event_order(self):
+        entered = threading.Event()
+        resume = threading.Event()
+        actions = []
+
+        def on_event(events):
+            if any(action == StagingAction.ADDED for action, _, _ in events):
+                entered.set()
+                assert resume.wait(timeout=5)
+            actions.extend(action for action, _, _ in events)
+
+        stage = _StageManager(on_event=on_event)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            added = executor.submit(stage.stage_add, OrderStruct(symbol="AAPL"))
+            try:
+                assert entered.wait(timeout=2)
+                released = executor.submit(stage.stage_release)
+                try:
+                    released.result(timeout=0.2)
+                except TimeoutError:
+                    pass
+            finally:
+                resume.set()
+            staging_ids = added.result(timeout=2)
+            assert list(released.result(timeout=2)) == staging_ids
+        assert actions == [StagingAction.CREATED, StagingAction.ADDED, StagingAction.RELEASED]
+        assert stage.stage_lookup() == {}
+
     @pytest.mark.parametrize("method", ["stage_add", "stage_remove"])
     @pytest.mark.parametrize("struct", [UnkeyedOrder(), PlainOrder(), PlainOrder(id=[])])
     @pytest.mark.parametrize("populated", [False, True])
@@ -826,3 +856,60 @@ class TestStagingRequests:
         channels = GatewayChannels()
         with pytest.raises(NoProviderException, match="No staging enabled"):
             channels.get_stage_events("nope")
+
+
+class TestStagingListChannels:
+    """A staging released into a ``ts[List[T]]`` channel ticks once, with the whole staging as the list."""
+
+    def test_release_ticks_each_staging_as_one_list(self):
+        import socket
+
+        from csp_gateway import GatewaySettings, MountRestRoutes
+
+        class ListChannels(GatewayChannels):
+            orders: ts[list[OrderStruct]] = None
+
+        ticks = []
+
+        @csp.node
+        def record(x: ts[list[OrderStruct]], sink: object):
+            if csp.ticked(x):
+                sink.append([o.symbol for o in x])
+
+        class ListStagingModule(GatewayModule):
+            def connect(self, channels: ListChannels) -> None:
+                channels.set_stage(ListChannels.orders)
+                record(channels.get_channel(ListChannels.orders), ticks)
+
+            def shutdown(self) -> None:
+                pass
+
+        class ListGateway(Gateway):
+            channels_model: type[Channels] = ListChannels  # type: ignore[assignment]
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+
+        gateway = ListGateway(
+            modules=[ListStagingModule(), MountRestRoutes(force_mount_all=True)],
+            channels=ListChannels(),
+            settings=GatewaySettings(PORT=port),
+        )
+        gateway.start(rest=True, _in_test=True)
+        try:
+            first = gateway.channels.stage_add("orders", OrderStruct(symbol="AAPL"))
+            gateway.channels.stage_add("orders", OrderStruct(symbol="GOOG"), staging_ids=first)
+            gateway.channels.stage_add("orders", None)
+            second = gateway.channels.stage_add("orders", OrderStruct(symbol="MSFT"))
+            assert first != second
+
+            gateway.channels.stage_release("orders")
+            for _ in range(50):
+                if len(ticks) >= 2:
+                    break
+                threading.Event().wait(0.1)
+            assert sorted(ticks) == [["AAPL", "GOOG"], ["MSFT"]]
+        finally:
+            gateway.stop()

@@ -99,3 +99,47 @@ def test_filter_surfaces_broken_csp(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", broken_csp)
     with pytest.raises(ImportError, match="csp internal dependency is broken"):
         runpy.run_path(FILTER_PATH)
+
+
+@pytest.mark.parametrize(
+    ("sdk", "publishers"),
+    [
+        ("datadog", ("PublishDatadog", "PublishMetricsDatadog", "PublishEventsDatadog")),
+        ("opsgenie_sdk", ("PublishOpsGenie", "PublishAlertsOpsGenie", "PublishHeartbeatsOpsGenie")),
+    ],
+)
+def test_publisher_exports_allow_missing_sdk(sdk, publishers):
+    result = _run_python(
+        f"""
+        import importlib.abc
+        import sys
+
+        class MissingSDKFinder(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path, target=None):
+                if fullname == {sdk!r} or fullname.startswith({sdk!r} + "."):
+                    raise ModuleNotFoundError("SDK not installed", name={sdk!r})
+                return None
+
+        sys.meta_path.insert(0, MissingSDKFinder())
+        import csp_gateway
+
+        for name in {publishers!r}:
+            publisher = getattr(csp_gateway, name)
+            config = {{}}
+            if "ops_api_key" in publisher.model_fields:
+                config["ops_api_key"] = "test"
+            if "ops_heartbeat_name" in publisher.model_fields:
+                config["ops_heartbeat_name"] = "test"
+            try:
+                publisher(**config)
+            except ImportError as error:
+                assert name in str(error), error
+                assert "pip install" in str(error), error
+            else:
+                raise AssertionError(f"{{name}} accepted a missing SDK")
+        print("OK")
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "OK\n"

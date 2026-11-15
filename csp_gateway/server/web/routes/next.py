@@ -2,12 +2,13 @@ from typing import Any, get_origin
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException, coerce_basket_key
 
 from ..utils import get_default_responses
-from .shared import get_fully_qualified_type_name, get_next_tick, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, get_next_tick, prepare_response
 
 __all__ = (
     "add_next_available_channels",
@@ -20,7 +21,11 @@ def add_next_routes(
     field: str,
     model: BaseModel | list[BaseModel] = None,
     subroute_key: Any = None,
+    *,
+    batch_size: int = 500,
+    materialize: bool = True,
 ) -> None:
+    _validate_batch_size(batch_size)
     if model and get_origin(model) is list:
         is_list_model = True
         list_model = model
@@ -67,7 +72,7 @@ def add_next_routes(
                     detail=f"Channel not found: {field}/{key}",
                 )
 
-            return prepare_response(res, is_list_model=is_list_model)
+            return await run_in_threadpool(prepare_response, res, is_list_model=is_list_model, batch_size=batch_size, materialize=materialize)
 
         api_router.get(
             f"/{field}/{{key:path}}",
@@ -101,10 +106,13 @@ def add_next_routes(
                     status_code=404,
                     detail=f"Channel not found: {field}",
                 )
-            return prepare_response(
+            return await run_in_threadpool(
+                prepare_response,
                 res,
                 is_list_model=is_list_model,
                 is_dict_basket=True,
+                batch_size=batch_size,
+                materialize=materialize,
             )
 
         api_router.get(
@@ -149,7 +157,7 @@ def add_next_routes(
                     detail=f"Channel not found: {field}",
                 )
 
-            return prepare_response(res, is_list_model=is_list_model)
+            return await run_in_threadpool(prepare_response, res, is_list_model=is_list_model, batch_size=batch_size, materialize=materialize)
 
         api_router.get(
             f"/{field}",
