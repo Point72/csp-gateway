@@ -1,15 +1,20 @@
-"""The configuration framework the gateway is built on.
+"""Select the gateway's configuration backend using ccflow's selection rules.
 
-`lerna` is a drop-in for the parts of hydra used here, and is preferred because hydra 1.3 does not
-run on Python 3.14. Everything that would import hydra imports from here instead, so the choice is
-made once.
-
-Set ``CSP_GATEWAY_CONFIG_FRAMEWORK`` to ``hydra`` or ``lerna`` to pin one; left unset, `lerna` is
-used when it is installed. Note that this only covers the gateway's own use: `ccflow`, which
-composes the config, imports hydra directly.
+Hydra is preferred when available, otherwise Lerna is used. Set
+``CCFLOW_CONFIG_BACKEND=lerna`` to require Lerna. Selection occurs on first API access.
 """
 
+import importlib
 import os
+from functools import cache
+from types import ModuleType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import hydra
+    from hydra.core.hydra_config import HydraConfig
+
+    CONFIG_FRAMEWORK: str
 
 __all__ = (
     "CONFIG_FRAMEWORK",
@@ -17,24 +22,30 @@ __all__ = (
     "hydra",
 )
 
-_ENV_VAR = "CSP_GATEWAY_CONFIG_FRAMEWORK"
-_requested = os.environ.get(_ENV_VAR, "").strip().lower()
+_ENV_VAR = "CCFLOW_CONFIG_BACKEND"
 
-if _requested not in ("", "hydra", "lerna"):
-    raise ValueError(f"{_ENV_VAR} must be 'hydra', 'lerna', or unset, got {_requested!r}")
 
-if _requested == "hydra":
-    import hydra
-    from hydra.core.hydra_config import HydraConfig
-else:
-    try:
-        import lerna as hydra
-        from lerna.core.hydra_config import HydraConfig
-    except ImportError:
-        if _requested == "lerna":
-            raise
-        import hydra
-        from hydra.core.hydra_config import HydraConfig
+@cache
+def _get_framework() -> ModuleType:
+    requested = os.environ.get(_ENV_VAR, "").strip().lower()
+    frameworks = ("lerna",) if requested == "lerna" else ("hydra", "lerna")
+    for name in frameworks:
+        try:
+            return importlib.import_module(name)
+        except ModuleNotFoundError as error:
+            if error.name != name:
+                raise
+    if requested == "lerna":
+        raise ImportError(f"{_ENV_VAR}=lerna requires the 'lerna' package")
+    raise ImportError("Configuration requires 'hydra-core' or 'lerna'; install one to use csp-gateway")
 
-#: The name of the framework in use, for anything that needs to report it.
-CONFIG_FRAMEWORK = hydra.__name__
+
+def __getattr__(name: str):
+    if name == "CONFIG_FRAMEWORK":
+        return _get_framework().__name__
+    if name == "hydra":
+        return _get_framework()
+    if name == "HydraConfig":
+        module = importlib.import_module(f"{_get_framework().__name__}.core.hydra_config")
+        return module.HydraConfig
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
