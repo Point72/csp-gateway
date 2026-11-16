@@ -98,6 +98,9 @@ def create_pyarrow_table(key_name, data, computed_index, arrow_schema, date_conv
 def _serialize_records(data, key_name=None):
     if not data:
         return b"[]"
+    for record in data:
+        if isinstance(record, GatewayStruct):
+            record.psp_prepare()
     model = type(data[0])
     payload = None
     if issubclass(model, GatewayStruct) and model.to_json is GatewayStruct.to_json and all(type(item) is model for item in data):
@@ -378,20 +381,29 @@ class MountPerspectiveTables(GatewayModule):
     def _get_effective_config(self, table_name: str) -> TableConfig:
         """Get effective config for a table, merging tables dict entry with legacy fields and defaults."""
         config = self.tables.get(table_name)
-        if config:
-            return TableConfig(
-                channel=config.channel,
-                limit=config.limit if config.limit is not None else self.limits.get(table_name, self.default_limit),
-                index=config.index if config.index is not None else self.indexes.get(table_name, self.default_index),
-                architecture=config.architecture or self.architectures.get(table_name, self.default_architecture),
-                excluded_columns=config.excluded_columns if config.excluded_columns is not None else self.excluded_table_columns.get(table_name),
-            )
+        limit = config.limit if config and config.limit is not None else self.limits.get(table_name)
+        index = config.index if config and config.index is not None else self.indexes.get(table_name)
+        if index is None and limit is None and table_name not in self.indexes:
+            index = self.default_index
+        if index is None and limit is None:
+            limit = self.default_limit
         return TableConfig(
-            limit=self.limits.get(table_name, self.default_limit),
-            index=self.indexes.get(table_name, self.default_index),
-            architecture=self.architectures.get(table_name, self.default_architecture),
-            excluded_columns=self.excluded_table_columns.get(table_name),
+            channel=config.channel if config else None,
+            limit=limit,
+            index=index,
+            architecture=(config.architecture if config else None) or self.architectures.get(table_name, self.default_architecture),
+            excluded_columns=config.excluded_columns
+            if config and config.excluded_columns is not None
+            else self.excluded_table_columns.get(table_name),
         )
+
+    def _push_channel(self, channels: GatewayChannels, channel: str, table_name: str) -> None:
+        edge: Any = channels.get_channel(channel)
+        edges = edge.items() if isinstance(edge, dict) else [(None, edge)]
+        for key, stream in edges:
+            if get_origin(stream.tstype.typ) is list:
+                stream = csp.unroll(stream)
+            self.push_to_perspective(stream, table_name, str(getattr(key, "name", key)) if key is not None else "")
 
     def _connect_all_tables(self, channels: GatewayChannels) -> None:
         # Determine primary channels from channel_selection + server_views + tables entries without explicit channel
@@ -409,46 +421,13 @@ class MountPerspectiveTables(GatewayModule):
             if isinstance(edge, dict):
                 if not edge:
                     raise ValueError(f"No keys defined for dict basket channel {field}.")
-
-                to_flatten = []
-                for subfield in edge:
-                    to_flatten.append(channels.get_channel(field, subfield))
-
-                # save perspective schema
-                schema = channels.get_channel(field, subfield).tstype.typ.psp_schema(excluded_columns)
-
-                # Register the flattened table schema.
-                self.add_table(
-                    field,
-                    schema,
-                    limit=config.limit,
-                    index=config.index,
-                )
-
-                if hasattr(subfield, "name"):
-                    self.push_to_perspective(csp.flatten(to_flatten), field, subfield.name)
-                else:
-                    self.push_to_perspective(csp.flatten(to_flatten), field, subfield)
-
-            else:
-                ts_type = channels.get_channel(field).tstype.typ
-                if get_origin(ts_type) is list:
-                    schema = get_args(ts_type)[0].psp_schema(excluded_columns)
-                    edge = csp.unroll(channels.get_channel(field))
-                else:
-                    schema = ts_type.psp_schema(excluded_columns)
-                    edge = channels.get_channel(field)
-
-                self.add_table(
-                    field,
-                    schema,
-                    limit=config.limit,
-                    index=config.index,
-                )
-                self.push_to_perspective(
-                    edge,
-                    field,
-                )
+                edge = next(iter(edge.values()))
+            ts_type = edge.tstype.typ
+            if get_origin(ts_type) is list:
+                ts_type = get_args(ts_type)[0]
+            schema = ts_type.psp_schema(excluded_columns)
+            self.add_table(field, schema, limit=config.limit, index=config.index)
+            self._push_channel(channels, field, field)
             self._schema_insts[field] = schema
 
         # Add server-defined views
@@ -480,8 +459,8 @@ class MountPerspectiveTables(GatewayModule):
                     ts_type = channels.get_channel(channel, a_subfield).tstype.typ
                 else:
                     ts_type = edge.tstype.typ
-                    if get_origin(ts_type) is list:
-                        ts_type = get_args(ts_type)[0]
+                if get_origin(ts_type) is list:
+                    ts_type = get_args(ts_type)[0]
                 schema = ts_type.psp_schema(excluded_columns)
             else:
                 schema = self._schema_insts[channel].copy()
@@ -494,23 +473,7 @@ class MountPerspectiveTables(GatewayModule):
             )
             self._schema_insts[table_name] = schema
 
-            # Wire up data flow: push same channel data to the additional table
-            edge = channels.get_channel(channel)
-            if isinstance(edge, dict):
-                to_flatten = []
-                for subfield in edge:
-                    to_flatten.append(channels.get_channel(channel, subfield))
-                if hasattr(subfield, "name"):
-                    self.push_to_perspective(csp.flatten(to_flatten), table_name, subfield.name)
-                else:
-                    self.push_to_perspective(csp.flatten(to_flatten), table_name, subfield)
-            else:
-                ts_type = channels.get_channel(channel).tstype.typ
-                if get_origin(ts_type) is list:
-                    edge = csp.unroll(channels.get_channel(channel))
-                else:
-                    edge = channels.get_channel(channel)
-                self.push_to_perspective(edge, table_name)
+            self._push_channel(channels, channel, table_name)
 
     def add_table(self, field: str, schema, limit: int | None = None, index: str | list[str] | None = None):
         self._table_insts[field] = self._client.table(
@@ -744,13 +707,11 @@ class MountPerspectiveTables(GatewayModule):
         return sorted(names)[: self.default_layout_max_tables]
 
     def _ui_table_options(self, table_name: str) -> dict[str, Any]:
-        """The per-table `architecture`/`index`/`limit` the Spaday Perspective panel needs."""
+        """Client mirrors inherit the server table limit; pass architecture and native indexes."""
         config = self._get_effective_config(table_name)
         options: dict[str, Any] = {"architecture": config.architecture}
         if config.index is not None:
             options["index"] = config.index
-        if config.limit is not None:
-            options["limit"] = config.limit
         return options
 
     def build_default_ui_layout(self, tables: dict[str, dict[str, str]]) -> dict[str, Any] | None:
@@ -778,6 +739,8 @@ class MountPerspectiveTables(GatewayModule):
                 shared_layouts_route=app.web_app.api_path(f"{self._route}/shared-layouts", self.api_version) if self.share_layouts else None,
             ),
         )
+        app.add(Region.OVERLAY, app.find_table_dialog())
+        app.add(Region.HEADER_RIGHT, app.find_table_button(), order=89)
         default_view = self.default_layout or "__default__"
         app.seed_store(view=default_view, layout_view=default_view)
         app.add(Region.HEADER_RIGHT, app.layout_selector(layouts, value=default_view), order=90)

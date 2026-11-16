@@ -144,3 +144,83 @@ registerHandler("gateway-copy-link", async () => {
     });
   }
 });
+
+const findDialogs = new WeakMap();
+
+function findColumn(dialog) {
+  const state = findDialogs.get(dialog);
+  const column = dialog.querySelector("#gateway-find-column").value;
+  const type = state?.schema[column];
+  const input = dialog.querySelector("#gateway-find-value");
+  const boolean = dialog.querySelector("#gateway-find-boolean");
+  input.disabled = input.hidden = type === "boolean";
+  boolean.disabled = boolean.hidden = type !== "boolean";
+  input.type = { integer: "number", float: "number", date: "date", datetime: "datetime-local" }[type] || "text";
+  input.step = type === "integer" ? "1" : "any";
+  input.value = "";
+  boolean.value = "true";
+  dialog.querySelector("#gateway-find-error").textContent = "";
+}
+
+registerHandler("gateway-find-column", (_event, select) => findColumn(select.closest("dialog")));
+
+registerHandler("gateway-find-open", async (event) => {
+  if (
+    event.type === "keydown" &&
+    (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f")
+  ) return;
+  event.preventDefault();
+  const workspace = document.getElementById("gateway-workspace");
+  const dialog = document.getElementById("gateway-find-dialog");
+  if (!workspace?.viewer || !dialog || dialog.open || findDialogs.get(dialog)?.opening) return;
+  const state = { workspace, opening: true };
+  findDialogs.set(dialog, state);
+  try {
+    const saved = await workspace.saveWorkspace();
+    state.panel = workspace.viewer.getActivePanel() ?? saved.active ?? firstSelected(saved.layout);
+    const panel = saved.panels?.[state.panel];
+    if (!panel) throw new Error("Select a table before using Find.");
+    const table = await workspace.viewer.getTable({ panel: state.panel, wait: false });
+    state.schema = await table.schema();
+    state.table = panel.table;
+    dialog.querySelector("#gateway-find-title").textContent = `Find in ${panel.title || panel.table}`;
+    const columns = dialog.querySelector("#gateway-find-column");
+    columns.replaceChildren(...Object.keys(state.schema).map((column) => new Option(column, column)));
+    findColumn(dialog);
+    dialog.showModal();
+    columns.focus();
+  } catch (error) {
+    document.getElementById("gateway-toasts")?.notify({ message: String(error), tone: "danger" });
+  } finally {
+    state.opening = false;
+  }
+});
+
+registerHandler("gateway-find-apply", async (event, form) => {
+  event.preventDefault();
+  const dialog = form.closest("dialog");
+  const state = findDialogs.get(dialog);
+  if (!state || state.applying || !form.reportValidity()) return;
+  state.applying = true;
+  try {
+    const column = form.querySelector("#gateway-find-column").value;
+    const type = state.schema[column];
+    const input = form.querySelector("#gateway-find-value");
+    let value = input.value;
+    if (type === "integer" || type === "float") value = input.valueAsNumber;
+    else if (type === "boolean") value = form.querySelector("#gateway-find-boolean").value === "true";
+    else if (type === "date" || type === "datetime") value = new Date(`${input.value}${type === "date" ? "T00:00:00" : ""}`).getTime();
+    const saved = await state.workspace.saveWorkspace();
+    const panel = saved.panels?.[state.panel];
+    if (!panel) throw new Error("This viewer was closed. Reopen Find to select another viewer.");
+    if (panel.table !== state.table) throw new Error("This viewer changed tables. Reopen Find to search it.");
+    await state.workspace.restorePanel(state.panel, {
+      filter: [...(panel.filter || []).filter((clause) => clause[0] !== column), [column, "==", value]],
+    });
+    dialog.close();
+  } catch (error) {
+    form.querySelector("#gateway-find-error").textContent = String(error);
+  } finally {
+    state.applying = false;
+  }
+});

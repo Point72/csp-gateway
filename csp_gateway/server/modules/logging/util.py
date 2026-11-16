@@ -136,6 +136,10 @@ class MonitoringBase(GatewayStruct):
         raise NotImplementedError
 
     @override
+    def psp_prepare(self) -> None:
+        self.tag_str = orjson.dumps(self.tags).decode()
+
+    @override
     def psp_flatten(self, custom_jsonifier=None):
         """
         Flattens the object for PSP.
@@ -146,7 +150,7 @@ class MonitoringBase(GatewayStruct):
         Returns:
             The flattened object.
         """
-        self.tag_str = orjson.dumps(self.tags).decode()
+        self.psp_prepare()
         return super().psp_flatten(custom_jsonifier)
 
 

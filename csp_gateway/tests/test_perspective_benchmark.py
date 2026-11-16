@@ -132,7 +132,7 @@ def test_equivalence_isolates_mutating_application_hooks(monkeypatch, pipeline, 
 
     monkeypatch.setattr(workload, "records", records)
     result = ingestion.check_equivalence(workload, pipeline)
-    if pipeline in ("custom-arrow", "custom-json"):
+    if pipeline in ("custom-arrow", "custom-json", "gateway-json"):
         assert result["status"] == "equivalent", result
     else:
         assert result["status"] == "mismatch", result

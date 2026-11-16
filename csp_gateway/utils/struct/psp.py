@@ -345,6 +345,9 @@ def _json_default(obj):
 
 
 class PerspectiveUtilityMixin:
+    def psp_prepare(self) -> None:
+        """Prepare display fields before serialization into the live Perspective feed."""
+
     def psp_flatten(self, custom_jsonifier: CustomJsonifier | None = None) -> list[dict[str, Any]]:
         def _callback(obj):
             return _json_default(custom_jsonifier(obj) if custom_jsonifier else obj)

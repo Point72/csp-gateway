@@ -40,7 +40,11 @@ class Controls(GatewayStruct):
         self.unlock()
 
     @override
-    def psp_flatten(self, custom_jsonifier=None):
+    def psp_prepare(self) -> None:
         self.update_str()
+
+    @override
+    def psp_flatten(self, custom_jsonifier=None):
+        self.psp_prepare()
         res = super().psp_flatten(custom_jsonifier)
         return res

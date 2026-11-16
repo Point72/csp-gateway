@@ -537,8 +537,9 @@ The `composite`, `basket`, `excluded`, and `serializer` fixtures exercise comput
 basket metadata, nested column exclusions, and JSON-only Pydantic field serializers. For native
 JSON routes, adding gateway metadata requires parsing and reserializing the JSON; that cost is
 included in preparation time. These fixtures do not cover every possible application override.
-The harness tests also check gateway's `Controls` and `MonitoringEvent`: their `psp_flatten()` hooks
-populate display fields, which native structural flattening alone cannot reproduce.
+The harness tests also check gateway's `Controls` and `MonitoringEvent`: their display fields
+require preparation beyond structural flattening. The live feed calls `psp_prepare()` to populate
+these fields before JSON serialization.
 
 Measure the four primary pipelines with changing data and an active grouped view:
 

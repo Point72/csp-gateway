@@ -667,7 +667,7 @@ class TestTableOptions:
             "fills",
         ]
 
-    def test_module_reports_effective_architecture_index_and_limit(self):
+    def test_module_leaves_limit_inheritance_to_perspective(self):
         module = MountPerspectiveTables(
             channel_selection=["example"],
             default_architecture="server",
@@ -675,7 +675,7 @@ class TestTableOptions:
             indexes={"example": "id"},
             limits={"example": 5},
         )
-        assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id", "limit": 5}
+        assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id"}
 
     def test_multi_index_table_reports_native_index_columns(self):
         module = MountPerspectiveTables(channel_selection=["example"], indexes={"example": ["a", "b"]})

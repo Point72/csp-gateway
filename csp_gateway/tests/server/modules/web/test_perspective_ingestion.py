@@ -135,3 +135,93 @@ def test_feed_keeps_numpy_json_conversion_without_flattening():
 
     encoded = json.loads(_serialize_records([Record(values=np.array([1.0, 2.0]))]))
     assert encoded[0]["values"] == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    "options,index,limit",
+    [
+        ({"default_limit": 100, "indexes": {"records": "id"}}, "id", None),
+        ({"default_index": "id", "limits": {"records": 5}}, None, 5),
+        ({"default_index": "id", "default_limit": 100, "indexes": {"records": None}}, None, 100),
+        ({"default_index": "id", "default_limit": 100}, "id", None),
+        ({"default_limit": 100, "tables": {"records": {"index": ["id", "timestamp"]}}}, ["id", "timestamp"], None),
+        ({"default_index": "id", "tables": {"records": {"limit": 5}}}, None, 5),
+        ({"indexes": {"records": "id"}, "limits": {"records": 5}}, "id", 5),
+    ],
+)
+def test_explicit_index_or_limit_overrides_conflicting_defaults(options, index, limit):
+    config = MountPerspectiveTables(**options)._get_effective_config("records")
+    assert config.index == index
+    assert config.limit == limit
+
+
+def test_feed_prepares_display_fields_without_custom_flattening():
+    from csp_gateway.server.modules.logging.util import MonitoringEvent
+    from csp_gateway.utils.web.controls import Controls
+
+    records = [Controls(data={"enabled": True}), MonitoringEvent(title="Example", text="Example event", event_type="test", tags={"desk": "rates"})]
+    rows = json.loads(_serialize_records(records))
+    assert rows[0]["data_str"] == '{"enabled":true}'
+    assert rows[1]["tag_str"] == '{"desk":"rates"}'
+
+    class Prepared(GatewayStruct):
+        display: str = ""
+
+        def psp_prepare(self):
+            self.display = "prepared"
+
+        def psp_flatten(self, custom_jsonifier=None):
+            raise AssertionError("The live feed must use native flattening")
+
+    assert json.loads(_serialize_records([Prepared()]))[0]["display"] == "prepared"
+
+
+@pytest.mark.parametrize("lists", [False, True])
+def test_basket_streams_preserve_each_key_in_primary_and_additional_tables(lists, monkeypatch):
+    from datetime import datetime
+
+    import csp
+    from csp import ts
+
+    from csp_gateway import Gateway, GatewayChannels, GatewayModule
+
+    class Record(GatewayStruct):
+        value: int
+
+        @classmethod
+        def psp_schema(cls, excluded_columns=None):
+            return super().psp_schema(excluded_columns) | {"basket-key": str}
+
+    class Channels(GatewayChannels):
+        records: dict[str, ts[list[Record]]] = None
+
+    class ScalarChannels(GatewayChannels):
+        records: dict[str, ts[Record]] = None
+
+    class Feed(GatewayModule):
+        def dynamic_keys(self):
+            return {"records": ["a", "b"]}
+
+        def connect(self, channels):
+            for key, value in [("a", 1), ("b", 2)]:
+                record = Record(value=value)
+                channels.set_channel("records", csp.const([record] if lists else record), key)
+
+    module = MountPerspectiveTables(tables={"copy": {"channel": "records", "excluded_columns": {"id"}}})
+    monkeypatch.setattr(MountPerspectiveTables, "run_perspective", lambda self: None)
+    gateway = Gateway(channels=Channels() if lists else ScalarChannels(), modules=[Feed(), module])
+    csp.run(gateway.graph, starttime=datetime(2026, 1, 1), endtime=2 * module.update_interval)
+    batches = []
+    while not module._queue.empty():
+        batches.append(module._queue.get_nowait())
+    queue = Mock()
+    queue.get.side_effect = batches + [KeyboardInterrupt()]
+    with pytest.raises(KeyboardInterrupt):
+        pull_data_thread(queue, module._table_insts)
+    for table in module._table_insts.values():
+        view = table.view()
+        try:
+            assert {(row["basket-key"], row["value"]) for row in view.to_records()} == {("a", 1), ("b", 2)}
+        finally:
+            view.delete()
+            table.delete()

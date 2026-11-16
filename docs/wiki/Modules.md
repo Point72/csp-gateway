@@ -959,9 +959,9 @@ When migrating from gateway's Arrow feed:
   `index`; remove references to that column from saved layouts. Distinct tuples remain distinct,
   including values containing hyphens.
 - The feed no longer calls custom `psp_flatten()` overrides. Move required display-field
-  formatting into Pydantic field/model serializers or the producing application. In particular,
-  the `Controls.data_str` and `MonitoringEvent.tag_str` hooks no longer populate those fields
-  during ingestion.
+  formatting into `psp_prepare()`, Pydantic field/model serializers, or the producing application.
+  The feed calls `psp_prepare()` before serializing each record. Gateway's Controls and monitoring
+  records use this hook to preserve `data_str` and `tag_str`.
 - Gateway enum JSON defaults to member names. Explicit serializers remain authoritative; see
   [enum JSON serialization](Develop#enum-json-serialization).
 
