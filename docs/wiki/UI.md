@@ -8,9 +8,24 @@
 Perspective is an interactive analytics and data visualization component, which is especially well-suited for large and/or streaming datasets.
 See the [Perspective Documentation](https://perspective-dev.github.io/guide/) (and the media section in particular) for more information on how to use Perspective.
 
+The Spaday UI uses the page theme for all Perspective panels, including filter-source panels.
+`GatewayUI.perspective_panel(master_theme=...)` still accepts the argument but ignores it and
+emits a `DeprecationWarning`. Remove the argument from custom UI code.
+
 ## Top Bar
 
 The top bar has several buttons on the righthand side for selecting/saving/downloading layouts, toggling light/dark mode, and opening the settings drawer.
+
+### Find in a table
+
+With the Spaday UI provider, select a Perspective viewer and click **Find**, or press Ctrl+F
+(Cmd+F on macOS) while the table has focus. Choose a column, enter an exact value, and click
+**Apply filter**. Gateway applies an equality filter to that viewer, including rows outside
+the visible grid. Filters on other columns remain unchanged. Cancel closes the dialog without
+changing the view. Use Perspective's settings to edit or remove filters afterward.
+
+Find belongs to gateway's UI. It uses the viewer's table schema and the peer's `restorePanel()`
+API; applications embedding spaday-perspective can provide their own search controls.
 
 ### Layouts
 

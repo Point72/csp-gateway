@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import math
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
@@ -555,9 +556,11 @@ class GatewayUI:
         ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
         worker rather than reading it off the websocket. ``channels`` supplies configurations for
         channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
-        ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
+        ``master_theme`` is deprecated and ignored; all panels follow the page theme.
         ``shared_layouts_route`` serves layouts by id; a page opened with ``?layout=<id>`` starts on it.
         """
+        if master_theme is not None:
+            warnings.warn("master_theme is deprecated and ignored; all panels follow the page theme.", DeprecationWarning, stacklevel=2)
         tables = list(tables or [])
         self._workspace_tables = list(tables)
         options = table_options or {}
@@ -622,7 +625,6 @@ class GatewayUI:
                         "tables": table_specs,
                         "layout": layout_expr,
                         "channels": channels or {},
-                        "master_theme": master_theme,
                     }
                 ),
             )
@@ -662,6 +664,60 @@ class GatewayUI:
                 ),
             )
             .on("perspective-ready", SetField(_PERSPECTIVE_READY, True))
+            .on("keydown", NamedJs("gateway-find-open"))
+        )
+
+    def find_table_button(self) -> Any:
+        """Find an exact value in the active Perspective viewer, including rows outside the viewport."""
+        return (
+            WaButton(appearance="plain", title="Find in table (Ctrl/Cmd+F)")
+            .text("Find")
+            .compute("disabled", not_(field(_PERSPECTIVE_READY)))
+            .on("click", NamedJs("gateway-find-open"))
+        )
+
+    def find_table_dialog(self) -> Any:
+        """Application-owned column filter UI; Perspective supplies schema and filter operations."""
+        return element(
+            "dialog",
+            element("h2", id="gateway-find-title").text("Find in table"),
+            element("p").text("Filter by an exact value. Filters on other columns stay unchanged."),
+            element(
+                "form",
+                element("label", htmlFor="gateway-find-column").text("Column"),
+                element("select", id="gateway-find-column", required=True).on("change", NamedJs("gateway-find-column")),
+                element("label", htmlFor="gateway-find-value").text("Equals"),
+                element("input", id="gateway-find-value", required=True),
+                element(
+                    "select",
+                    element("option", value="true").text("true"),
+                    element("option", value="false").text("false"),
+                    id="gateway-find-boolean",
+                    hidden=True,
+                    disabled=True,
+                    **{"aria-label": "Equals"},
+                ),
+                element("p", id="gateway-find-error", role="alert").style(color="var(--wa-color-danger-on-normal)"),
+                Row(
+                    WaButton(type="button").text("Cancel").on("click", Invoke(by_id("gateway-find-dialog"), "close")),
+                    WaButton(type="button", variant="brand").text("Apply filter").on("click", Invoke(by_id("gateway-find-form"), "requestSubmit")),
+                    justify="end",
+                    gap="0.5rem",
+                ),
+                id="gateway-find-form",
+            )
+            .style(display="grid", gap="0.5rem")
+            .on("submit", NamedJs("gateway-find-apply")),
+            id="gateway-find-dialog",
+            **{"aria-labelledby": "gateway-find-title"},
+        ).style(
+            width="min(26rem, calc(100vw - 2rem))",
+            box_sizing="border-box",
+            padding="1.5rem",
+            border="1px solid var(--wa-color-surface-border)",
+            border_radius="0.5rem",
+            background="var(--wa-color-surface-default)",
+            color="var(--wa-color-text-normal)",
         )
 
     def focus_table_action(self, *, event_path: str = "detail.id") -> Any:
@@ -699,7 +755,7 @@ class GatewayUI:
     def save_layout_button(self) -> Any:
         """A header button that saves the current Perspective workspace in the browser.
 
-        `saveClean` strips the transient fields (theme, column size overrides) before the layout is
+        `saveClean` removes connection details and resolved tables before the layout is
         persisted to localStorage. Saving updates the custom layout and selects it.
         """
         return (

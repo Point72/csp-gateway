@@ -330,23 +330,27 @@ def _psp_schema(cls, excluded_columns: ExcludedColumns | None = None) -> tuple[d
     return schema, enum_columns
 
 
+def _json_default(obj):
+    if isinstance(obj, ndarray):
+        return obj.tolist()
+    elif isinstance(obj, set):
+        return list(obj)
+    elif isinstance(obj, (PyEnum, CspEnum)):
+        return obj.name
+    elif isinstance(obj, _thread.LockType):
+        return "<Lock>"
+    else:
+        log.warning(f"No serializer for {obj}, converting to ''")
+        return ""
+
+
 class PerspectiveUtilityMixin:
+    def psp_prepare(self) -> None:
+        """Prepare display fields before serialization into the live Perspective feed."""
+
     def psp_flatten(self, custom_jsonifier: CustomJsonifier | None = None) -> list[dict[str, Any]]:
         def _callback(obj):
-            """Callback helper that either calls custom_jsonifier or a default set of conversions"""
-            if custom_jsonifier:
-                obj = custom_jsonifier(obj)
-            if isinstance(obj, ndarray):
-                return obj.tolist()
-            elif isinstance(obj, set):
-                return list(obj)
-            elif isinstance(obj, (PyEnum, CspEnum)):
-                return obj.name
-            elif isinstance(obj, _thread.LockType):
-                return "<Lock>"
-            else:
-                log.warning(f"No serializer for {obj}, converting to ''")
-                return ""
+            return _json_default(custom_jsonifier(obj) if custom_jsonifier else obj)
 
         json_obj = orjson.loads(self.to_json(_callback))
         flat_obj = psp_flatten(json_obj)

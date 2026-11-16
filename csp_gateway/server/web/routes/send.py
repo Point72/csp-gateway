@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from csp_gateway.utils import NoProviderException
 
 from ..utils import get_default_responses
-from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response, response_model_for
 
 log = logging.getLogger(__name__)
 
@@ -88,12 +88,14 @@ def add_send_routes(
         api_router.post(
             f"/{field}/{{key:path}}",
             responses=get_default_responses(),
+            response_model=response_model_for(list_model),
             name=f"Send {field} by key",
             openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(send)
         api_router.post(
             "/{}/{{key:path}}".format(field.replace("_", "-")),
             responses=get_default_responses(),
+            response_model=response_model_for(list_model),
             name=f"Send {field} by key",
             include_in_schema=False,
         )(send)
@@ -125,12 +127,14 @@ def add_send_routes(
         api_router.post(
             f"/{field}",
             responses=get_default_responses(),
+            response_model=response_model_for(list_model),
             name=f"Send {field}",
             openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(send)
         api_router.post(
             "/{}".format(field.replace("_", "-")),
             responses=get_default_responses(),
+            response_model=response_model_for(list_model),
             name=f"Send {field}",
             include_in_schema=False,
         )(send)
@@ -182,12 +186,14 @@ def add_send_routes(
         api_router.post(
             f"/{field}",
             responses=get_default_responses(),
+            response_model=response_model_for(list_model),
             name=f"Send {field}",
             openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(send)
         api_router.post(
             "/{}".format(field.replace("_", "-")),
             responses=get_default_responses(),
+            response_model=response_model_for(list_model),
             name=f"Send {field}",
             include_in_schema=False,
         )(send)

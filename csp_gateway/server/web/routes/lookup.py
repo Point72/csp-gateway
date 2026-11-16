@@ -7,7 +7,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils.struct import global_lookup
 
 from ..utils import get_default_responses
-from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response, response_model_for
 
 __all__ = (
     "add_lookup_available_channels",
@@ -46,7 +46,7 @@ def add_lookup_routes(
     api_router.get(
         f"/{field}/{{id:path}}",
         responses=get_default_responses(),
-        response_model=list[model],
+        response_model=response_model_for(list[model]),
         name=f"Lookup {field}",
         openapi_extra={"type_": fq_type_name} if fq_type_name else None,
     )(lookup)
@@ -54,7 +54,7 @@ def add_lookup_routes(
     api_router.get(
         "/{}/{{id:path}}".format(field.replace("_", "-")),
         responses=get_default_responses(),
-        response_model=list[model],
+        response_model=response_model_for(list[model]),
         include_in_schema=False,
     )(lookup)
 

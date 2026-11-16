@@ -8,7 +8,7 @@ from csp_gateway.server import ChannelSelection
 from csp_gateway.utils import NoProviderException, coerce_basket_key
 
 from ..utils import get_default_responses
-from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response
+from .shared import _validate_batch_size, get_fully_qualified_type_name, prepare_response, response_model_for
 
 __all__ = (
     "add_last_available_channels",
@@ -73,7 +73,7 @@ def add_last_routes(
         api_router.get(
             f"/{field}/{{key:path}}",
             responses=get_default_responses(),
-            response_model=list_model,
+            response_model=response_model_for(list_model),
             name=f"Get Last {field} by key",
             openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_last)
@@ -81,7 +81,7 @@ def add_last_routes(
         api_router.get(
             "/{}/{{key:path}}".format(field.replace("_", "-")),
             responses=get_default_responses(),
-            response_model=list_model,
+            response_model=response_model_for(list_model),
             include_in_schema=False,
         )(get_last)
 
@@ -111,7 +111,7 @@ def add_last_routes(
         api_router.get(
             f"/{field}",
             responses=get_default_responses(),
-            response_model=list_model,  # type: ignore[valid-type]
+            response_model=response_model_for(list_model),  # type: ignore[valid-type]
             name=f"Get Last {field}",
             description=f"Response type: {fq_type_name}" if fq_type_name else None,
         )(get_last_basket)
@@ -119,7 +119,7 @@ def add_last_routes(
         api_router.get(
             "/{}".format(field.replace("_", "-")),
             responses=get_default_responses(),
-            response_model=list_model,  # type: ignore[valid-type]
+            response_model=response_model_for(list_model),  # type: ignore[valid-type]
             include_in_schema=False,
         )(get_last_basket)
 
@@ -152,7 +152,7 @@ def add_last_routes(
         api_router.get(
             f"/{field}",
             responses=get_default_responses(),
-            response_model=list_model,
+            response_model=response_model_for(list_model),
             name=f"Get Last {field}",
             openapi_extra={"type_": fq_type_name} if fq_type_name else None,
         )(get_last)
@@ -160,7 +160,7 @@ def add_last_routes(
         api_router.get(
             "/{}".format(field.replace("_", "-")),
             responses=get_default_responses(),
-            response_model=list_model,
+            response_model=response_model_for(list_model),
             include_in_schema=False,
         )(get_last)
 
