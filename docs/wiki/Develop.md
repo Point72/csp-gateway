@@ -15,7 +15,7 @@ class ExampleModule(GatewayModule):
 
     def rest(self, app: "GatewayWebApp") -> None:
         # add APIs to `app`
-        # GatewayWebApp is a subclass of FastAPI
+        # GatewayWebApp wraps a FastAPI application
         ...
 
     def shutdown(self) -> None:
@@ -103,6 +103,39 @@ version = app.web_app.api_version_for("send", self.api_version)
 That returns `self.api_version` when it is set, and otherwise the version those routes were actually
 mounted under. Every module's `rest()` runs before any module's `ui()`, so the answer is complete by
 the time a `ui()` hook asks.
+
+### Customizing the FastAPI application
+
+`GatewayWebApp` wraps the underlying FastAPI application. A module can access it from its `rest()`
+hook with `get_fastapi()`. That hook runs before the web application is finalized and starts serving.
+
+For example, a module can add FastAPI middleware and application state:
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+
+
+class ExampleModule(GatewayModule):
+    def connect(self, channels: ExampleGatewayChannels):
+        pass
+
+    def rest(self, app: GatewayWebApp) -> None:
+        fastapi_app: FastAPI = app.get_fastapi()
+        fastapi_app.state.service_name = "example-gateway"
+        fastapi_app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=["example.com", "*.example.com"],
+        )
+```
+
+Replace the example hosts with the hosts your gateway serves. Prefer `app.get_router("api", self.api_version)` for routes, so they follow the module's API version. Use the FastAPI instance for
+customizations not exposed by `GatewayWebApp`, such as standard middleware or application state.
+Customize the existing instance rather than replacing it: the gateway owns its lifespan and mounts
+the versioned routers when the app is finalized.
+
+Use `GatewaySettings` for metadata, CORS origins, and deployment paths when a corresponding setting
+exists (for example, `TITLE`, `DESCRIPTION`, `VERSION`, `BACKEND_CORS_ORIGINS`, and `ROOT_PATH`).
 
 ## Extending the UI
 
