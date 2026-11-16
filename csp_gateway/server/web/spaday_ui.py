@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import math
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field as _dc_field
 from hashlib import sha256
@@ -555,9 +556,11 @@ class GatewayUI:
         ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
         worker rather than reading it off the websocket. ``channels`` supplies configurations for
         channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
-        ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
+        ``master_theme`` is deprecated and ignored; all panels follow the page theme.
         ``shared_layouts_route`` serves layouts by id; a page opened with ``?layout=<id>`` starts on it.
         """
+        if master_theme is not None:
+            warnings.warn("master_theme is deprecated and ignored; all panels follow the page theme.", DeprecationWarning, stacklevel=2)
         tables = list(tables or [])
         self._workspace_tables = list(tables)
         options = table_options or {}
@@ -622,7 +625,6 @@ class GatewayUI:
                         "tables": table_specs,
                         "layout": layout_expr,
                         "channels": channels or {},
-                        "master_theme": master_theme,
                     }
                 ),
             )

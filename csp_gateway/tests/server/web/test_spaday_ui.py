@@ -643,16 +643,23 @@ class TestTableOptions:
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
 
-    @pytest.mark.parametrize("master_theme", [None, "Sidebar"])
-    def test_channel_defaults_and_storage_are_configured_from_python(self, master_theme):
+    @pytest.mark.filterwarnings("error::DeprecationWarning")
+    def test_channel_defaults_and_storage_are_configured_from_python(self):
         ui = _bare_ui()
         channels = {"orders": {"table": "orders", "columns": ["quantity"]}}
-        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels, master_theme=master_theme)
+        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels)
         assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["channels"]["value"] == channels
-        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["master_theme"]["value"] == master_theme
+        assert "master_theme" not in panel.to_node()["bindings"]["config"]["compute"]["fields"]
         assert ui._store_persistence == {"saved_layout": "csp_gateway_demo_config"}
         ui.persist_store(legacy_layout="old-layout")
         assert ui._store_persistence["legacy_layout"] == "old-layout"
+
+    @pytest.mark.parametrize("master_theme", ["Sidebar", ""])
+    def test_master_theme_is_deprecated_and_uses_page_theme(self, master_theme):
+        with pytest.warns(DeprecationWarning, match="master_theme is deprecated and ignored; all panels follow the page theme"):
+            panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"], master_theme=master_theme)
+        default = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
+        assert panel.to_node()["bindings"] == default.to_node()["bindings"]
 
     def test_options_are_merged_into_the_table_spec(self):
         panel = _bare_ui().perspective_panel(
