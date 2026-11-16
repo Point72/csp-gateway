@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from csp_gateway.utils import Controls
 
 from ..utils import get_default_responses
-from .shared import get_fully_qualified_type_name, prepare_response
+from .shared import get_fully_qualified_type_name, prepare_response, response_model_for
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
         @api_router.get(
             "/heartbeat",
             responses=get_default_responses(),
-            response_model=Controls,
+            response_model=response_model_for(Controls),
             name="Get Heartbeat",
             openapi_extra={"type_": _CONTROLS_FQ_TYPE_NAME} if _CONTROLS_FQ_TYPE_NAME else None,
         )
@@ -56,7 +56,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
         @api_router.get(
             "/stats",
             responses=get_default_responses(),
-            response_model=Controls,
+            response_model=response_model_for(Controls),
             name="Get CSP Stats",
             openapi_extra={"type_": _CONTROLS_FQ_TYPE_NAME} if _CONTROLS_FQ_TYPE_NAME else None,
         )
@@ -91,7 +91,7 @@ def add_controls_routes(api_router: APIRouter, field: str) -> None:
         @api_router.post(
             "/shutdown",
             responses=get_default_responses(),
-            response_model=Controls,
+            response_model=response_model_for(Controls),
             name="Shutdown Server",
             openapi_extra={"type_": _CONTROLS_FQ_TYPE_NAME} if _CONTROLS_FQ_TYPE_NAME else None,
         )

@@ -2,7 +2,7 @@ import asyncio
 from typing import Any, get_args, get_origin
 
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from csp_gateway.utils.struct.base import type_adapter_for
 
@@ -10,7 +10,42 @@ __all__ = (
     "get_fully_qualified_type_name",
     "get_next_tick",
     "prepare_response",
+    "response_model_for",
 )
+
+
+def response_model_for(model):
+    """Describe prepare_response's per-model alias policy without changing request models."""
+
+    def copy_schema(value, by_alias=False):
+        if isinstance(value, list):
+            return [copy_schema(item, by_alias) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if value.get("type") == "model":
+            by_alias = value.get("config", {}).get("serialize_by_alias", False)
+        is_schema = isinstance(value.get("type"), str)
+        result = {key: item if is_schema and key in ("default", "metadata", "config") else copy_schema(item, by_alias) for key, item in value.items()}
+        # Keep these definitions separate from FastAPI responses serialized with by_alias=True.
+        if is_schema and "ref" in value:
+            result["ref"] = "gateway_response." + value["ref"]
+        if value.get("type") == "definition-ref":
+            result["schema_ref"] = "gateway_response." + value["schema_ref"]
+        if value.get("type") == "model-fields" and not by_alias:
+            for field in result["fields"].values():
+                field.pop("serialization_alias", None)
+            for field in result.get("computed_fields", []):
+                field.pop("alias", None)
+        return result
+
+    schema = copy_schema(TypeAdapter(model).core_schema)
+
+    class ResponseModel:
+        @classmethod
+        def __get_pydantic_core_schema__(cls, _source, _handler):
+            return schema
+
+    return ResponseModel
 
 
 def get_fully_qualified_type_name(model: BaseModel | list[BaseModel] | None) -> str:

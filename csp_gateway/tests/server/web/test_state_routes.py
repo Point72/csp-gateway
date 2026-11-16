@@ -176,7 +176,8 @@ class TestAsyncClientState:
         pandas = await AsyncClient(ClientConfig(host="127.0.0.1", port=port, return_type=ReturnType.Pandas)).state("fills")
         assert len(pandas) == _N_FILLS and "comment" not in pandas.columns
         polars = await AsyncClient(ClientConfig(host="127.0.0.1", port=port, return_type=ReturnType.Polars)).state("fills")
-        assert polars.height == _N_FILLS
+        assert polars.height == _N_FILLS and "comment" not in polars.columns
+        assert polars["note"].to_list() == [""] * _N_FILLS
 
     @pytest.mark.asyncio
     async def test_concurrent_state_queries(self, fill_port):
