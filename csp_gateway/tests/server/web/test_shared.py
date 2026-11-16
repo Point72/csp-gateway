@@ -418,7 +418,9 @@ def test_list_fast_path_runs_and_chunks(monkeypatch):
     calls = []
     to_json = base._BoundSerializer.to_json
     monkeypatch.setattr(
-        base._BoundSerializer, "to_json", lambda self, records, exclude: calls.append(len(records)) or to_json(self, records, exclude)
+        base._BoundSerializer,
+        "to_json",
+        lambda self, records, exclude, **kwargs: calls.append(len(records)) or to_json(self, records, exclude, **kwargs),
     )
     res = [_Required.from_field_values(id=str(i)) for i in range(20)] + [_Required(a=i) for i in range(20)]
     assert _Required._dump_json_list(res) == _old_dump(res)

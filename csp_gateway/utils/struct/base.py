@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationInfo, field_s
 from pydantic_core import SchemaSerializer, core_schema
 
 from ..id_generator import get_counter
+from .enum_serialization import enum_names_annotation
 from .psp import PerspectiveUtilityMixin, model_metadata
 
 IdType = str
@@ -52,9 +53,6 @@ _WRAPPED_MARKER = "csp_gateway_validated"
 
 # Serialization-context key asking the timestamp serializer to keep the stored offset.
 _PRESERVE_TZ = "csp_gateway_preserve_tz"
-
-# FastAPI collects component schemas under #/components/schemas.
-_REF_TEMPLATE = "#/components/schemas/{model}"
 
 
 def global_lookup(id: IdType, cls: type[T] | None = None) -> T | None:
@@ -469,7 +467,12 @@ class GatewayStruct(
         caller set from one that defaulted.
         """
         relaxed = set()
+        enums_changed = False
         for name, field in cls.model_fields.items():
+            annotation = enum_names_annotation(field.annotation)
+            if annotation != field.annotation:
+                field.annotation = annotation
+                enums_changed = True
             if field.is_required():
                 # Nullable, not merely defaulted: csp accepted an explicit ``None`` for a field it had
                 # no value for, and callers pass one to mean "absent". Constraints stay attached to the
@@ -491,7 +494,7 @@ class GatewayStruct(
         # A field relaxed on a base class is still implicit here.
         inherited = frozenset().union(*(getattr(base, "__gateway_implicit_fields__", frozenset()) for base in cls.__mro__[1:]))
         cls.__gateway_implicit_fields__ = frozenset(relaxed) | (inherited & cls.model_fields.keys())
-        if relaxed:
+        if relaxed or enums_changed:
             cls.model_rebuild(force=True, raise_errors=False)
 
     def _implicitly_unset(self) -> set[str]:
@@ -512,7 +515,7 @@ class GatewayStruct(
         }
 
     @classmethod
-    def _dump_json_list(cls, records: list[Self]) -> bytes | None:
+    def _dump_json_list(cls, records: list[Self], *, context: Any = None) -> bytes | None:
         """Serialize records that are all exactly ``cls`` as a JSON array, byte-identical to dumping each.
 
         Each record would otherwise call back into Python through `_drop_implicitly_unset`, and
@@ -534,14 +537,14 @@ class GatewayStruct(
         for i, record in enumerate(records):
             record_unset = maybe_unset - record.__pydantic_fields_set__
             if i > start and (record_unset != unset or i - start == _DUMP_CHUNK):
-                pieces += (serializers[plain].to_json(records[start:i], exclude=unset or None)[1:-1], b",")
+                pieces += (serializers[plain].to_json(records[start:i], exclude=unset or None, context=context)[1:-1], b",")
                 start, plain = i, True
             unset = record_unset
             if plain and has_timestamp:
                 timestamp = record.__dict__.get("timestamp")
                 plain = timestamp is None or (type(timestamp) is datetime and timestamp.tzinfo is None)
         if records:
-            pieces.append(serializers[plain].to_json(records[start:], exclude=unset or None)[1:-1])
+            pieces.append(serializers[plain].to_json(records[start:], exclude=unset or None, context=context)[1:-1])
         pieces.append(b"]")
         # Exact bytes pieces, so CPython copies them into the response without holding the GIL.
         return b"".join(pieces)
@@ -560,14 +563,14 @@ class GatewayStruct(
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema_, handler):
-        json_schema = handler(core_schema_)
-        # `_drop_implicitly_unset` is a wrap serializer, which leaves pydantic unable to describe the
-        # serialized shape -- it degrades to a bare object, and FastAPI then documents every endpoint
-        # that returns a struct as `additionalProperties: true`. Serializing only ever omits fields,
-        # so the validated shape describes it.
-        if handler.mode == "serialization" and "properties" not in json_schema:
-            json_schema.update(cls.model_json_schema(mode="validation", ref_template=_REF_TEMPLATE))
-        return json_schema
+        if handler.mode == "serialization":
+            schema, model = _unwrap_copy(core_schema_)
+            if model.get("serialization", {}).get("function") is GatewayStruct._drop_implicitly_unset:
+                # This wrapper only omits unset fields. Describe the underlying serializers so
+                # enum names and reference definitions match the actual JSON output.
+                del model["serialization"]
+                return handler(schema)
+        return handler(core_schema_)
 
     @classmethod
     def metadata(cls, typed: bool = False) -> dict[str, Any]:
@@ -714,8 +717,8 @@ class _BoundSerializer:
         self._serializer = serializer
         self._by_alias = by_alias
 
-    def to_json(self, records: list, exclude: set[str] | None) -> bytes:
-        return self._serializer.to_json(records, by_alias=self._by_alias, exclude={"__all__": exclude} if exclude else None)
+    def to_json(self, records: list, exclude: set[str] | None, *, context: Any = None) -> bytes:
+        return self._serializer.to_json(records, by_alias=self._by_alias, exclude={"__all__": exclude} if exclude else None, context=context)
 
 
 def is_gateway_struct_like(cls) -> bool:

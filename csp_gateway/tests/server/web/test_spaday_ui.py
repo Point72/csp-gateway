@@ -677,11 +677,10 @@ class TestTableOptions:
         )
         assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id", "limit": 5}
 
-    def test_multi_index_table_reports_the_computed_index(self):
+    def test_multi_index_table_reports_native_index_columns(self):
         module = MountPerspectiveTables(channel_selection=["example"], indexes={"example": ["a", "b"]})
-        module._computed_indexes["example"] = ("a-b", ["a", "b"])
 
-        assert module._ui_table_options("example")["index"] == "a-b"
+        assert module._ui_table_options("example")["index"] == ["a", "b"]
 
 
 class TestActionFailureToast:

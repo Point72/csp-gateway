@@ -167,6 +167,39 @@ def dynamic_channels(self) -> Optional[Dict[str, Union[Type[GatewayStruct], Type
     """
 ```
 
+### Enum JSON serialization
+
+`GatewayStruct` serializes typed Python and CSP enum fields by member name. This also applies
+inside typed lists, dictionaries, tuples, sets, nested gateway structs, and CSP NumPy enum arrays.
+Validation accepts names and existing enum values; Python-mode dumps retain enum objects.
+If one member's name equals another member's string value, the existing value takes precedence
+on input. Avoid such enums when JSON must round-trip unambiguously.
+
+```python
+from enum import IntEnum
+
+from csp_gateway import GatewayStruct
+
+
+class Status(IntEnum):
+    READY = 1
+    DONE = 2
+
+
+class Order(GatewayStruct):
+    status: Status
+
+
+assert Order(status=1).model_dump(mode="json")["status"] == "READY"
+assert Order.model_validate_json('{"status":"READY"}').status is Status.READY
+```
+
+Explicit Pydantic field/model serializers and `Annotated` serializers take precedence. A field
+serializer can inspect instance attributes to choose names or values per record. Ordinary
+Pydantic `BaseModel` classes, including those nested inside gateway structs, keep their own
+serialization policy. Untyped fields such as `Any` do not acquire enum-name serialization from
+their runtime values.
+
 ### Custom Struct Validators
 
 `GatewayStruct` can have **validators** attached to a struct type. They run automatically during pydantic validation — whenever a struct is deserialized from the REST `/send` endpoint, from `type_adapter().validate_python(...)`, from JSON snapshot replay, or from Kafka and filedrop ingestion — and for nested structs when a containing struct is validated. They do **not** run on native (non-pydantic) Python construction (`MyStruct(...)`).
@@ -460,3 +493,102 @@ def test_basket_channel():
 1. **Use `print_ticked()` and `print_tick_counts()`** - Helpful for debugging test failures
 1. **Test edge cases with timing** - Use `delay()` to test time-dependent behavior
 1. **Keep tests focused** - Test one behavior per test function
+
+## How to compare Perspective ingestion pipelines
+
+Install the development and server dependencies in an isolated environment with Perspective
+5.9.1 or later and a compatible spaday-perspective version. The benchmark retains the former
+Arrow ingestion path as a comparison against the current JSON feed.
+
+The primary comparison keeps per-record JSON serialization and varies the flattening engine
+and the input format delivered to Perspective:
+
+| Pipeline       | Processing                                                                     |
+| -------------- | ------------------------------------------------------------------------------ |
+| `custom-arrow` | Pydantic JSON → gateway flattening → JSONL → PyArrow → Arrow IPC → Perspective |
+| `native-arrow` | Pydantic JSONL → nested PyArrow table → Arrow IPC → Perspective flattening     |
+| `custom-json`  | Pydantic JSON → gateway flattening → JSONL → Perspective                       |
+| `native-json`  | Pydantic JSONL → Perspective flattening                                        |
+
+Run the output-equivalence checks first:
+
+```bash
+python -m csp_gateway.benchmarks.perspective \
+    --check-only --repeats 1 --counts 3 \
+    --shapes flat nested lists empty-lists maps nullable temporal enums custom composite basket excluded serializer \
+    --output .benchmarks/perspective-append-check.json
+```
+
+Repeat with `--indexed` to check updates by row ID. Each candidate starts with an empty table
+and applies three batches, comparing schemas, row counts, and values with the former Arrow
+path after each batch. Fixtures with symbol and numeric columns also compare grouped totals.
+Row order is ignored; duplicate rows are preserved. Mismatches and native
+errors are recorded in the report, and those cases are excluded from timing. Equivalence to
+the former behavior does not establish that behavior is desirable. Each path receives separate
+record objects because application flattening hooks can mutate their input.
+
+The list fixture uses independent lists of lengths two and three. Perspective is configured
+with `list_flatten="cartesian"`, `struct_flatten="pivot"`, and `map_flatten="pivot"`. The map
+fixture declares its known flattened keys explicitly; gateway's generic dictionary schema
+does not describe arbitrary map keys. The custom fixture changes prices through an overridden
+`psp_flatten()`, testing application behavior beyond structural flattening.
+
+The `composite`, `basket`, `excluded`, and `serializer` fixtures exercise computed string indexes,
+basket metadata, nested column exclusions, and JSON-only Pydantic field serializers. For native
+JSON routes, adding gateway metadata requires parsing and reserializing the JSON; that cost is
+included in preparation time. These fixtures do not cover every possible application override.
+The harness tests also check gateway's `Controls` and `MonitoringEvent`: their `psp_flatten()` hooks
+populate display fields, which native structural flattening alone cannot reproduce.
+
+Measure the four primary pipelines with changing data and an active grouped view:
+
+```bash
+python -m csp_gateway.benchmarks.perspective \
+    --shapes flat nested lists --counts 1000 10000 100000 \
+    --seconds 3 --repeats 2 --grouped \
+    --output .benchmarks/perspective-append-timings.json
+```
+
+Run the command again with `--indexed` and a different output filename. Omit `--grouped`
+for tables without an active view. Each case runs in a fresh process; repeat order reverses
+the pipeline order. Keep other benchmarks and development servers stopped during measurement.
+
+Reports include dependency versions, Arrow's thread count, median preparation and ingestion
+time, input-record throughput, payload size, and CSP engine lateness. The engine ticks at
+200 Hz and performs 0.25 ms of Python CPU work per tick. An idle measurement precedes ingestion
+in each process. Engine lateness measures responsiveness, not GIL ownership directly.
+Preparation includes serialization, flattening, conversion, and IPC construction as applicable.
+Record construction, schema setup, correctness checks, queue delay, network transfer, and browser
+rendering are outside the timed region. Small-case equivalence is a prerequisite for timing;
+the benchmark does not check every row of each large timed batch.
+
+Evaluate additional approaches separately by including `batch-json` or `typed-arrow` in
+`--pipelines`. `batch-json` uses gateway's existing optimized REST batch serializer and sends a
+JSON array to Perspective. `typed-arrow` dumps Python dictionaries and constructs typed Arrow
+record batches of 5,000 records before sending IPC bytes. These alter serialization as well as
+ingestion, so report their results separately from the primary matrix. The typed-Arrow candidate
+uses Python-mode serialization and does not preserve JSON-only field serializers.
+
+Include `gateway-json` in `--pipelines` to measure the current feed's serializer. It batches
+homogeneous gateway records where their serializers permit it, preserves explicit `to_json()`
+overrides, and adds basket metadata before sending JSON to Perspective. Its composite fixture
+uses native multi-column indexes without the former synthetic `index` column. That schema
+difference, retained omitted values, and skipped custom flattening hooks are deliberate migration
+changes; the equivalence report still marks them as differences and excludes them from timing.
+
+Local measurements on 2026-11-15 used Perspective 5.9.1, 100,000 records per batch, indexed
+tables, an active grouped view, and the CSP load described above. Each path ran twice in reversed
+order. The figures below average the two runs' median batch times:
+
+| Records | Former `custom-arrow` | Current `gateway-json` |
+| ------- | --------------------- | ---------------------- |
+| Flat    | 493 ms                | 255 ms                 |
+| Nested  | 609 ms                | 333 ms                 |
+| Enums   | 533 ms                | 278 ms                 |
+
+CSP p95 lateness remained approximately 7 ms for both paths. These synthetic measurements
+exclude network and browser rendering; they are not deployment latency guarantees.
+
+Choose an implementation only after checking representative application schemas, exclusions,
+basket keys, composite indexes, custom serializers, and larger sustained workloads. Resolve
+output differences before treating a faster candidate as a replacement.

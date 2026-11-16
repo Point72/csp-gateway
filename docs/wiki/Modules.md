@@ -939,10 +939,35 @@ modules:
 Additional configuration is available:
 
 - **limits** (`Dict[str, int] = {}`): configuration of Perspective table limits
-- **indexes** (`Dict[str, str] = {}`): configuration of Perspective table indexes
+- **indexes** (`dict[str, str | list[str] | None] = {}`): configuration of Perspective table indexes; lists select native multi-column indexes
 - **update_interval** (`timedelta = Field(default=timedelta(seconds=2)`): default perspective table update interval
-- **default_index** (`Optional[str]`): default index on all perspective tables, e.g. `id`
+- **default_index** (`str | list[str] | None`): default index on all Perspective tables, e.g. `id` or `["desk", "symbol"]`
 - **perspective_field** (`str`): Optional field to allow a `perspective.Server` to be mounted on a `GatewayChannels` instance, to allow `GatewayModules` to interact with Perspective independent of this module
+
+### Ingestion behavior
+
+The live feed requires Perspective 5.9.1 or later. Gateway sends serialized JSON records;
+Perspective flattens structs and maps into dotted columns and expands independent lists as a
+Cartesian product. Table schemas still come from `psp_schema()`, including column exclusions.
+The feed does not pass Python record dictionaries to Perspective or construct Arrow batches.
+
+When migrating from gateway's Arrow feed:
+
+- An omitted field in an indexed update retains its previous value. Send an explicit `None`
+  to clear it. This also applies to omitted children of nested records.
+- Multi-column indexes use their original columns. There is no generated string column named
+  `index`; remove references to that column from saved layouts. Distinct tuples remain distinct,
+  including values containing hyphens.
+- The feed no longer calls custom `psp_flatten()` overrides. Move required display-field
+  formatting into Pydantic field/model serializers or the producing application. In particular,
+  the `Controls.data_str` and `MonitoringEvent.tag_str` hooks no longer populate those fields
+  during ingestion.
+- Gateway enum JSON defaults to member names. Explicit serializers remain authoritative; see
+  [enum JSON serialization](Develop#enum-json-serialization).
+
+The public `psp_flatten()` and Arrow conversion helpers remain available for callers that use
+them directly. See [the ingestion benchmark guide](Develop#how-to-compare-perspective-ingestion-pipelines)
+to compare the old and new feeds on application data.
 
 ## MountRestRoutes
 

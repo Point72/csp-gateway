@@ -95,7 +95,7 @@ server = [
     "janus",
     "lerna",
     "orjson",
-    "perspective-python>=5.6,<6",
+    "perspective-python>=5.9.1,<6",
     "pyarrow",
     "pydantic>=2",
     "spaday>=0.12.0,<1",
