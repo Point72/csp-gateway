@@ -542,7 +542,6 @@ class GatewayUI:
         default_layout: dict[str, Any] | None = None,
         table_options: dict[str, dict[str, Any]] | None = None,
         channels: dict[str, dict[str, Any]] | None = None,
-        master_theme: str | None = None,
         shared_layouts_route: str | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
@@ -552,10 +551,10 @@ class GatewayUI:
         Otherwise ``default_tables`` are the ones the generated layout opens, defaulting to all of
         ``tables``. ``schemas`` (table name -> column name -> type) lets the generated layout apply
         per-table defaults (timestamp sort, hidden id column). ``table_options`` carries each table's
-        ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
-        worker rather than reading it off the websocket. ``channels`` supplies configurations for
-        channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
-        ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
+        ``architecture``, which is what puts a ``client-server`` table in a local worker (a replica that
+        inherits the server table's index and limit) rather than reading it off the websocket.
+        ``channels`` supplies configurations for tables opened through the panel's ``openChannel``
+        method. Add it to `Region.MAIN`. The page theme applies to every panel, masters included.
         ``shared_layouts_route`` serves layouts by id; a page opened with ``?layout=<id>`` starts on it.
         """
         tables = list(tables or [])
@@ -622,7 +621,6 @@ class GatewayUI:
                         "tables": table_specs,
                         "layout": layout_expr,
                         "channels": channels or {},
-                        "master_theme": master_theme,
                     }
                 ),
             )
@@ -699,8 +697,9 @@ class GatewayUI:
     def save_layout_button(self) -> Any:
         """A header button that saves the current Perspective workspace in the browser.
 
-        `saveClean` strips the transient fields (theme, column size overrides) before the layout is
-        persisted to localStorage. Saving updates the custom layout and selects it.
+        `saveClean` (spaday's portable save) drops the row-action columns spaday generates before the
+        layout is persisted to localStorage. Themes and column widths are kept; the page theme is
+        applied again on restore. Saving updates the custom layout and selects it.
         """
         return (
             WaButton(appearance="plain", title="Save current layout")
@@ -722,7 +721,8 @@ class GatewayUI:
     def download_layout_button(self) -> Any:
         """A header button that downloads the current Perspective workspace as a JSON file.
 
-        The file is assembled client-side from `saveClean` — no server round-trip.
+        The file is assembled client-side from `saveClean`, spaday's portable save, which keeps themes
+        and column widths — no server round-trip.
         """
         return (
             WaButton(appearance="plain", title="Download layout")
@@ -740,7 +740,9 @@ class GatewayUI:
     def share_layout_button(self, route: str) -> Any:
         """A header button that stores the current Perspective workspace on the server for sharing.
 
-        The returned id goes into the URL as ``?layout=<id>`` and the link is copied to the clipboard.
+        The workspace comes from `saveClean`, spaday's portable save, which keeps themes and column
+        widths. The returned id goes into the URL as ``?layout=<id>`` and the link is copied to the
+        clipboard.
         """
         return (
             WaButton(appearance="plain", title="Share layout link")
