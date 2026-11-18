@@ -1,17 +1,21 @@
+import gc
 import json
-from datetime import UTC, date, datetime, timedelta
+import time
+from datetime import UTC, date, datetime, timedelta, timezone
 from enum import Enum, auto
 from typing import Annotated
 from unittest.mock import MagicMock
 
 import csp
 import numpy as np
+import orjson
 import polars as pl
+import pyarrow
 import pytest
 from csp import ts
 from csp.typing import Numpy1DArray
 from perspective import Server
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from csp_gateway import (
     Gateway,
@@ -19,8 +23,7 @@ from csp_gateway import (
     GatewayModule,
     GatewayStruct,
     MountPerspectiveTables,
-    create_pyarrow_table,
-    psp_schema_to_arrow_schema,
+    TableConfig,
 )
 from csp_gateway.server.modules.web.perspective import migrate_perspective_layout
 from csp_gateway.testing.harness import GatewayTestHarness
@@ -70,6 +73,33 @@ class MyTestOptionalStruct(GatewayStruct):
 
 class MyPyArrowStruct(GatewayStruct):
     d: date
+
+
+def _table(cls, items, excluded=None, **kwargs):
+    """A real Perspective table, built from a struct's encoder the way the module builds its tables."""
+    module = _ModuleStub()
+    encoder = cls.psp_arrow_encoder(excluded)
+    MountPerspectiveTables.add_table(module, "t", encoder, **kwargs)
+    table = module._table_insts["t"]
+    if items:
+        table.update(encoder.encode(items))
+    return table
+
+
+def _records(cls, items, excluded=None):
+    return _table(cls, items, excluded).view().to_records()
+
+
+def _records_with(cls, items, **kwargs):
+    return _table(cls, items, **kwargs).view().to_records()
+
+
+class _ModuleStub:
+    """Just enough of the module for `add_table`."""
+
+    def __init__(self):
+        self._client = Server().new_local_client()
+        self._table_insts = {}
 
 
 class GWC(GatewayChannels):
@@ -131,7 +161,7 @@ def test_annotated_csp_enum_array_schema():
     assert schema["values"] is float
 
     value = StructWithCspEnumArray(statuses=np.array([Status.READY, Status.DONE], dtype=object))
-    assert [row["statuses"] for row in value.psp_flatten()] == ["READY", "DONE"]
+    assert [row["statuses"] for row in _records(StructWithCspEnumArray, [value])] == ["READY", "DONE"]
 
 
 def test_optional_annotated_array_schema():
@@ -228,182 +258,105 @@ def test_recursive_perspective_schema():
 
 def test_recursive_perspective_flattening():
     now = datetime.now(UTC).replace(tzinfo=UTC)
+    now_ms = int(now.timestamp() * 1000)
+
+    def flat(sub: MyTestSubStruct, **kwargs):
+        o = MyTestStruct(sub=sub, timestamp=now, **kwargs)
+        rows = _records(MyTestStruct, [o])
+        return o, rows
 
     # List with 1 element
-    o = MyTestStruct(sub=MyTestSubStruct(y=[1], timestamp=now), timestamp=now)
-    # Use the actual id from the object, not the counter (which is now global)
-    sub_id = o.sub.id
-    id = o.id
+    sub = MyTestSubStruct(y=[1], timestamp=now)
+    o, rows = flat(sub)
+    assert rows == [{"id": o.id, "sub.id": sub.id, "sub.y": 1, "sub.x": 1, "sub.z": None, "sub.timestamp": now_ms, "timestamp": now_ms, "z": None}]
 
-    assert isinstance(o.sub.psp_flatten(), list)
-    sub_flat = o.sub.psp_flatten()
-    for d in sub_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-    assert sub_flat == [
-        {"id": sub_id, "y": 1, "x": 1, "timestamp": now},
-    ]
+    # List with multiple elements becomes a row each, the parent repeated
+    sub = MyTestSubStruct(y=[1, 2, 3], timestamp=now)
+    o, rows = flat(sub)
+    assert [r["sub.y"] for r in rows] == [1, 2, 3]
+    assert {r["id"] for r in rows} == {o.id}
+    assert {r["sub.id"] for r in rows} == {sub.id}
 
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-        d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
-    assert o_flat == [
-        {
-            "id": id,
-            "sub.id": sub_id,
-            "sub.y": 1,
-            "sub.x": 1,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-    ]
+    # An empty list keeps the row, with a null
+    sub = MyTestSubStruct(y=[], timestamp=now)
+    o, rows = flat(sub)
+    assert len(rows) == 1 and rows[0]["sub.y"] is None and rows[0]["sub.x"] == 1
 
-    o = MyTestStruct(sub=MyTestSubStruct(y=[], z=float("nan"), timestamp=now), timestamp=now)
-    o2_sub_id = o.sub.id
-    o2_id = o.id
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-        d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
-    assert o_flat == [
-        {
-            "id": o2_id,
-            "sub.id": o2_sub_id,
-            "sub.x": 1,
-            "sub.z": None,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-    ]
+    # Perspective reads non-finite floats as null
+    for value in (float("nan"), float("inf"), float("-inf")):
+        _, rows = flat(MyTestSubStruct(y=[], z=value, timestamp=now))
+        assert rows[0]["sub.z"] is None
 
-    o = MyTestStruct(sub=MyTestSubStruct(y=[], z=float("inf"), timestamp=now), timestamp=now)
-    o3_sub_id = o.sub.id
-    o3_id = o.id
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-        d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
-    assert o_flat == [
-        {
-            "id": o3_id,
-            "sub.id": o3_sub_id,
-            "sub.x": 1,
-            "sub.z": None,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-    ]
+    # Enums are shown by name
+    _, rows = flat(MyTestSubStruct(y=[1], timestamp=now), z=MyTestEnum.b)
+    assert rows[0]["z"] == "b"
 
-    o = MyTestStruct(sub=MyTestSubStruct(y=[], z=float("-inf"), timestamp=now), timestamp=now)
-    o4_sub_id = o.sub.id
-    o4_id = o.id
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-        d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
-    assert o_flat == [
-        {
-            "id": o4_id,
-            "sub.id": o4_sub_id,
-            "sub.x": 1,
-            "sub.z": None,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-    ]
-
-    # List with multiple elements
-    o = MyTestStruct(sub=MyTestSubStruct(y=[1, 2, 3], timestamp=now), timestamp=now)
-    o5_sub_id = o.sub.id
-    o5_id = o.id
-
-    assert isinstance(o.sub.psp_flatten(), list)
-    sub_flat = o.sub.psp_flatten()
-    for d in sub_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-    assert sub_flat == [
-        {"id": o5_sub_id, "y": 1, "x": 1, "timestamp": now},
-        {"id": o5_sub_id, "y": 2, "x": 1, "timestamp": now},
-        {"id": o5_sub_id, "y": 3, "x": 1, "timestamp": now},
-    ]
-
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-        d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
-    assert o_flat == [
-        {
-            "id": o5_id,
-            "sub.id": o5_sub_id,
-            "sub.y": 1,
-            "sub.x": 1,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-        {
-            "id": o5_id,
-            "sub.id": o5_sub_id,
-            "sub.y": 2,
-            "sub.x": 1,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-        {
-            "id": o5_id,
-            "sub.id": o5_sub_id,
-            "sub.y": 3,
-            "sub.x": 1,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-    ]
-
-    # Empty list removed
-    o = MyTestStruct(sub=MyTestSubStruct(y=[], timestamp=now), timestamp=now)
-    o6_sub_id = o.sub.id
-    o6_id = o.id
-    assert isinstance(o.sub.psp_flatten(), list)
-    sub_flat = o.sub.psp_flatten()
-    for d in sub_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-    assert sub_flat == [
-        {"id": o6_sub_id, "x": 1, "timestamp": now},
-    ]
-
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-        d["sub.timestamp"] = datetime.fromisoformat(d["sub.timestamp"])
-    assert o_flat == [
-        {
-            "id": o6_id,
-            "sub.id": o6_sub_id,
-            "sub.x": 1,
-            "sub.timestamp": now,
-            "timestamp": now,
-        },
-    ]
-
-    # Non json serializable object passed
+    # A field with no perspective conversion is left out
     o = MyTestStruct(ncsp_sub=object(), timestamp=now)
-    o7_id = o.id
-    assert isinstance(o.psp_flatten(), list)
-    o_flat = o.psp_flatten()
-    for d in o_flat:
-        d["timestamp"] = datetime.fromisoformat(d["timestamp"])
-    assert o_flat == [
-        {
-            "id": o7_id,
-            "ncsp_sub": "",
-            "timestamp": now,
-        },
-    ]
+    assert "ncsp_sub" not in MyTestStruct.psp_schema()
+    assert _records(MyTestStruct, [o])[0]["id"] == o.id
+
+
+def test_table_columns_match_flattened_schema():
+    for cls in (MyTestStruct, MyTestOptionalStruct):
+        assert sorted(_table(cls, []).schema()) == sorted(cls.psp_schema())
+
+
+def test_multiple_lists_combine_as_a_cartesian_product():
+    class Two(GatewayStruct):
+        a: list[int]
+        b: list[str]
+
+    rows = _records(Two, [Two(a=[1, 2], b=["p", "q", "r"])])
+    assert sorted((r["a"], r["b"]) for r in rows) == [(a, b) for a in (1, 2) for b in "pqr"]
+
+
+def test_list_of_structs_flattens_under_the_field_name():
+    class Item(GatewayStruct):
+        k: str
+        v: int
+
+    class Order(GatewayStruct):
+        items: list[Item]
+
+    assert Order.psp_schema().keys() >= {"items.k", "items.v"}
+    rows = _records(Order, [Order(items=[Item(k="a", v=1), Item(k="b", v=2)])])
+    assert [(r["items.k"], r["items.v"]) for r in rows] == [("a", 1), ("b", 2)]
+
+
+def test_dicts_are_json_strings_and_none_is_null():
+    class WithDict(GatewayStruct):
+        data: dict = None
+        name: str = None
+
+    assert WithDict.psp_schema()["data"] is str
+    rows = _records(WithDict, [WithDict(data={"a": 1, "b": [1, 2]}, name="x"), WithDict()])
+    assert orjson.loads(rows[0]["data"]) == {"a": 1, "b": [1, 2]}
+    assert rows[1]["data"] is None and rows[1]["name"] is None
+
+
+def test_dicts_of_scalars_are_arrow_maps_shown_as_json():
+    class WithMap(GatewayStruct):
+        tags: dict[str, int] = None
+
+    encoder = WithMap.psp_arrow_encoder()
+    assert encoder.schema.field("tags").type == pyarrow.map_(pyarrow.string(), pyarrow.int64())
+    assert WithMap.psp_schema()["tags"] is str
+    rows = _records(WithMap, [WithMap(tags={"a": 1, "b": 2}), WithMap()])
+    assert orjson.loads(rows[0]["tags"]) == {"a": 1, "b": 2}
+    assert rows[1]["tags"] is None
+
+
+def test_unset_fields_are_null():
+    rows = _records(MyTestOptionalStruct, [MyTestOptionalStruct(i=1)])
+    assert rows[0]["i"] == 1 and rows[0]["i_o"] is None and rows[0]["s.x"] is None
+
+
+def test_exclusions_drop_nested_columns():
+    excluded = {"sub": {"y"}, "z": True}
+    columns = _table(MyTestStruct, [], excluded).schema()
+    assert sorted(columns) == sorted(MyTestStruct.psp_schema(excluded))
+    assert "sub.y" not in columns and "z" not in columns
 
 
 def test_exclude_columns_schema():
@@ -426,24 +379,130 @@ def test_exclude_columns_schema():
 def test_pyarrow_conversion():
     now = datetime.now(UTC)
     now_date = now.date()
-    schema = MyPyArrowStruct.psp_schema()
-    arrow_schema = psp_schema_to_arrow_schema(schema)
-    date_key_set = set()
-    date_key_set.add("d")
-    datetime_key_set = set()
-    datetime_key_set.add("timestamp")
+    encoder = MyPyArrowStruct.psp_arrow_encoder()
+    assert encoder.schema.field("d").type == pyarrow.date32()
 
     o = MyPyArrowStruct(timestamp=now, d=now_date)
-    table = create_pyarrow_table(None, [o], None, arrow_schema, date_key_set)
-    df = pl.from_arrow(table)
+    df = pl.from_arrow(encoder.encode([o]))
     assert df.head()["d"][0] == now_date
 
     #  Check nones are handled correctly
     o = MyPyArrowStruct(timestamp=None, d=None)
-    table = create_pyarrow_table(None, [o], None, arrow_schema, date_key_set)
-    df = pl.from_arrow(table)
+    df = pl.from_arrow(encoder.encode([o]))
     assert df.head()["d"][0] is None
     assert df.head()["timestamp"][0] is None
+
+    #  Naive datetimes are UTC, and others are converted to it
+    naive = datetime(2024, 1, 1, 12)
+    offset = datetime(2024, 1, 1, 14, tzinfo=timezone(timedelta(hours=2)))
+    df = pl.from_arrow(encoder.encode([MyPyArrowStruct(timestamp=naive), MyPyArrowStruct(timestamp=offset)]))
+    assert df["timestamp"].to_list() == [datetime(2024, 1, 1, 12, tzinfo=UTC)] * 2
+
+
+def test_composite_index_keys_rows_by_every_field():
+    class Quote(GatewayStruct):
+        venue: str
+        symbol: str
+        px: float
+
+    rows = [Quote(venue="A", symbol="X", px=1.0), Quote(venue="A", symbol="Y", px=2.0), Quote(venue="A", symbol="X", px=3.0)]
+    table = _table(Quote, rows, index=["venue", "symbol"])
+    assert sorted((r["symbol"], r["px"]) for r in table.view().to_records()) == [("X", 3.0), ("Y", 2.0)]
+    # no synthesized key column
+    assert sorted(table.schema()) == sorted(Quote.psp_schema())
+
+
+def test_indexed_table_with_list_columns_is_rejected_at_creation():
+    with pytest.raises(Exception, match="expanded list column"):
+        MountPerspectiveTables.add_table(_ModuleStub(), "t", MyTestStruct.psp_arrow_encoder(), index="id")
+
+
+def test_index_on_a_list_column_is_allowed():
+    class Item(GatewayStruct):
+        k: str
+        v: int
+
+    class Order(GatewayStruct):
+        items: list[Item]
+
+    module = _ModuleStub()
+    MountPerspectiveTables.add_table(module, "orders", Order.psp_arrow_encoder(), index="items.k")
+    table = module._table_insts["orders"]
+    table.update(Order.psp_arrow_encoder().encode([Order(items=[Item(k="a", v=1), Item(k="b", v=2)])]))
+    assert table.size() == 2
+
+
+class TestListFlatten:
+    class Tagged(GatewayStruct):
+        name: str = None
+        values: list[float] = None
+
+    def _module(self, **kwargs):
+        module = _ModuleStub()
+        encoder = self.Tagged.psp_arrow_encoder()
+        MountPerspectiveTables.add_table(module, "t", encoder, **kwargs)
+        return module._table_insts["t"], encoder
+
+    def test_stringify_keeps_a_list_in_one_cell_so_the_table_can_be_indexed(self):
+        table, encoder = self._module(index="name", list_flatten="stringify")
+        table.update(encoder.encode([self.Tagged(name="a", values=[1.0, 2.5])]))
+        assert table.schema()["values"] == "string"
+        assert [orjson.loads(r["values"]) for r in table.view().to_records()] == [[1.0, 2.5]]
+
+    def test_cartesian_is_the_default(self):
+        table, encoder = self._module()
+        table.update(encoder.encode([self.Tagged(name="a", values=[1.0, 2.5])]))
+        assert table.size() == 2
+
+    def test_stringify_keeps_a_list_of_structs_in_one_cell(self):
+        class Item(GatewayStruct):
+            k: str
+
+        class Order(GatewayStruct):
+            items: list[Item]
+
+        rows = _records_with(Order, [Order(items=[Item(k="a"), Item(k="b")])], list_flatten="stringify")
+        assert [[item["k"] for item in orjson.loads(r["items"])] for r in rows] == [["a", "b"]]
+
+    def test_stringify_formatted_writes_datetimes_as_text(self):
+        class Stamped(GatewayStruct):
+            when: list[datetime]
+
+        rows = _records_with(Stamped, [Stamped(when=[datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)])], list_flatten="stringify_formatted")
+        assert orjson.loads(rows[0]["when"]) == ["2024-01-02 03:04:05.000"]
+
+    def test_table_config_reaches_the_table(self):
+        module = MountPerspectiveTables(tables={"a": TableConfig(list_flatten="stringify", map_flatten="pivot")})
+        assert (module._get_effective_config("a").list_flatten, module._get_effective_config("a").map_flatten) == ("stringify", "pivot")
+        assert (module._get_effective_config("b").list_flatten, module._get_effective_config("b").map_flatten) == (
+            "cartesian",
+            "stringify_formatted",
+        )
+
+
+class TestIndexAndLimit:
+    """Perspective takes an index or a limit for a table, never both."""
+
+    def test_default_limit_gives_way_to_an_index(self):
+        module = MountPerspectiveTables(default_limit=100, indexes={"a": "id"})
+        assert (module._get_effective_config("a").index, module._get_effective_config("a").limit) == ("id", None)
+        assert (module._get_effective_config("b").index, module._get_effective_config("b").limit) == (None, 100)
+
+    def test_default_index_gives_way_to_a_limit(self):
+        module = MountPerspectiveTables(default_index="id", limits={"a": 5}, indexes={"c": None})
+        assert (module._get_effective_config("a").index, module._get_effective_config("a").limit) == (None, 5)
+        assert (module._get_effective_config("b").index, module._get_effective_config("b").limit) == ("id", None)
+
+    def test_opting_out_of_the_default_index_restores_the_default_limit(self):
+        module = MountPerspectiveTables(default_index="id", default_limit=10, indexes={"c": None})
+        assert (module._get_effective_config("c").index, module._get_effective_config("c").limit) == (None, 10)
+
+    def test_both_on_one_table_is_left_for_perspective_to_reject(self):
+        module = MountPerspectiveTables(indexes={"a": "id"}, limits={"a": 5})
+        config = module._get_effective_config("a")
+        assert (config.index, config.limit) == ("id", 5)
+        with pytest.raises(ValueError, match="both `limit` and `index`"):
+            MountPerspectiveTables.add_table(_ModuleStub(), "a", MyTestOptionalSubStruct.psp_arrow_encoder(), limit=5, index="id")
 
 
 @pytest.mark.parametrize("use_external_perspective", [True, False])
@@ -452,6 +511,8 @@ def test_MountPerspectiveTables(use_external_perspective):
         tables={"exclude": ["exclude_channel"]},
         limits={"limit_channel": 5},
         indexes={"index_channel": "id", "dict_channel": "id", "exclude_channel": None},
+        # Perspective explodes a list into rows, which a table indexed on `id` cannot hold
+        excluded_table_columns={"index_channel": {"sub": {"y"}}, "dict_channel": {"sub": {"y"}}},
         layouts={
             "Test Layout": '{"sizes":[1],"detail":{"main":{"type":"split-area","orientation":"horizontal","children":[{"type":"split-area","orientation":"vertical","children":[{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_1"],"currentIndex":0},{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_4"],"currentIndex":0}],"sizes":[0.5,0.5]},{"type":"split-area","orientation":"vertical","children":[{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_3"],"currentIndex":0},{"type":"tab-area","widgets":["PERSPECTIVE_GENERATED_ID_5"],"currentIndex":0}],"sizes":[0.5,0.5]}],"sizes":[0.5,0.5]}},"mode":"globalFilters","viewers":{"PERSPECTIVE_GENERATED_ID_1":{"plugin":"Datagrid","plugin_config":{"columns":{},"editable":false,"scroll_lock":true},"settings":false,"theme":"Pro Dark","group_by":["id"],"split_by":[],"columns":["timestamp","x","y"],"filter":[],"sort":[["timestamp","desc"]],"expressions":[],"aggregates":{"timestamp":"last","x":"last","id":"last","y":"last"},"master":false,"name":"basket","table":"basket","linked":false},"PERSPECTIVE_GENERATED_ID_4":{"plugin":"Datagrid","plugin_config":{"columns":{},"editable":false,"scroll_lock":true},"settings":false,"theme":"Pro Dark","group_by":["id"],"split_by":[],"columns":["timestamp","x","y"],"filter":[],"sort":[["timestamp","desc"]],"expressions":[],"aggregates":{"timestamp":"last","x":"last","id":"last","y":"last"},"master":false,"name":"example_list","table":"example_list","linked":false},"PERSPECTIVE_GENERATED_ID_3":{"plugin":"Datagrid","plugin_config":{"columns":{},"editable":false,"scroll_lock":true},"settings":false,"theme":"Pro Dark","group_by":["id"],"split_by":[],"columns":["timestamp","x","y"],"filter":[],"sort":[["timestamp","desc"]],"expressions":[],"aggregates":{"id":"last","x":"last","timestamp":"last","y":"last"},"master":false,"name":"example","table":"example","linked":false},"PERSPECTIVE_GENERATED_ID_5":{"plugin":"Datagrid","plugin_config":{"columns":{},"editable":false,"scroll_lock":true},"settings":false,"theme":"Pro Dark","group_by":["id"],"split_by":[],"columns":["timestamp","x","y"],"filter":[],"sort":[["timestamp","desc"]],"expressions":[],"aggregates":{"id":"last","timestamp":"last","x":"last","y":"last"},"master":false,"name":"never_ticks","table":"never_ticks","linked":false}}}'
         },
@@ -610,6 +671,7 @@ def test_additional_tables():
     module = MountPerspectiveTables(
         tables={"include": ["test_channel", "limit_channel"]},
         indexes={"test_channel": "id"},
+        excluded_table_columns={"test_channel": {"sub": {"y"}}},
         limits={"limit_channel": 5},
         additional_tables={
             "test_channel_no_index": AdditionalTableConfig(
@@ -679,6 +741,7 @@ def test_additional_tables_with_dict_channel():
     module = MountPerspectiveTables(
         tables={"include": ["dict_channel"]},
         indexes={"dict_channel": "id"},
+        excluded_table_columns={"dict_channel": {"sub": {"y"}}},
         additional_tables={
             "dict_channel_no_index": AdditionalTableConfig(
                 channel="dict_channel",
@@ -751,7 +814,7 @@ def test_tables_unified_api():
     module = MountPerspectiveTables(
         tables={
             # Primary table with config override (channel == table_name when omitted)
-            "test_channel": TableConfig(index="id"),
+            "test_channel": TableConfig(index="id", excluded_columns={"sub": {"y"}}),
             # Primary table with limit
             "limit_channel": TableConfig(limit=5),
             # Additional table: same channel, different config
@@ -796,7 +859,11 @@ def test_tables_unified_api():
 
 
 class TestLayoutMigration:
-    """Perspective 4 workspace layouts are rewritten to the Perspective 5 shape."""
+    """Saved layouts are upgraded by Perspective's own migration, through spaday-perspective.
+
+    The exact shape is Perspective's to decide (its `perspective-migrate` corpus covers it); these
+    tests cover what csp-gateway relies on: which layouts change, and that the result is valid.
+    """
 
     V4_LAYOUT = json.dumps(
         {
@@ -823,94 +890,71 @@ class TestLayoutMigration:
         }
     )
 
-    def test_widget_tree_becomes_layout_tree(self):
-        layout = json.loads(self.V4_LAYOUT)
-        del layout["master"]
-        del layout["viewers"]["M"]
-        migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
-        assert migrated["layout"] == {
-            "type": "split-layout",
-            "orientation": "vertical",
-            "sizes": [0.3, 0.7],
-            "children": [
-                {"type": "tab-layout", "tabs": ["A"], "selected": 0},
-                {"type": "tab-layout", "tabs": ["B", "C"], "selected": 1},
-            ],
-        }
+    @staticmethod
+    def _tabs(node):
+        if node["type"] == "tab-layout":
+            return list(node["tabs"])
+        return [tab for child in node["children"] for tab in TestLayoutMigration._tabs(child)]
 
-    def test_viewers_become_panels_and_masters_are_kept(self):
+    @staticmethod
+    def _assert_valid(layout: str):
+        from perspective import validate
+
+        validate(
+            "workspace",
+            {key: value for key, value in json.loads(layout).items() if key not in ("closed_channels", "retained_panel_configs_by_table")},
+        )
+
+    def test_v4_layout_becomes_a_valid_workspace(self):
+        migrated = migrate_perspective_layout(self.V4_LAYOUT)
+        self._assert_valid(migrated)
+        assert {"viewers", "detail", "master", "mode"}.isdisjoint(json.loads(migrated))
+
+    def test_every_placed_panel_is_kept(self):
         migrated = json.loads(migrate_perspective_layout(self.V4_LAYOUT))
         assert sorted(migrated["panels"]) == ["A", "B", "C", "M"]
-        assert migrated["panels"]["B"] == {"table": "example", "plugin": "Treemap"}
+        assert sorted(self._tabs(migrated["layout"])) == ["A", "B", "C", "M"]
         assert migrated["masters"] == ["M"]
-        # The v4-only envelope keys do not survive.
-        assert "viewers" not in migrated
-        assert "detail" not in migrated
+        assert migrated["panels"]["M"]["group_by"] == ["id"]
 
-    @pytest.mark.parametrize("master_count", [1, 2])
-    @pytest.mark.parametrize("with_detail", [True, False])
-    def test_master_panels_are_placed_in_layout(self, master_count, with_detail):
+    def test_panel_configs_are_migrated(self):
+        # Perspective's migration upgrades each panel too; a 2.x-era `name` becomes `title`.
         layout = json.loads(self.V4_LAYOUT)
-        if master_count == 2:
-            layout["master"] = {"sizes": [0.3, 0.7], "widgets": ["M", "N"]}
-            layout["viewers"]["N"] = {"table": "other", "plugin": "Datagrid"}
-        if not with_detail:
-            del layout["detail"]
-            layout["viewers"] = {name: layout["viewers"][name] for name in layout["master"]["widgets"]}
-
+        layout["viewers"]["A"]["name"] = "Named"
         migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
+        assert migrated["panels"]["A"]["title"] == "Named"
+        assert "name" not in migrated["panels"]["A"]
 
-        master_layout = {
-            "type": "split-layout",
-            "orientation": "vertical",
-            "sizes": layout["master"]["sizes"],
-            "children": [{"type": "tab-layout", "tabs": [name], "selected": 0} for name in layout["master"]["widgets"]],
-        }
-        if with_detail:
-            assert migrated["layout"]["type"] == "split-layout"
-            assert migrated["layout"]["orientation"] == "horizontal"
-            assert migrated["layout"]["sizes"] == [0.2, 0.8]
-            assert migrated["layout"]["children"][0] == master_layout
-            assert migrated["layout"]["children"][1]["children"] == [
-                {"type": "tab-layout", "tabs": ["A"], "selected": 0},
-                {"type": "tab-layout", "tabs": ["B", "C"], "selected": 1},
-            ]
-        else:
-            assert migrated["layout"] == master_layout
-        assert migrated["masters"] == layout["master"]["widgets"]
-
-    @pytest.mark.parametrize("empty_sizes", [False, True])
-    def test_missing_master_sizes_use_normalized_defaults(self, empty_sizes):
+    def test_dropped_information_is_logged(self, caplog):
+        # A v4 viewer that no layout node shows has no place in a version 5 workspace.
         layout = json.loads(self.V4_LAYOUT)
-        layout["master"] = {"widgets": ["M", "N"]}
-        layout["viewers"]["N"] = {"table": "other", "plugin": "Datagrid"}
-        if empty_sizes:
-            layout["sizes"] = []
-            layout["master"]["sizes"] = []
-        else:
-            del layout["sizes"]
+        layout["viewers"]["orphan"] = {"table": "example", "plugin": "Datagrid"}
+        with caplog.at_level("WARNING"):
+            migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
+        assert "orphan" not in migrated["panels"]
+        assert "Perspective layout migration" in caplog.text
 
-        migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
-
-        assert migrated["layout"]["sizes"] == [0.25, 0.75]
-        assert migrated["layout"]["children"][0]["sizes"] == [0.5, 0.5]
-
-    def test_already_migrated_layout_is_untouched(self):
+    def test_migration_is_idempotent(self):
         once = migrate_perspective_layout(self.V4_LAYOUT)
-        assert migrate_perspective_layout(once) == once
+        assert json.loads(migrate_perspective_layout(once)) == json.loads(once)
 
-    def test_missing_detail_sizes_use_equal_shares(self):
-        layout = json.loads(self.V4_LAYOUT)
-        del layout["detail"]["main"]["sizes"]
+    def test_current_layouts_are_stamped_and_keep_spaday_keys(self):
+        # A current-shape layout without a `version` is taken as written by the installed release.
+        retained = {"example": {"plugin": "Datagrid", "table": "example"}}
+        layout = {"layout": {"type": "tab-layout", "tabs": ["A"]}, "panels": {"A": {"table": "example"}}, "closed_channels": retained}
         migrated = json.loads(migrate_perspective_layout(json.dumps(layout)))
-        assert migrated["layout"]["children"][1]["sizes"] == [0.5, 0.5]
+        assert migrated["panels"] == {"A": {"table": "example"}}
+        assert migrated["closed_channels"] == retained
+        assert "version" in migrated
 
-    def test_v5_layout_with_legacy_metadata_is_untouched(self):
+    def test_v5_layout_with_legacy_metadata_is_left_or_made_valid(self):
         layout = json.dumps({"layout": {"type": "tab-layout", "tabs": ["A"]}, "panels": {"A": {"table": "example"}}, "viewers": {}})
-        assert migrate_perspective_layout(layout) == layout
+        migrated = migrate_perspective_layout(layout)
+        if migrated != layout:
+            self._assert_valid(migrated)
 
-    @pytest.mark.parametrize("layout", ["", "not json", "[]", '{"panels": {}}'])
-    def test_non_v4_input_passes_through(self, layout):
+    @pytest.mark.parametrize("layout", ["", "not json", "[]", "1"])
+    def test_non_layout_input_passes_through(self, layout):
         assert migrate_perspective_layout(layout) == layout
 
     @pytest.mark.parametrize(
@@ -920,12 +964,330 @@ class TestLayoutMigration:
     def test_malformed_legacy_layout_does_not_break_configuration(self, root):
         layout = json.dumps({"viewers": {}, "detail": {"main": root}})
         module = MountPerspectiveTables(layouts={"Malformed": layout})
-        assert module.layouts["Malformed"] == layout
+        # Left as is when Perspective cannot migrate it, and otherwise migrated to something valid.
+        if module.layouts["Malformed"] != layout:
+            self._assert_valid(module.layouts["Malformed"])
 
     def test_configured_layouts_are_migrated_on_validation(self):
         module = MountPerspectiveTables(layouts={"Server Defined Layout": self.V4_LAYOUT})
         migrated = json.loads(module.layouts["Server Defined Layout"])
         assert {"layout", "masters", "panels"} <= migrated.keys()
+
+    def test_demo_layout_migrates_to_a_valid_workspace(self):
+        # The viewer rejects keys a workspace does not define, so the demo's 3.3.4-era layout must migrate cleanly.
+        from pathlib import Path
+
+        from omegaconf import OmegaConf
+
+        import csp_gateway
+
+        config = OmegaConf.load(Path(csp_gateway.__file__).parent / "server/config/gateway/omnibus.yaml")
+        layout = config.modules.mount_perspective_tables.layouts["Server Defined Layout"]
+        self._assert_valid(migrate_perspective_layout(layout))
+
+
+class TestServerViews:
+    """Server views are pre-calculated tables, which client-server replicas must be able to follow."""
+
+    FLAT = {"table": "base", "group_by": ["g"], "columns": ["v"], "aggregates": {"v": "sum"}, "group_rollup_mode": "flat"}
+
+    @staticmethod
+    def _module(**config):
+        module = MountPerspectiveTables(**config)
+        module._server = Server()
+        module._client = module._server.new_local_client()
+        module._table_insts = {}
+        source = module._client.table({"k": "string", "g": "string", "v": "float"}, index="k", name="base")
+        source.update([{"k": "1", "g": "x", "v": 1.0}, {"k": "2", "g": "y", "v": 2.0}])
+        module._add_server_views()
+        return module, source
+
+    def test_any_perspective_view_setting_is_accepted(self):
+        module = MountPerspectiveTables(server_views={"by_g": self.FLAT})
+        assert module.server_views["by_g"]["group_rollup_mode"] == "flat"
+
+    def test_configs_are_left_as_given(self):
+        # Perspective's defaults apply; nothing is added, so this view keeps its total and subtotal rows.
+        module = MountPerspectiveTables(server_views={"by_g": {"table": "base", "group_by": ["g"]}})
+        assert module.server_views["by_g"] == {"table": "base", "group_by": ["g"]}
+
+    @pytest.mark.parametrize(
+        ("config", "match"),
+        [
+            ({"group_by": ["g"]}, "must specify a base 'table'"),
+            ({"table": "base"}, "at least one view operation"),
+            ({"table": "base", "row_pivots": ["g"]}, "not a valid Perspective view"),
+        ],
+    )
+    def test_invalid_configs_are_rejected(self, config, match):
+        with pytest.raises(ValueError, match=match):
+            MountPerspectiveTables(server_views={"bad": config})
+
+    def test_flat_grouped_view_is_indexed_by_its_groups(self):
+        module, _ = self._module(server_views={"by_g": self.FLAT})
+        assert module._table_insts["by_g"].get_index() == "g"
+
+    def test_replica_of_a_flat_grouped_view_follows_groups_that_empty(self):
+        module, source = self._module(server_views={"by_g": self.FLAT})
+        derived = module._table_insts["by_g"]
+        # As spaday-perspective's mirror does: a view opened through one client (the websocket's) is
+        # copied into a table on another (the browser worker's), which Perspective keeps in step.
+        view = module._server.new_local_client().open_table("by_g").view()
+        replica = module._server.new_local_client().table(view)
+        assert replica.get_index() == "g"
+
+        source.update([{"k": "1", "g": "y", "v": 10.0}])
+        source.remove(["2"])
+        source.update([{"k": "3", "g": "z", "v": 5.0}])
+        expected = sorted(derived.view().to_records(), key=lambda row: row["g"])
+        assert expected == [{"g": "y", "v": 10.0}, {"g": "z", "v": 5.0}]
+
+        def replica_rows():
+            return sorted(replica.view().to_records(), key=lambda row: row["g"])
+
+        # Cross-client updates may be delivered after `update` returns.
+        deadline = time.monotonic() + 2
+        while replica_rows() != expected and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert replica_rows() == expected
+
+    def test_unindexed_grouped_view_warns_in_client_server_mode(self, caplog):
+        config = {**self.FLAT, "group_rollup_mode": "rollup"}
+        with caplog.at_level("WARNING"):
+            module, _ = self._module(server_views={"by_g": config})
+        assert module._table_insts["by_g"].get_index() is None
+        assert "keep groups that empty" in caplog.text
+
+    def test_unindexed_grouped_view_does_not_warn_in_server_mode(self, caplog):
+        config = {**self.FLAT, "group_rollup_mode": "rollup"}
+        with caplog.at_level("WARNING"):
+            self._module(server_views={"by_g": config}, architectures={"by_g": "server"})
+        assert "keep groups that empty" not in caplog.text
+
+
+class _Color(Enum):
+    RED = 1
+    BLUE = 2
+
+
+class _CspColor(csp.Enum):
+    RED = 1
+    BLUE = 2
+
+
+class _Leaf(GatewayStruct):
+    n: int
+    when: datetime
+
+
+class _HoldsLeaf(GatewayStruct):
+    x: int
+    leaf: _Leaf
+
+
+class _Wide(GatewayStruct):
+    """One of every column kind the encoder builds from attributes."""
+
+    i: int
+    f: float
+    s: str
+    flag: bool
+    d: date
+    opt: int | None = None
+    color: _Color
+    csp_color: _CspColor
+    colors: list[_Color] = []
+    leaf: _Leaf
+    leaves: list[_Leaf] = []
+    ints: list[int] = []
+    arr: Numpy1DArray[float] = np.array([])
+    tags: dict[str, int] = {}
+    blob: dict = {}
+    nested_blob: dict[str, list[int]] = {}
+
+
+class _Serialized(GatewayStruct):
+    x: int
+
+    @field_serializer("x")
+    def _double(self, value: int) -> int:
+        return value * 2
+
+
+class _HoldsSerialized(GatewayStruct):
+    inner: _Serialized
+
+
+class _Prepared(GatewayStruct):
+    data: dict = {}
+    data_str: str = ""
+
+    def psp_prepare(self):
+        self.data_str = orjson.dumps(self.data).decode()
+
+
+def _wide_records():
+    now = datetime(2026, 11, 16, 12, 0, 0)
+    leaf = _Leaf(n=1, when=now)
+    return [
+        _Wide(
+            i=1,
+            f=1.5,
+            s="a",
+            flag=True,
+            d=date(2026, 11, 16),
+            opt=3,
+            color=_Color.RED,
+            csp_color=_CspColor.BLUE,
+            colors=[_Color.RED, _Color.BLUE],
+            leaf=leaf,
+            leaves=[leaf, _Leaf(n=2, when=now.replace(tzinfo=UTC))],
+            ints=[1, 2, 3],
+            arr=np.array([0.5, 1.5]),
+            tags={"a": 1, "b": 2},
+            blob={"k": [1, {"x": now}]},
+            nested_blob={"a": [1, 2]},
+            timestamp=now,
+        ),
+        # Fields never set: implicitly unset ones are null, a struct included.
+        _Wide(i=2, s="b", color=_Color.BLUE),
+        # Explicit empties and an explicit None.
+        _Wide(i=3, opt=None, colors=[], leaves=[], ints=[], arr=np.array([]), tags={}, blob={}, nested_blob={}),
+    ]
+
+
+class TestAttributeEncoder:
+    """The column-by-column encoder gives exactly what the `model_dump` path gives."""
+
+    @staticmethod
+    def _both(struct_type, records, excluded=None):
+        encoder = struct_type.psp_arrow_encoder(excluded)
+        return encoder, encoder.encode(records).to_pylist(), encoder._encode_dumped(records).to_pylist()
+
+    def test_every_column_kind_matches_model_dump(self):
+        encoder, fast, dumped = self._both(_Wide, _wide_records())
+        assert encoder._attributes is not None
+        assert fast == dumped
+
+    def test_exclusions_match_model_dump(self):
+        encoder, fast, dumped = self._both(_Wide, _wide_records(), {"leaf": {"n"}, "blob": True, "arr": True})
+        assert encoder._attributes is not None
+        assert fast == dumped
+        assert "blob" not in encoder.schema.names
+
+    def test_existing_test_structs_match_model_dump(self):
+        now = datetime.now(UTC)
+        records = [
+            MyTestStruct(sub=MyTestSubStruct(y=[1, 2], z=1.0, timestamp=now), z=MyTestEnum.b, timestamp=now),
+            MyTestStruct(sub=MyTestSubStruct(y=[], z=2.0), timestamp=now),
+            MyTestStruct(timestamp=now),
+        ]
+        encoder, fast, dumped = self._both(MyTestStruct, records)
+        assert encoder._attributes is not None
+        assert fast == dumped
+
+    def test_csp_enum_arrays_match_model_dump(self):
+        class Status(csp.Enum):
+            READY = 1
+            DONE = 2
+
+        class WithStatuses(GatewayStruct):
+            statuses: Numpy1DArray[Status]
+            values: Numpy1DArray[float]
+
+        records = [WithStatuses(statuses=np.array([Status.READY, Status.DONE], dtype=object), values=np.array([1.0, 2.0])), WithStatuses()]
+        _, fast, dumped = self._both(WithStatuses, records)
+        assert fast == dumped
+
+    @pytest.mark.parametrize("cls", [_Serialized, _HoldsSerialized])
+    def test_python_serializers_fall_back_to_model_dump(self, cls):
+        encoder = cls.psp_arrow_encoder()
+        assert encoder._attributes is None
+        record = _Serialized(x=2) if cls is _Serialized else _HoldsSerialized(inner=_Serialized(x=2))
+        column = encoder.encode([record]).to_pylist()[0]
+        assert (column["x"] if cls is _Serialized else column["inner"]["x"]) == 4
+
+    def test_encoding_makes_no_per_record_objects_for_the_garbage_collector(self):
+        # Container objects made per record and alive until the batch is encoded get promoted to the
+        # collector's oldest generation and set off full collections. Those hold the GIL while they sweep
+        # every live object (~300 ms at 100k records per batch), stalling the csp engine.
+        now = datetime(2026, 11, 16, 12, 0, 0)
+        # Half the records leave every field implicitly unset, at both levels: unset fields are checked per record.
+        records = [_HoldsLeaf(x=i, leaf=_Leaf(n=i, when=now)) for i in range(5_000)] + [_HoldsLeaf(leaf=_Leaf()) for _ in range(5_000)]
+        encoder = _HoldsLeaf.psp_arrow_encoder()
+        assert encoder._attributes is not None
+        collections = []
+
+        def on_collect(phase, info):
+            if phase == "start":
+                collections.append(info["generation"])
+
+        enabled, threshold = gc.isenabled(), gc.get_threshold()
+        gc.collect()
+        gc.enable()
+        # A collection per 100 objects alive at once: one object per record would set off ~200 here.
+        gc.set_threshold(100, 10, 10)
+        gc.callbacks.append(on_collect)
+        try:
+            encoder.encode_ipc(records)
+        finally:
+            gc.callbacks.remove(on_collect)
+            gc.set_threshold(*threshold)
+            if not enabled:
+                gc.disable()
+        assert len(collections) < 10, collections
+        assert encoder.encode(records).to_pylist() == encoder._encode_dumped(records).to_pylist()
+
+    def test_psp_prepare_runs_before_attributes_are_read(self):
+        encoder = _Prepared.psp_arrow_encoder()
+        assert encoder._attributes is not None
+        assert encoder.encode([_Prepared(data={"a": 1})]).to_pylist()[0]["data_str"] == '{"a":1}'
+
+    def test_perspective_tables_match(self):
+        encoder = _Wide.psp_arrow_encoder()
+        client = Server().new_local_client()
+        # csp-gateway's table defaults: several lists in one row expand as their product.
+        options = {"list_flatten": "cartesian", "map_flatten": "stringify_formatted"}
+        # The same records for both: each construction generates its own ids and timestamps.
+        records = _wide_records()
+        fast = client.table(encoder.empty_ipc(), **options)
+        fast.update(encoder.encode_ipc(records))
+        dumped = client.table(encoder.empty_ipc(), **options)
+        dumped.update(encoder._encode_dumped(records))
+        assert fast.view().to_columns() == dumped.view().to_columns()
+
+
+class TestEncodeOncePerChannel:
+    """A channel feeding several tables is encoded once per encoder those tables use."""
+
+    def test_tables_sharing_an_encoder_are_grouped(self):
+        shared = MyTestOptionalSubStruct.psp_arrow_encoder()
+        other = MyTestOptionalSubStruct.psp_arrow_encoder({"sub_a"})
+        module = MountPerspectiveTables()
+        module._feed("channel", "a", shared)
+        module._feed("channel", "b", shared)
+        module._feed("channel", "c", other)
+        assert module._channel_groups == {"channel": [(shared, ["a", "b"]), (other, ["c"])]}
+        assert module._encoders == {"a": shared, "b": shared, "c": other}
+
+    def test_each_encoder_encodes_a_batch_once(self, monkeypatch):
+        from csp_gateway.server.modules.web.perspective import apply_batch
+
+        shared = MyTestOptionalSubStruct.psp_arrow_encoder()
+        other = MyTestOptionalSubStruct.psp_arrow_encoder({"sub_a"})
+        calls = []
+        for encoder in (shared, other):
+            original = encoder.encode_ipc
+            monkeypatch.setattr(encoder, "encode_ipc", lambda items, encoder=encoder, original=original: calls.append(encoder) or original(items))
+        client = Server().new_local_client()
+        tables = {name: client.table(encoder.empty_ipc(), name=name) for name, encoder in (("a", shared), ("b", shared), ("c", other))}
+
+        apply_batch({"channel": [MyTestOptionalSubStruct(sub_a=1)]}, {"channel": [(shared, ["a", "b"]), (other, ["c"])]}, tables)
+
+        assert calls == [shared, other]
+        assert [tables[name].size() for name in ("a", "b", "c")] == [1, 1, 1]
+        assert "sub_a" in tables["a"].columns()
+        assert "sub_a" not in tables["c"].columns()
 
 
 class TestDefaultLayoutTables:

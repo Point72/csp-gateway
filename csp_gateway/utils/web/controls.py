@@ -29,18 +29,14 @@ class Controls(GatewayStruct):
             self._lock.release()
 
     def update_str(self):
-        #  NOTE: This is needed to resolve a race condition between
-        #  Web API and Perspective. We need to create a data_str
-        #  because perspective cannot read python dict types and
-        #  csp.Structs.to_json creates dictionaries. This will
-        #  be removed when better to_json support is added.
+        #  NOTE: Resolves a race between the Web API, which waits on `data`,
+        #  and Perspective, which renders `data` as JSON text. `data_str` is
+        #  the same JSON, set once so both see an identical value.
         self.lock()
         if self.data_str == "":
             self.data_str = orjson.dumps(self.data).decode()
         self.unlock()
 
     @override
-    def psp_flatten(self, custom_jsonifier=None):
+    def psp_prepare(self):
         self.update_str()
-        res = super().psp_flatten(custom_jsonifier)
-        return res

@@ -632,8 +632,8 @@ class TestDefaultLayout:
 
 
 class TestTableOptions:
-    """Per-table `architecture`/`index`/`limit` reach the panel, which is what mirrors a
-    `client-server` table into a local worker instead of reading it off the websocket."""
+    """Per-table `architecture` reaches the panel, which is what mirrors a `client-server` table
+    into a local worker instead of reading it off the websocket."""
 
     @staticmethod
     def _table_specs(panel):
@@ -643,13 +643,14 @@ class TestTableOptions:
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
 
-    @pytest.mark.parametrize("master_theme", [None, "Sidebar"])
-    def test_channel_defaults_and_storage_are_configured_from_python(self, master_theme):
+    def test_channel_defaults_and_storage_are_configured_from_python(self):
         ui = _bare_ui()
         channels = {"orders": {"table": "orders", "columns": ["quantity"]}}
-        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels, master_theme=master_theme)
-        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["channels"]["value"] == channels
-        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["master_theme"]["value"] == master_theme
+        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels)
+        fields = panel.to_node()["bindings"]["config"]["compute"]["fields"]
+        assert fields["channels"]["value"] == channels
+        # spaday-perspective 0.9 applies the page theme to every panel, so there is no master theme.
+        assert "master_theme" not in fields
         assert ui._store_persistence == {"saved_layout": "csp_gateway_demo_config"}
         ui.persist_store(legacy_layout="old-layout")
         assert ui._store_persistence["legacy_layout"] == "old-layout"
@@ -667,21 +668,26 @@ class TestTableOptions:
             "fills",
         ]
 
-    def test_module_reports_effective_architecture_index_and_limit(self):
+    def test_module_reports_effective_architecture_only(self):
+        # The client-side replica inherits its index and limit from the server table, so the panel is
+        # sent neither; an explicit index would apply to the replica instead.
         module = MountPerspectiveTables(
             channel_selection=["example"],
             default_architecture="server",
             architectures={"example": "client-server"},
             indexes={"example": "id"},
-            limits={"example": 5},
         )
-        assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id", "limit": 5}
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
 
-    def test_multi_index_table_reports_the_computed_index(self):
+        module = MountPerspectiveTables(channel_selection=["example"], limits={"example": 5}, default_index="id")
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
+
         module = MountPerspectiveTables(channel_selection=["example"], indexes={"example": ["a", "b"]})
-        module._computed_indexes["example"] = ("a-b", ["a", "b"])
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
 
-        assert module._ui_table_options("example")["index"] == "a-b"
+    def test_server_views_do_not_get_the_default_index(self):
+        module = MountPerspectiveTables(default_index="id", server_views={"by_g": {"table": "base", "group_by": ["g"], "group_rollup_mode": "flat"}})
+        assert module._ui_table_options("by_g") == {"architecture": "client-server"}
 
 
 class TestActionFailureToast:
