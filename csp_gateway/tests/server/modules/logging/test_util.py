@@ -3,6 +3,7 @@ import timeit
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import pyarrow
 import pytest
 
 from csp_gateway.server.modules.logging.util import (
@@ -273,8 +274,9 @@ def test_monitoring_event_class_methods():
     event_dict = event.to_dict()
     assert event_dict["title"] == "Test Event"
     assert event_dict["text"] == "This is a test event"
-    flatten_data = event.psp_flatten()[0]
-    assert '{"env":"test","monitoring_id":"event_id"}' == flatten_data["tag_str"]
+    encoder = MonitoringEvent.psp_arrow_encoder()
+    assert encoder.schema.field("tags").type == pyarrow.map_(pyarrow.string(), pyarrow.string())
+    assert encoder.encode([event])["tags"].to_pylist() == [[("env", "test"), ("monitoring_id", "event_id")]]
 
 
 def test_monitoring_metric_class_methods():
@@ -290,8 +292,7 @@ def test_monitoring_metric_class_methods():
     assert metric_dict["metric"] == "test_metric"
     assert metric_dict["type"] == "gauge"
     assert metric_dict["points"][0][1] == 1.0
-    flatten_data = metric.psp_flatten()[0]
-    assert '{"env":"test","monitoring_id":"metric_id"}' == flatten_data["tag_str"]
+    assert MonitoringMetric.psp_arrow_encoder().encode([metric])["tags"].to_pylist() == [[("env", "test"), ("monitoring_id", "metric_id")]]
 
 
 @patch("opsgenie_sdk.CreateAlertPayload")

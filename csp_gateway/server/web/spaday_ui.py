@@ -206,7 +206,37 @@ MAIN_PAGE_CSS = """<style>
          edge color via context-stroke. */
       .gateway-sets .spaday-dagre-edge-line { stroke: #f66; stroke-width: 2; }
       .gateway-gets .spaday-dagre-edge-line { stroke-width: 2; stroke-dasharray: 5 5; }
+      spaday-regular-layout.spa regular-layout-frame { --rl-tab-width: 1fr !important; }
     </style>"""
+
+# TEMPORARY: remove with the next spaday-perspective release (after 0.10.0).
+#
+# spaday-perspective 0.10.0's Ctrl+C / Cmd+C handler copies a grid's selection as CSV with a header
+# row (`csv-selected`), where 0.9 copied what the grid shows, tab-separated, which is what pastes
+# into a spreadsheet as cells. This restores that with the viewer's `plugin` export method. It
+# listens on the document in the capture phase, so it runs before the panel's own handler, which
+# skips events that are already default-prevented. As in 0.9, nothing is copied without a selection
+# (`plugin` would otherwise copy the whole grid). Failures are reported as the panel reports its
+# own, as `perspective-copy-error`. The conditions mirror the panel's handler: inputs, editable
+# content and native text selections keep their copying.
+COPY_SHORTCUT_SCRIPT = """<script>
+    document.addEventListener('keydown', event => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      if (event.key.toLowerCase() !== 'c' || event.defaultPrevented || getSelection()?.toString()) return;
+      const path = event.composedPath().filter(node => node instanceof HTMLElement);
+      if (path.some(node => node.matches('input, textarea, select') || node.isContentEditable)) return;
+      const grid = path.find(node => node.matches('perspective-viewer-datagrid'));
+      const panel = grid?.closest('perspective-panel');
+      if (!grid?.slot || !panel?.viewer) return;
+      event.preventDefault();
+      if (!panel.viewer.getSelection({panel: grid.slot})) return;
+      panel.copy({method: 'plugin', panel: grid.slot}).catch(error => panel.dispatchEvent(
+        new CustomEvent('perspective-copy-error', {
+          detail: {message: String(error?.message ?? error), error}, bubbles: true, composed: true,
+        })
+      ));
+    }, true);
+    </script>"""
 
 # The login and logout pages: one centred card on the page canvas.
 AUTH_PAGE_CSS = (
@@ -542,7 +572,6 @@ class GatewayUI:
         default_layout: dict[str, Any] | None = None,
         table_options: dict[str, dict[str, Any]] | None = None,
         channels: dict[str, dict[str, Any]] | None = None,
-        master_theme: str | None = None,
         shared_layouts_route: str | None = None,
     ) -> Any:
         """A Perspective workspace panel (the primary data view), bound to the theme + `view` state.
@@ -552,10 +581,10 @@ class GatewayUI:
         Otherwise ``default_tables`` are the ones the generated layout opens, defaulting to all of
         ``tables``. ``schemas`` (table name -> column name -> type) lets the generated layout apply
         per-table defaults (timestamp sort, hidden id column). ``table_options`` carries each table's
-        ``architecture``/``index``/``limit``, which is what puts a ``client-server`` table in a local
-        worker rather than reading it off the websocket. ``channels`` supplies configurations for
-        channels opened through the panel's picker or ``openChannel`` method. Add it to `Region.MAIN`.
-        ``master_theme`` overrides the theme of filter-source panels; other panels follow the page theme.
+        ``architecture``, which is what puts a ``client-server`` table in a local worker (a replica that
+        inherits the server table's index and limit) rather than reading it off the websocket.
+        ``channels`` supplies configurations for tables opened through the panel's ``openChannel``
+        method. Add it to `Region.MAIN`. The page theme applies to every panel, masters included.
         ``shared_layouts_route`` serves layouts by id; a page opened with ``?layout=<id>`` starts on it.
         """
         tables = list(tables or [])
@@ -622,7 +651,6 @@ class GatewayUI:
                         "tables": table_specs,
                         "layout": layout_expr,
                         "channels": channels or {},
-                        "master_theme": master_theme,
                     }
                 ),
             )
@@ -645,19 +673,16 @@ class GatewayUI:
                     ),
                 ),
             )
+            # Ctrl+C in a grid goes through the viewer's `copy`, which rejects when nothing is
+            # selected; that is not worth a toast. `detail.message` already is the error's message.
             .on(
                 "perspective-copy-error",
-                Invoke(
-                    by_id(_TOAST_ID),
-                    "notify",
-                    obj(
-                        {
-                            "message": concat(
-                                event_prop("detail.message"),
-                                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
-                            ),
-                            "tone": "danger",
-                        }
+                If(
+                    not_(eq(event_prop("detail.message"), "Nothing is selected")),
+                    Invoke(
+                        by_id(_TOAST_ID),
+                        "notify",
+                        obj({"message": concat("Copy failed: ", event_prop("detail.message")), "tone": "danger"}),
                     ),
                 ),
             )
@@ -699,8 +724,8 @@ class GatewayUI:
     def save_layout_button(self) -> Any:
         """A header button that saves the current Perspective workspace in the browser.
 
-        `saveClean` strips the transient fields (theme, column size overrides) before the layout is
-        persisted to localStorage. Saving updates the custom layout and selects it.
+        `saveClean` is spaday's portable save; the result is persisted to localStorage. Themes and column widths are kept; the page theme is
+        applied again on restore. Saving updates the custom layout and selects it.
         """
         return (
             WaButton(appearance="plain", title="Save current layout")
@@ -722,7 +747,8 @@ class GatewayUI:
     def download_layout_button(self) -> Any:
         """A header button that downloads the current Perspective workspace as a JSON file.
 
-        The file is assembled client-side from `saveClean` — no server round-trip.
+        The file is assembled client-side from `saveClean`, spaday's portable save, which keeps themes
+        and column widths — no server round-trip.
         """
         return (
             WaButton(appearance="plain", title="Download layout")
@@ -740,7 +766,9 @@ class GatewayUI:
     def share_layout_button(self, route: str) -> Any:
         """A header button that stores the current Perspective workspace on the server for sharing.
 
-        The returned id goes into the URL as ``?layout=<id>`` and the link is copied to the clipboard.
+        The workspace comes from `saveClean`, spaday's portable save, which keeps themes and column
+        widths. The returned id goes into the URL as ``?layout=<id>`` and the link is copied to the
+        clipboard.
         """
         return (
             WaButton(appearance="plain", title="Share layout link")
@@ -1019,7 +1047,6 @@ class GatewayUI:
         title = ui_config.get("title") or getattr(self._settings, "TITLE", "Gateway")
         version = getattr(self._settings, "VERSION", None)
         header_logo = ui_config.get("headerLogo") or "/favicon.ico"
-        footer_logo = ui_config.get("footerLogo")
         right_drawer_id = "gateway-settings"
 
         # Built-in chrome components (shell, not module contributions).
@@ -1035,13 +1062,6 @@ class GatewayUI:
         )
         email = getattr(self._settings, "EMAIL", None)
         email_button = self.link_button("Email", f"mailto:{email}?subject={title} Support") if email else None
-        attribution = (
-            element("span")
-            .child("Built with ")
-            .child(element("a", href="https://github.com/perspective-dev/perspective", target="_blank").text("Perspective").style(color="inherit"))
-            .child(" and ")
-            .child(element("a", href="https://github.com/1kbgz/spaday", target="_blank").text("Spaday").style(color="inherit"))
-        )
 
         # Compose region contents (built-in chrome merged with module contributions, order-sorted).
         right_drawer_items = self._region(Region.DRAWER_RIGHT, (100, email_button))
@@ -1086,10 +1106,6 @@ class GatewayUI:
 
         main_content = self._main_content(workspace, bottom_drawer_items, bottom_drawer_panels, bottom_tabbed, bottom_label)
 
-        footer_logo_el = element("img", src=self.url(footer_logo), alt=title).style(height="1.2rem") if footer_logo else None
-        footer_left = self._region(Region.FOOTER_LEFT, (-10, footer_logo_el))
-        footer_right = self._region(Region.FOOTER_RIGHT, (100, attribution))
-
         # Compose via spaday's AppShell: it lays out Nav / Body(Gutter, Main, Gutter) / Footer and places
         # the drawer/overlay contributions at the App root. `containers` styles the region wrappers
         # (full-bleed Main, scrollable gutters) since those aren't stylable through the contribution API.
@@ -1109,8 +1125,6 @@ class GatewayUI:
         shell.add(Region.MAIN, main_content)
         if gutter_right:
             shell.add(Region.GUTTER_RIGHT, *gutter_right)
-        shell.add(Region.FOOTER_LEFT, *footer_left)
-        shell.add(Region.FOOTER_RIGHT, *footer_right)
 
         if right_drawer_items:
             shell.add(
@@ -1477,7 +1491,7 @@ class GatewayUI:
             persist={"dark": "csp-gateway:dark", **self._store_persistence},
             url=self._url_fields,
             scripts=scripts,
-            head=PAGE_CSS + MAIN_PAGE_CSS + custom_head + error_head + favicon_head,
+            head=PAGE_CSS + MAIN_PAGE_CSS + COPY_SHORTCUT_SCRIPT + custom_head + error_head + favicon_head,
             title=title,
             prefix=root,
             lifecycle=Lifecycle(elements=elements),
