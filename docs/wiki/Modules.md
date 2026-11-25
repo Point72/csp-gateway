@@ -939,10 +939,29 @@ modules:
 Additional configuration is available:
 
 - **limits** (`Dict[str, int] = {}`): configuration of Perspective table limits
-- **indexes** (`Dict[str, str | List[str]] = {}`): configuration of Perspective table indexes. A list of fields makes a composite index, which keys rows by every field together.
+- **indexes** (`Dict[str, str | List[str]] = {}`): configuration of Perspective table indexes. A list of fields makes a composite index, which keys rows by every field together. A record updates the row with its index: fields it leaves unset keep the row's values, and a field set to `None` clears it. Each batch of updates is sent with the fields its first record sets, so records that tick within one `update_interval` should set the same fields: a field only a later record sets is dropped, with a warning logged the first time, and one a later record leaves unset is cleared. The unset fields of a nested struct are cleared too.
+- **null_unset_fields** (`bool = False`): write the fields a record leaves unset to an indexed table as null, rather than leaving them out of the update
 - **update_interval** (`timedelta = Field(default=timedelta(seconds=2)`): default perspective table update interval
 - **default_index** (`Optional[str]`): default index on all perspective tables, e.g. `id`
 - **perspective_field** (`str`): Optional field to allow a `perspective.Server` to be mounted on a `GatewayChannels` instance, to allow `GatewayModules` to interact with Perspective independent of this module
+
+### Pydantic serializers are slow
+
+Perspective shows what a struct's pydantic serializers return, as the REST API does, but a struct type that has one of its own is several times slower to feed to Perspective:
+
+| Struct type                                                                     | Encoding 10,000 records |
+| ------------------------------------------------------------------------------- | ----------------------- |
+| No serializer of its own                                                        | about 5 ms              |
+| A serializer (`@field_serializer`, `@model_serializer`, `PlainSerializer`, ...) | about 25 ms             |
+| A JSON-only serializer (`when_used="json"` or `when_used="json-unless-none"`)   | about 45 ms             |
+
+- **No serializer**: columns are built straight from the records' attributes.
+- **A serializer**: every record is dumped with `model_dump()` first, which makes a dict per record.
+- **A JSON-only serializer**: every record is dumped a second time, in JSON mode, for the fields the serializer applies to.
+
+A struct type that holds one of these, as a field or in a list, is read the same slow way. The serializers `GatewayStruct` and `csp.Enum` come with do not count.
+
+A JSON-only serializer has to return a value of the field's own type, because the column's type comes from the field's annotation: one that formats a `float` as text fails the update, which is logged and dropped. Dates and times are the exception, and may be returned as ISO 8601 text. The serializer is not run on a field the record leaves unset.
 
 ## MountRestRoutes
 

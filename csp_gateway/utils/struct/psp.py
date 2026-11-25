@@ -1,5 +1,5 @@
 import types
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Container, Iterable
 from datetime import date, datetime
 from enum import Enum as PyEnum
 from itertools import accumulate
@@ -376,10 +376,13 @@ class _ArrowSpec(NamedTuple):
     fixers: dict[str, Callable[[Any], Any]]
     #: The spec of each struct column, by column name.
     nested: dict[str, "_ArrowSpec"]
+    #: The columns a JSON-only serializer applies to, which are read from a JSON-mode dump: see `_json_serialized`.
+    json: frozenset[str] = frozenset()
 
 
 def _arrow_spec(cls, excluded_columns: ExcludedColumns | None) -> _ArrowSpec:
-    spec = _ArrowSpec(cls, _columns(cls, excluded_columns), [], {}, {})
+    columns = _columns(cls, excluded_columns)
+    spec = _ArrowSpec(cls, columns, [], {}, {}, _json_serialized(cls, columns))
     for column in spec.columns:
         fix = None
         if column.kind == "struct":
@@ -408,27 +411,25 @@ def _arrow_spec(cls, excluded_columns: ExcludedColumns | None) -> _ArrowSpec:
     return spec
 
 
-def _raw_filler(spec: _ArrowSpec) -> Callable[[dict, Any], None] | None:
-    """For the `model_dump` path: sets raw overrides in a dumped row from the record it was dumped from.
+def _filler(spec: _ArrowSpec, own: Callable[[_ArrowSpec], Callable[[dict, Any], None] | None]) -> Callable[[dict, Any], None] | None:
+    """For the `model_dump` path: applies `own` to a dumped row and the record it was dumped from, and to the structs in them.
 
-    None if neither `spec` nor a struct nested in it has one. A cell is filled only where the dumped
-    row has a value, so fields `model_dump` leaves out or None stay null, as they are when reading attributes.
+    `own(spec)` is what to apply to the rows of one struct type, or None. None if neither `spec` nor a
+    struct nested in it has anything to apply.
     """
-    raw = {column.name: column.override.convert for column in spec.columns if column.kind == "override" and column.override.raw}
+    fill_own = own(spec)
     nested = {}
     for column in spec.columns:
         if column.kind == "struct":
-            fill_nested = _raw_filler(spec.nested[column.name])
+            fill_nested = _filler(spec.nested[column.name], own)
             if fill_nested is not None:
                 nested[column.name] = (fill_nested, column.is_list)
-    if not raw and not nested:
+    if fill_own is None and not nested:
         return None
 
     def fill(row: dict, record: Any) -> None:
-        for name, convert in raw.items():
-            if row.get(name) is not None:
-                value = getattr(record, name)
-                row[name] = value if value is None or convert is None else convert(value)
+        if fill_own is not None:
+            fill_own(row, record)
         for name, (fill_nested, is_list) in nested.items():
             dumped = row.get(name)
             if dumped is None:
@@ -444,13 +445,68 @@ def _raw_filler(spec: _ArrowSpec) -> Callable[[dict, Any], None] | None:
     return fill
 
 
+def _raw_filler(spec: _ArrowSpec) -> Callable[[dict, Any], None] | None:
+    """Sets the raw overrides of a dumped row from the record's attributes.
+
+    A cell is filled only where the dumped row has a value, so fields `model_dump` leaves out or None
+    stay null, as they are when reading attributes.
+    """
+    raw = {column.name: column.override.convert for column in spec.columns if column.kind == "override" and column.override.raw}
+    if not raw:
+        return None
+
+    def fill(row: dict, record: Any) -> None:
+        for name, convert in raw.items():
+            if row.get(name) is not None:
+                value = getattr(record, name)
+                row[name] = value if value is None or convert is None else convert(value)
+
+    return fill
+
+
+def _from_json(arrow_type: pyarrow.DataType) -> Callable[[Any], Any]:
+    """Turns a JSON-mode value into what a column of `arrow_type` is built from: JSON has dates and times as text."""
+    if pyarrow.types.is_timestamp(arrow_type) or pyarrow.types.is_date(arrow_type):
+        parse = datetime.fromisoformat if pyarrow.types.is_timestamp(arrow_type) else date.fromisoformat
+        return lambda value: parse(value) if isinstance(value, str) else value
+    if pyarrow.types.is_list(arrow_type):
+        element = _from_json(arrow_type.value_type)
+        return lambda value: [element(item) for item in value] if isinstance(value, list) else value
+    if pyarrow.types.is_struct(arrow_type):
+        children = {field.name: _from_json(field.type) for field in arrow_type}
+        return lambda value: {k: children[k](v) if k in children else v for k, v in value.items()} if isinstance(value, dict) else value
+    return lambda value: value
+
+
+def _json_filler(spec: _ArrowSpec) -> Callable[[dict, Any], None] | None:
+    """Sets the JSON-serialized columns of a dumped row from a JSON-mode dump of the record.
+
+    Only the fields the row has, so that a serializer is not run on a field the record leaves unset.
+    This is a second dump of every record, after the first: the slowest way a struct type is read.
+    """
+    converts = {field.name: _from_json(field.type) for field in spec.fields if field.name in spec.json}
+    if not converts:
+        return None
+
+    def fill(row: dict, record: Any) -> None:
+        names = converts.keys() & row.keys()
+        if names:
+            dumped = record.model_dump(mode="json", include=names, by_alias=False, warnings=False)
+            for name in names & dumped.keys():
+                row[name] = converts[name](dumped[name])
+
+    return fill
+
+
 # Reading attributes instead of `model_dump`. Attribute values equal what `model_dump` (python mode)
 # returns unless a serializer runs on the way, so a struct type is read this way only when the only
 # serializers it meets are ones the columns below reproduce: GatewayStruct's own (the timestamp's is
-# JSON-only, and implicitly unset fields are nulled per record), json-only ones, csp's numpy arrays
-# (`tolist()`, which a list column reproduces), enums (always written as names), dicts serialized
-# to JSON text and overridden fields (which still go through `model_dump`), and raw overrides (whose
-# struct type asks for the attribute). Anything else falls back to `model_dump`.
+# JSON-only and gives the same time, and implicitly unset fields are nulled per record), csp's numpy
+# arrays (`tolist()`, which a list column reproduces), enums (always written as names), dicts
+# serialized to JSON text and overridden fields (which still go through `model_dump`), and raw
+# overrides (whose struct type asks for the attribute). Anything else falls back to `model_dump`,
+# which costs a dict per record. A struct type's other JSON-only serializers cost a second, JSON-mode
+# dump per record on top of that: Perspective shows what they return, as the REST API does.
 
 
 def _json_only(serializer: dict) -> bool:
@@ -469,8 +525,54 @@ def _resolve(schema: dict, definitions: dict) -> dict:
             return schema
 
 
+def _model_schema(cls) -> tuple[dict, dict, dict] | None:
+    """`cls`'s pydantic core schema as its model, its fields by name and the definitions they share; None for another shape."""
+    schema = cls.__pydantic_core_schema__
+    definitions: dict = {}
+    if schema.get("type") == "definitions":
+        definitions = {d["ref"]: d for d in schema["definitions"]}
+        schema = schema["schema"]
+    model = _resolve(schema, definitions)
+    if model.get("type") != "model":
+        return None
+    model_fields = _resolve(model["schema"], definitions)
+    if model_fields.get("type") != "model-fields":
+        return None
+    return model, model_fields["fields"], definitions
+
+
+def _json_serialized(cls, columns: list[_Column]) -> frozenset[str]:
+    """The columns of `cls` a JSON-only serializer applies to: the field's own, or the model's, which applies to them all.
+
+    Not GatewayStruct's serializer of the timestamp nor csp's of an enum, which write as text what
+    the column has already, nor an overridden column, which its struct type says how to show.
+    """
+    from .base import GatewayStruct
+
+    try:
+        model, fields, definitions = _model_schema(cls) or ({}, {}, {})
+        names = [column.name for column in columns if column.kind != "override" and column.name in fields]
+        if _json_only(model.get("serialization") or {}):
+            return frozenset(names)
+        own = (GatewayStruct._serialize_timestamp, CspEnum._serialize)
+        return frozenset(
+            name
+            for name in names
+            if any(
+                _json_only(serializer) and serializer.get("function") not in own for serializer in _serializers(fields[name]["schema"], definitions)
+            )
+        )
+    except Exception:  # noqa: BLE001 -- best-effort read of pydantic's internal core schema, as `_reads_like_model_dump` is
+        return frozenset()
+
+
 def _runs_python_serializer(schema: dict, definitions: dict) -> bool:
-    """Whether a python-mode serializer can run anywhere in a field's schema, short of a nested model.
+    """Whether a python-mode serializer can run anywhere in a field's schema, short of a nested model."""
+    return any(not _json_only(serializer) for serializer in _serializers(schema, definitions))
+
+
+def _serializers(schema: dict, definitions: dict) -> Iterable[dict]:
+    """The serializers anywhere in a field's schema, short of a nested model.
 
     Nested models are checked as their own struct type.
     """
@@ -489,8 +591,8 @@ def _runs_python_serializer(schema: dict, definitions: dict) -> bool:
                 # Its own serializer, and its fields, are checked when its struct type is.
                 continue
             serializer = node.get("serialization")
-            if serializer is not None and not _json_only(serializer):
-                return True
+            if serializer is not None:
+                yield serializer
             if kind == "definition-ref":
                 ref = node["schema_ref"]
                 if ref not in seen:
@@ -498,7 +600,6 @@ def _runs_python_serializer(schema: dict, definitions: dict) -> bool:
                     stack.append(definitions.get(ref))
                 continue
         stack.extend(value for key, value in node.items() if key not in ("serialization", "metadata", "default") and isinstance(value, (dict, list)))
-    return False
 
 
 def _field_annotation(cls, name: str) -> Any:
@@ -523,22 +624,14 @@ def _check_reads_like_model_dump(spec: _ArrowSpec) -> bool:
     from .base import GatewayStruct
 
     cls = spec.cls
-    if issubclass(cls, GatewayStruct) and cls._implicitly_unset is not GatewayStruct._implicitly_unset:
+    if spec.json or (issubclass(cls, GatewayStruct) and cls._implicitly_unset is not GatewayStruct._implicitly_unset):
         return False
-    schema = cls.__pydantic_core_schema__
-    definitions: dict = {}
-    if schema.get("type") == "definitions":
-        definitions = {d["ref"]: d for d in schema["definitions"]}
-        schema = schema["schema"]
-    model = _resolve(schema, definitions)
-    if model.get("type") != "model":
+    model_schema = _model_schema(cls)
+    if model_schema is None:
         return False
+    model, fields, definitions = model_schema
     serializer = model.get("serialization")
     if serializer is not None and not _json_only(serializer) and serializer.get("function") is not GatewayStruct._drop_implicitly_unset:
-        return False
-    model_fields = _resolve(model["schema"], definitions)
-    fields = model_fields.get("fields") if model_fields.get("type") == "model-fields" else None
-    if fields is None:
         return False
     for column in spec.columns:
         field = fields.get(column.name)
@@ -630,8 +723,12 @@ class _AttributeColumns:
         maybe_unset = getattr(spec.cls, "_maybe_unset_fields", None)
         self._maybe_unset = frozenset(maybe_unset()) & set(self._names) if maybe_unset is not None else frozenset()
 
-    def arrays(self, records: list[Any]) -> list[pyarrow.Array]:
-        """One array per column; a `None` record is a null row of every column.
+    def unset(self, record: Any) -> frozenset[str]:
+        """The columns `record` leaves unset, which `model_dump` would leave out of it."""
+        return self._maybe_unset - record.__pydantic_fields_set__
+
+    def arrays(self, records: list[Any], without: Container[str] = ()) -> list[pyarrow.Array]:
+        """One array per column, less those named in `without`; a `None` record is a null row of every column.
 
         Nothing is made per record that the garbage collector tracks: such objects, alive until the
         batch is encoded, are promoted to its oldest generation and set off full collections, which
@@ -639,6 +736,8 @@ class _AttributeColumns:
         """
         out = []
         for name, build in zip(self._names, self._builders):
+            if name in without:
+                continue
             if name in self._dumped:
                 fix = self._dumped[name]
                 values = [
@@ -697,7 +796,14 @@ class PspArrowEncoder:
     that are not a map of scalars become JSON strings.
 
     Columns are built straight from the structs' attributes where that gives what `model_dump` would,
-    which avoids a Python dict per record; other struct types go through `model_dump`.
+    which avoids a Python dict per record. A struct type with a pydantic serializer of its own, or
+    holding one that has, goes through `model_dump` instead, which is several times slower; one whose
+    serializer is JSON-only is dumped a second time in JSON mode, which is slower again.
+
+    A struct can leave fields unset. `encode` gives those a null in every row by default. With
+    `partial` it leaves out the columns the first item leaves unset instead, taking the first item
+    to set every field the batch does: an indexed table keeps a row's value only for a column the
+    update does not carry, and writes a null as a null.
     """
 
     def __init__(self, cls: type, excluded_columns: ExcludedColumns | None = None):
@@ -706,8 +812,10 @@ class PspArrowEncoder:
         #: The nested Arrow schema of the rows `encode` produces.
         self.schema = pyarrow.schema(spec.fields)
         self._fix = _struct_fixer(spec.fixers) if spec.fixers else None
-        self._fill_raw = _raw_filler(spec)
+        self._fill_json = _filler(spec, _json_filler)
+        self._fill_raw = _filler(spec, _raw_filler)
         self._attributes = _attribute_columns(spec)
+        self._warned_of_dropped = False
 
     def empty_ipc(self) -> bytes:
         """An Arrow IPC stream of the schema with no rows, which creates a Perspective table of these rows."""
@@ -716,36 +824,56 @@ class PspArrowEncoder:
             pass
         return out.getvalue().to_pybytes()
 
-    def encode(self, items: Iterable[Any]) -> pyarrow.Table:
+    def encode(self, items: Iterable[Any], partial: bool = False) -> pyarrow.Table:
         items = list(items)
         for item in items:
             prepare = getattr(item, "psp_prepare", None)
             if prepare is not None:
                 prepare()
-        if self._attributes is not None:
-            return pyarrow.Table.from_arrays(self._attributes.arrays(items), schema=self.schema)
-        return self._encode_dumped(items)
+        if self._attributes is None:
+            return self._encode_dumped(items, partial)
+        unset = self._attributes.unset(items[0]) if partial and items else ()
+        if unset and not self._warned_of_dropped:
+            self._warn_of_dropped(unset, (item.__pydantic_fields_set__ for item in items))
+        return pyarrow.Table.from_arrays(self._attributes.arrays(items, unset), schema=self._without(unset))
 
-    def encode_ipc(self, items: Iterable[Any]) -> bytes:
+    def encode_ipc(self, items: Iterable[Any], partial: bool = False) -> bytes:
         """`encode` as an Arrow IPC stream, which Perspective takes as is, so one batch can update several tables."""
-        return self._ipc(self.encode(items))
+        table = self.encode(items, partial)
+        out = pyarrow.BufferOutputStream()
+        with pyarrow.RecordBatchStreamWriter(out, table.schema) as writer:
+            writer.write_table(table)
+        return out.getvalue().to_pybytes()
 
-    def _encode_dumped(self, items: list[Any]) -> pyarrow.Table:
+    def _warn_of_dropped(self, unset: frozenset[str] | set[str], fields_set: Iterable[Iterable[str]]) -> None:
+        """Warn, once for this encoder, where a partial batch drops a field its first item leaves unset and a later one sets."""
+        dropped = next((unset.intersection(fields) for fields in fields_set if not unset.isdisjoint(fields)), None)
+        if dropped:
+            self._warned_of_dropped = True
+            log.warning(
+                f"Perspective update of {self.cls.__name__} dropped {sorted(dropped)}: the first record of the batch left them unset, "
+                "and the batch is sent with the fields its first record sets. Later drops are not logged."
+            )
+
+    def _without(self, unset: Container[str]) -> pyarrow.Schema:
+        return pyarrow.schema([field for field in self.schema if field.name not in unset]) if unset else self.schema
+
+    def _encode_dumped(self, items: list[Any], partial: bool = False) -> pyarrow.Table:
         """Encode through `model_dump`, for struct types whose attributes could serialize differently."""
         rows = [item.model_dump(by_alias=False, warnings=False) for item in items]
+        if self._fill_json is not None:
+            for row, item in zip(rows, items):
+                self._fill_json(row, item)
         if self._fix is not None:
             for row in rows:
                 self._fix(row)
         if self._fill_raw is not None:
             for row, item in zip(rows, items):
                 self._fill_raw(row, item)
-        return pyarrow.Table.from_pylist(rows, schema=self.schema)
-
-    def _ipc(self, table: pyarrow.Table) -> bytes:
-        out = pyarrow.BufferOutputStream()
-        with pyarrow.RecordBatchStreamWriter(out, self.schema) as writer:
-            writer.write_table(table)
-        return out.getvalue().to_pybytes()
+        unset = set(self.schema.names).difference(rows[0]) if partial and rows else ()
+        if unset and not self._warned_of_dropped:
+            self._warn_of_dropped(unset, rows)
+        return pyarrow.Table.from_pylist(rows, schema=self._without(unset))
 
 
 class PerspectiveUtilityMixin:

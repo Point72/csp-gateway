@@ -16,7 +16,7 @@ import pytest
 from csp import ts
 from csp.typing import Numpy1DArray
 from perspective import Server
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_serializer, model_serializer
 
 from csp_gateway import (
     Gateway,
@@ -26,7 +26,7 @@ from csp_gateway import (
     MountPerspectiveTables,
     TableConfig,
 )
-from csp_gateway.server.modules.web.perspective import migrate_perspective_layout
+from csp_gateway.server.modules.web.perspective import apply_batch, migrate_perspective_layout
 from csp_gateway.testing.harness import GatewayTestHarness
 from csp_gateway.utils.struct import psp as psp_module
 from csp_gateway.utils.struct.psp import PspArrowEncoder, PspField, psp_arrow_type, psp_schema
@@ -103,6 +103,8 @@ class _ModuleStub:
     def __init__(self):
         self._client = Server().new_local_client()
         self._table_insts = {}
+        self._partial_tables = set()
+        self.null_unset_fields = False
 
 
 class GWC(GatewayChannels):
@@ -1514,6 +1516,239 @@ class TestFieldOverrides:
         assert "a" in _encoder_for(Customized, None).schema.names
 
 
+class _Quote(GatewayStruct):
+    bid: float
+    ask: float
+
+
+class _Quoted(GatewayStruct):
+    symbol: str
+    price: float
+    quote: _Quote | None
+
+
+class _QuotedDumped(_Quoted):
+    """Read through `model_dump`: a python-mode serializer could give something other than the attribute."""
+
+    @field_serializer("price")
+    def _price(self, value):
+        return value
+
+
+@pytest.mark.parametrize("cls", [_Quoted, _QuotedDumped])
+class TestPartialUpdates:
+    """A partial batch carries only the columns its first record sets, so an indexed row keeps the rest."""
+
+    @staticmethod
+    def _encoder(struct):
+        encoder = struct.psp_arrow_encoder({"timestamp"})
+        assert (encoder._attributes is None) == (struct is _QuotedDumped)
+        return encoder
+
+    def _row(self, struct, *batches):
+        encoder = self._encoder(struct)
+        table = Server().new_local_client().table(encoder.empty_ipc(), index="id")
+        for batch in batches:
+            apply_batch({"channel": batch}, {"channel": [(encoder, ["t"])]}, {"t": table}, {"t"})
+        (row,) = table.view().to_records()
+        return row["symbol"], row["price"], row["quote.bid"], row["quote.ask"]
+
+    @staticmethod
+    def _full(struct):
+        return struct(id="a", symbol="X", price=10.0, quote=_Quote(bid=9.0, ask=11.0))
+
+    def test_an_indexed_row_keeps_what_a_batch_leaves_unset(self, cls):
+        assert self._row(cls, [self._full(cls)], [cls.model_validate({"id": "a", "symbol": "Y"})]) == ("Y", 10.0, 9.0, 11.0)
+
+    def test_an_explicit_none_clears_the_value(self, cls):
+        cleared = cls.model_validate({"id": "a", "price": None, "quote": None})
+        assert self._row(cls, [self._full(cls)], [cleared]) == ("X", None, None, None)
+
+    def test_the_first_record_sets_the_columns_of_the_batch(self, cls):
+        encoder = self._encoder(cls)
+        batch = [{"id": "a", "price": 1.0}, {"id": "b", "symbol": "Y", "price": 2.0}, {"id": "c"}]
+        table = encoder.encode([cls.model_validate(values) for values in batch], partial=True)
+        # A field only a later record sets is dropped, and one a later record leaves unset is null
+        assert table.to_pylist() == [{"id": "a", "price": 1.0}, {"id": "b", "price": 2.0}, {"id": "c", "price": None}]
+        assert pyarrow.ipc.open_stream(encoder.encode_ipc([cls.model_validate(batch[0])], partial=True)).read_all().schema == table.schema
+
+    def test_a_dropped_field_is_warned_of_once(self, cls, caplog):
+        encoder = self._encoder(cls)
+        same = [cls.model_validate({"id": "a", "price": 1.0}), cls.model_validate({"id": "b"})]
+        dropping = [*same, cls.model_validate({"id": "c", "symbol": "Y", "quote": None})]
+        with caplog.at_level("WARNING"):
+            encoder.encode(same, partial=True)
+            encoder.encode(dropping)
+            assert not caplog.records
+            encoder.encode(dropping, partial=True)
+            encoder.encode(dropping, partial=True)
+        (record,) = caplog.records
+        assert f"{cls.__name__} dropped ['quote', 'symbol']" in record.getMessage()
+
+    def test_the_unset_fields_of_a_struct_field_are_null(self, cls):
+        partial = cls.model_validate({"id": "a", "quote": {"bid": 8.0}})
+        assert self._row(cls, [self._full(cls)], [partial]) == ("X", 10.0, 8.0, None)
+
+    def test_every_column_is_sent_unless_partial(self, cls):
+        encoder = self._encoder(cls)
+        (row,) = encoder.encode([cls.model_validate({"id": "a", "price": 1.0})]).to_pylist()
+        assert row == {"id": "a", "symbol": None, "price": 1.0, "quote": None}
+        assert encoder.encode([], partial=True).schema == encoder.schema
+
+
+class TestPartialUpdateTables:
+    @pytest.mark.parametrize("null_unset_fields", [False, True])
+    def test_add_table_notes_the_tables_to_update_partially(self, null_unset_fields):
+        module = _ModuleStub()
+        module.null_unset_fields = null_unset_fields
+        encoder = _Quoted.psp_arrow_encoder()
+        MountPerspectiveTables.add_table(module, "indexed", encoder, index="id")
+        MountPerspectiveTables.add_table(module, "appended", encoder, limit=5)
+        assert module._partial_tables == (set() if null_unset_fields else {"indexed"})
+        module._client = Server().new_local_client()
+        MountPerspectiveTables.add_table(module, "indexed", encoder)
+        assert module._partial_tables == set()
+
+    def test_a_table_that_appends_gets_every_column(self):
+        encoder = _Quoted.psp_arrow_encoder()
+        table = Server().new_local_client().table(encoder.empty_ipc(), limit=10)
+        batch = [_Quoted.model_validate({"id": "a", "symbol": "X"}), _Quoted.model_validate({"id": "a", "price": 10.0})]
+        apply_batch({"channel": batch}, {"channel": [(encoder, ["t"])]}, {"t": table})
+        assert [(row["symbol"], row["price"]) for row in table.view().to_records()] == [("X", None), (None, 10.0)]
+
+    def test_a_table_that_appends_shares_the_update_of_an_indexed_one(self):
+        encoder = _Quoted.psp_arrow_encoder()
+        client = Server().new_local_client()
+        tables = {"indexed": client.table(encoder.empty_ipc(), index="id"), "appended": client.table(encoder.empty_ipc(), limit=10)}
+        batches = [[_Quoted(id="a", symbol="X", price=10.0, quote=None)], [_Quoted.model_validate({"id": "a", "symbol": "Y"})]]
+        for batch in batches:
+            apply_batch({"channel": batch}, {"channel": [(encoder, ["indexed", "appended"])]}, tables, {"indexed"})
+        assert [(row["symbol"], row["price"]) for row in tables["indexed"].view().to_records()] == [("Y", 10.0)]
+        assert [(row["symbol"], row["price"]) for row in tables["appended"].view().to_records()] == [("X", 10.0), ("Y", None)]
+
+    @pytest.mark.parametrize("null_unset_fields", [False, True])
+    def test_the_module_updates_an_indexed_table(self, null_unset_fields):
+        module = MountPerspectiveTables(
+            tables={"include": ["index_channel"]},
+            indexes={"index_channel": "id"},
+            # Perspective explodes a list into rows, which a table indexed on `id` cannot hold
+            excluded_table_columns={"index_channel": {"sub": {"y"}}},
+            update_interval=timedelta(seconds=0.5),
+            null_unset_fields=null_unset_fields,
+        )
+        h = GatewayTestHarness(test_channels=[GWC.index_channel])
+        h.send(GWC.index_channel, MyTestStruct(id="a", z=MyTestEnum.a, sub=MyTestSubStruct(y=[1], x=5, z=1.5)))
+        # Past the update interval, so that the two records make two batches
+        h.delay(2 * module.update_interval)
+        h.send(GWC.index_channel, MyTestStruct.model_validate({"id": "a", "sub": {"x": 6}}))
+        h.delay(2 * module.update_interval)
+        csp.run(Gateway(modules=[h, module], channels=GWC()).graph, starttime=datetime(2023, 1, 1), endtime=timedelta(5))
+
+        view = module._server.new_local_client().open_table("index_channel").view()
+        deadline = time.monotonic() + 10
+        while (rows := view.to_records()) and rows[0]["sub.x"] != 6 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        (row,) = rows
+        assert (row["z"], row["sub.x"]) == (None if null_unset_fields else "a", 6)
+
+
+class _JsonLeaf(GatewayStruct):
+    n: float
+
+    @field_serializer("n", when_used="json")
+    def _n(self, value):
+        return value * 100
+
+
+class _JsonSerialized(GatewayStruct):
+    price: float
+    when: datetime
+    day: date
+    scaled: Annotated[list[float], PlainSerializer(lambda value: [item * 2 for item in value], when_used="json")] = []
+    leaf: _JsonLeaf | None = None
+    leaves: list[_JsonLeaf] = []
+
+    @field_serializer("price", when_used="json")
+    def _price(self, value):
+        return value * 100
+
+    @field_serializer("when", "day", when_used="json-unless-none")
+    def _same(self, value):
+        return value
+
+
+class _HoldsJsonLeaf(GatewayStruct):
+    leaf: _JsonLeaf
+
+
+class _JsonModel(GatewayStruct):
+    x: int
+    y: int = 1
+    leaf: _JsonLeaf | None = None
+
+    @model_serializer(mode="wrap", when_used="json")
+    def _double(self, handler):
+        return {name: value * 2 if isinstance(value, int) else value for name, value in handler(self).items()}
+
+
+class TestJsonOnlySerializers:
+    """Perspective shows what a JSON-only serializer returns, as the REST API does."""
+
+    def test_columns_show_what_the_serializer_returns(self):
+        own = {"id", "timestamp"}
+        encoder = _JsonSerialized.psp_arrow_encoder({"id": True, "timestamp": True, "leaf": own, "leaves": own})
+        record = _JsonSerialized(
+            price=1.5,
+            when=datetime(2024, 1, 2, 3, 4, 5),
+            day=date(2024, 1, 2),
+            scaled=[1.0, 2.0],
+            leaf=_JsonLeaf(n=1.0),
+            leaves=[_JsonLeaf(n=2.0), _JsonLeaf()],
+        )
+        assert encoder.encode([record]).to_pylist() == [
+            {
+                "price": 150.0,
+                "when": datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC),
+                "day": date(2024, 1, 2),
+                "scaled": [2.0, 4.0],
+                "leaf": {"n": 100.0},
+                "leaves": [{"n": 200.0}, {"n": None}],
+            }
+        ]
+
+    def test_the_table_shows_what_the_serializer_returns(self):
+        # Perspective explodes a list into rows, which a table indexed on `id` cannot hold
+        encoder = _JsonSerialized.psp_arrow_encoder({"scaled", "leaves"})
+        table = Server().new_local_client().table(encoder.empty_ipc(), index="id")
+        table.update(encoder.encode_ipc([_JsonSerialized(id="a", price=1.5, when=datetime(2024, 1, 2), day=date(2024, 1, 2), leaf=_JsonLeaf(n=1.0))]))
+        (row,) = table.view().to_records()
+        assert (row["price"], row["leaf.n"]) == (150.0, 100.0)
+
+    def test_a_serializer_is_not_run_on_a_field_left_unset(self):
+        encoder = _JsonSerialized.psp_arrow_encoder({"timestamp", "scaled", "leaves"})
+        (row,) = encoder.encode([_JsonSerialized.model_validate({"id": "a", "leaf": {}})]).to_pylist()
+        assert (row["price"], row["when"], row["leaf"]["n"]) == (None, None, None)
+        partial = encoder.encode([_JsonSerialized.model_validate({"id": "a", "price": 1.0})], partial=True)
+        assert partial.to_pylist() == [{"id": "a", "price": 100.0, "leaf": None}]
+
+    def test_a_json_only_model_serializer_applies_to_every_column(self):
+        encoder = _JsonModel.psp_arrow_encoder({"id", "timestamp"})
+        (row,) = encoder.encode([_JsonModel(x=2, leaf=_JsonLeaf(id="a", n=1.0))]).to_pylist()
+        assert (row["x"], row["y"]) == (4, 2)
+        assert (row["leaf"]["id"], row["leaf"]["n"]) == ("a", 100.0)
+        assert isinstance(row["leaf"]["timestamp"], datetime)
+
+    @pytest.mark.parametrize("cls", [_JsonSerialized, _JsonLeaf, _HoldsJsonLeaf, _JsonModel])
+    def test_struct_types_with_one_are_read_through_model_dump(self, cls):
+        assert cls.psp_arrow_encoder()._attributes is None
+
+    def test_the_serializers_of_timestamps_and_csp_enums_are_not_counted(self):
+        spec = psp_module._arrow_spec(_Wide, None)
+        assert {"timestamp", "csp_color"} <= {field.name for field in spec.fields}
+        assert spec.json == frozenset()
+        assert psp_module._json_serialized(object, []) == frozenset()
+
+
 class TestEncodeOncePerChannel:
     """A channel feeding several tables is encoded once per encoder those tables use."""
 
@@ -1535,7 +1770,9 @@ class TestEncodeOncePerChannel:
         calls = []
         for encoder in (shared, other):
             original = encoder.encode_ipc
-            monkeypatch.setattr(encoder, "encode_ipc", lambda items, encoder=encoder, original=original: calls.append(encoder) or original(items))
+            monkeypatch.setattr(
+                encoder, "encode_ipc", lambda items, partial, encoder=encoder, original=original: calls.append(encoder) or original(items, partial)
+            )
         client = Server().new_local_client()
         tables = {name: client.table(encoder.empty_ipc(), name=name) for name, encoder in (("a", shared), ("b", shared), ("c", other))}
 

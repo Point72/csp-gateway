@@ -1,6 +1,6 @@
 import warnings
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Container, Iterable
 from datetime import timedelta
 from hashlib import sha256
 from logging import getLogger
@@ -54,19 +54,22 @@ def _encoder_for(row_type: type, excluded_columns: Any) -> PspArrowEncoder:
     return make(excluded_columns) if make is not None else PspArrowEncoder(row_type, excluded_columns)
 
 
-def apply_batch(batch: dict[str, list], channel_groups: ChannelGroups, table_insts: dict[str, Table]) -> None:
-    """Encode each channel's batch once per encoder, and update every table that encoder feeds."""
+def apply_batch(batch: dict[str, list], channel_groups: ChannelGroups, table_insts: dict[str, Table], partial: Container[str] = ()) -> None:
+    """Encode each channel's batch once per encoder, and update every table that encoder feeds.
+
+    An encoder feeding one of the `partial` tables leaves out the columns the batch's first record leaves unset.
+    """
     for channel, items in batch.items():
         for encoder, table_names in channel_groups[channel]:
-            payload = encoder.encode_ipc(items)
+            payload = encoder.encode_ipc(items, any(table_name in partial for table_name in table_names))
             for table_name in table_names:
                 table_insts[table_name].update(payload)
 
 
-def pull_data_thread(queue: PickleableQueue, channel_groups: ChannelGroups, table_insts: dict[str, Table]):
+def pull_data_thread(queue: PickleableQueue, channel_groups: ChannelGroups, table_insts: dict[str, Table], partial: Container[str] = ()):
     while True:
         try:
-            apply_batch(queue.get(), channel_groups, table_insts)
+            apply_batch(queue.get(), channel_groups, table_insts, partial)
         except KeyboardInterrupt:
             raise
         except Exception:
@@ -186,6 +189,11 @@ class MountPerspectiveTables(GatewayModule):
     default_index: str | list[str] | None = Field(
         None, description="Default index field for all tables, i.e. 'id'. A list of fields makes a composite index."
     )
+    null_unset_fields: bool = Field(
+        False,
+        description="Write the fields a record leaves unset to an indexed table as null. By default each batch "
+        "of updates is sent without the fields its first record leaves unset, so that a row keeps its values for them.",
+    )
     architectures: dict[str, Literal["server", "client-server"]] = Field(
         description="Dict mapping table name to [perspective data architecture](https://perspective-dev.github.io/guide/explanation/architecture.html), default is client-server",
         default={},
@@ -275,6 +283,8 @@ class MountPerspectiveTables(GatewayModule):
     _shared_layouts: OrderedDict[str, dict] = PrivateAttr(default_factory=OrderedDict)
     _encoders: dict[str, PspArrowEncoder] = PrivateAttr(default_factory=dict)
     _channel_groups: ChannelGroups = PrivateAttr(default_factory=dict)
+    #: The indexed tables whose rows keep what an update leaves unset: all of them, unless `null_unset_fields`.
+    _partial_tables: set[str] = PrivateAttr(default_factory=set)
     _table_insts: dict[str, Table] = PrivateAttr(default={})
 
     _queue: PickleableQueue = PrivateAttr(default_factory=PickleableQueue)
@@ -356,6 +366,7 @@ class MountPerspectiveTables(GatewayModule):
     def _connect_all_tables(self, channels: GatewayChannels) -> None:
         # Cleared rather than replaced: the update thread holds this mapping, and a reconnect re-registers every table.
         self._channel_groups.clear()
+        self._partial_tables.clear()
         # Determine primary channels from channel_selection + server_views + tables entries without explicit channel
         selected_channels = set(self.channel_selection.select_from(channels)) | {_["table"] for _ in self.server_views.values()}
         for table_name, config in self.tables.items():
@@ -436,6 +447,10 @@ class MountPerspectiveTables(GatewayModule):
         if isinstance(schema, PspArrowEncoder):
             schema = schema.empty_ipc()
         self._table_insts[field] = self._client.table(schema, limit, index, name=field, list_flatten=list_flatten, map_flatten=map_flatten)
+        if index is not None and not self.null_unset_fields:
+            self._partial_tables.add(field)
+        else:
+            self._partial_tables.discard(field)
 
     def connect(self, channels: GatewayChannels) -> None:
         if self.perspective_field:
@@ -704,6 +719,6 @@ class MountPerspectiveTables(GatewayModule):
         """Launch the perspective threads"""
         psp_load_thread = get_thread(
             target=pull_data_thread,
-            args=(self._queue, self._channel_groups, self._table_insts),
+            args=(self._queue, self._channel_groups, self._table_insts, self._partial_tables),
         )
         psp_load_thread.start()
