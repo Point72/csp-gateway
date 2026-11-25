@@ -257,6 +257,59 @@ def test_startup_loader_waits_for_workspace_only_in_chromium(case):
             browser.close()
 
 
+def test_copy_shortcut_copies_the_selection_as_the_grid_shows_it_in_chromium():
+    # TEMPORARY, with `COPY_SHORTCUT_SCRIPT`: remove with the next spaday-perspective release (after 0.10.0).
+    playwright = pytest.importorskip("playwright.sync_api")
+    with playwright.sync_playwright() as runtime:
+        try:
+            browser = runtime.chromium.launch(headless=True)
+        except playwright.Error as failure:
+            if "Executable doesn't exist" in str(failure):
+                pytest.skip("Chromium is not installed")
+            raise
+        try:
+            page = browser.new_page()
+            # Stand-ins for the panel and one of its grids, with the panel's own handler behind ours.
+            page.set_content(
+                spaday_ui.COPY_SHORTCUT_SCRIPT
+                + """<perspective-panel><perspective-viewer-datagrid slot="orders" tabindex="0"></perspective-viewer-datagrid>
+                <input id="filter"></perspective-panel>
+                <script>
+                  window.calls = []; window.fallthrough = []; window.errors = []; window.selection = null; window.fail = false;
+                  const panel = document.querySelector('perspective-panel');
+                  panel.viewer = {getSelection: options => (calls.push(['getSelection', options]), selection)};
+                  panel.copy = options => (calls.push(['copy', options]), fail ? Promise.reject(new Error('denied')) : Promise.resolve());
+                  panel.addEventListener('keydown', event => event.key.toLowerCase() === 'c' && fallthrough.push(event.defaultPrevented), true);
+                  document.addEventListener('perspective-copy-error', event => errors.push(event.detail.message));
+                </script>"""
+            )
+            grid = page.locator("perspective-viewer-datagrid")
+
+            def press(target, key="Control+c"):
+                page.evaluate("calls.length = 0; fallthrough.length = 0; errors.length = 0")
+                target.press(key)
+                return page.evaluate("({calls, fallthrough, errors})")
+
+            # Nothing selected: nothing is copied, and the panel's handler stands down.
+            assert press(grid) == {"calls": [["getSelection", {"panel": "orders"}]], "fallthrough": [True], "errors": []}
+
+            page.evaluate("selection = {start_row: 0, end_row: 2, start_col: 1, end_col: 2}")
+            for key in ("Control+c", "Meta+c"):
+                result = press(grid, key)
+                assert result["calls"][-1] == ["copy", {"method": "plugin", "panel": "orders"}]
+                assert result["fallthrough"] == [True]
+
+            # A rejected copy is reported the way the panel reports its own.
+            page.evaluate("fail = true")
+            assert press(grid)["errors"] == ["denied"]
+
+            # Inputs keep native copying, and other chords are left alone.
+            assert press(page.locator("#filter")) == {"calls": [], "fallthrough": [False], "errors": []}
+            assert press(grid, "Control+Shift+c")["calls"] == []
+        finally:
+            browser.close()
+
+
 class Example(GatewayStruct):
     value: float
 
@@ -314,6 +367,8 @@ class TestSpadayAuth:
         assert "bootstrap timed out" in page.text
         assert "spaday:error" in page.text
         assert "Reload page" in page.text
+        # TEMPORARY: remove with the next spaday-perspective release (after 0.10.0).
+        assert spaday_ui.COPY_SHORTCUT_SCRIPT in page.text
 
     def test_lifecycle_waits_for_actual_authored_webawesome_controls(self, monkeypatch):
         from types import SimpleNamespace
@@ -370,7 +425,8 @@ class TestSpadayAuth:
         tree = client.get("/tree.json?token=alice_key")
         assert tree.status_code == 200
         assert tree.headers["content-type"].startswith("application/json")
-        assert '"Spaday"' in tree.text
+        # The tree is the gateway's shell, not an error payload.
+        assert tree.json()["tag"] == "spa-app"
         assert "gateway-perspective.mjs" not in page.text
         assert client.get("/gateway-perspective.mjs?token=alice_key").status_code == 404
 
@@ -632,8 +688,8 @@ class TestDefaultLayout:
 
 
 class TestTableOptions:
-    """Per-table `architecture`/`index`/`limit` reach the panel, which is what mirrors a
-    `client-server` table into a local worker instead of reading it off the websocket."""
+    """Per-table `architecture` reaches the panel, which is what mirrors a `client-server` table
+    into a local worker instead of reading it off the websocket."""
 
     @staticmethod
     def _table_specs(panel):
@@ -643,13 +699,14 @@ class TestTableOptions:
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"])
         assert self._table_specs(panel) == ["orders"]
 
-    @pytest.mark.parametrize("master_theme", [None, "Sidebar"])
-    def test_channel_defaults_and_storage_are_configured_from_python(self, master_theme):
+    def test_channel_defaults_and_storage_are_configured_from_python(self):
         ui = _bare_ui()
         channels = {"orders": {"table": "orders", "columns": ["quantity"]}}
-        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels, master_theme=master_theme)
-        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["channels"]["value"] == channels
-        assert panel.to_node()["bindings"]["config"]["compute"]["fields"]["master_theme"]["value"] == master_theme
+        panel = ui.perspective_panel(route="/perspective", tables=["orders"], channels=channels)
+        fields = panel.to_node()["bindings"]["config"]["compute"]["fields"]
+        assert fields["channels"]["value"] == channels
+        # spaday-perspective 0.9 applies the page theme to every panel, so there is no master theme.
+        assert "master_theme" not in fields
         assert ui._store_persistence == {"saved_layout": "csp_gateway_demo_config"}
         ui.persist_store(legacy_layout="old-layout")
         assert ui._store_persistence["legacy_layout"] == "old-layout"
@@ -667,21 +724,26 @@ class TestTableOptions:
             "fills",
         ]
 
-    def test_module_reports_effective_architecture_index_and_limit(self):
+    def test_module_reports_effective_architecture_only(self):
+        # The client-side replica inherits its index and limit from the server table, so the panel is
+        # sent neither; an explicit index would apply to the replica instead.
         module = MountPerspectiveTables(
             channel_selection=["example"],
             default_architecture="server",
             architectures={"example": "client-server"},
             indexes={"example": "id"},
-            limits={"example": 5},
         )
-        assert module._ui_table_options("example") == {"architecture": "client-server", "index": "id", "limit": 5}
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
 
-    def test_multi_index_table_reports_the_computed_index(self):
+        module = MountPerspectiveTables(channel_selection=["example"], limits={"example": 5}, default_index="id")
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
+
         module = MountPerspectiveTables(channel_selection=["example"], indexes={"example": ["a", "b"]})
-        module._computed_indexes["example"] = ("a-b", ["a", "b"])
+        assert module._ui_table_options("example") == {"architecture": "client-server"}
 
-        assert module._ui_table_options("example")["index"] == "a-b"
+    def test_server_views_do_not_get_the_default_index(self):
+        module = MountPerspectiveTables(default_index="id", server_views={"by_g": {"table": "base", "group_by": ["g"], "group_rollup_mode": "flat"}})
+        assert module._ui_table_options("by_g") == {"architecture": "client-server"}
 
 
 class TestActionFailureToast:
@@ -735,18 +797,15 @@ class TestWorkspaceSignals:
 
     def test_copy_errors_are_reported_in_a_toast(self):
         panel = _bare_ui().perspective_panel(route="/perspective", tables=["orders"]).to_node()
-        action = panel["events"]["perspective-copy-error"]
+        guard = panel["events"]["perspective-copy-error"]
+        from spaday.actions import concat, eq, event_prop, not_
+
+        # Ctrl+C with nothing selected is rejected by the viewer's `copy`; that is not an error to show.
+        assert guard["cond"] == not_(eq(event_prop("detail.message"), "Nothing is selected")).to_dict()
+        action = guard["then"]
         assert action["method"] == "notify"
         assert action["target"] == {"ref": "id", "id": "gateway-toasts"}
-        from spaday.actions import concat, cond, event_prop
-
-        assert (
-            action["args"][0]["fields"]["message"]
-            == concat(
-                event_prop("detail.message"),
-                cond(event_prop("detail.error.message"), concat(" ", event_prop("detail.error.message")), ""),
-            ).to_dict()
-        )
+        assert action["args"][0]["fields"]["message"] == concat("Copy failed: ", event_prop("detail.message")).to_dict()
         assert action["args"][0]["fields"]["tone"] == {"expr": "lit", "value": "danger"}
 
     def test_ready_is_recorded_and_seeded_false(self):

@@ -854,6 +854,16 @@ class TestGatewayWebserver:
             "str_basket",
         ]
 
+    def test_perspective_meta(self, rest_client: TestClient):
+        response = rest_client.get("/api/v1/perspective/meta?token=test")
+        assert response.status_code == 200
+        meta = response.json()
+        assert "example" in meta["tables"]
+        assert meta["layouts"] == {"example": "test"}
+        assert meta["default_architecture"] in ("server", "client-server")
+        assert set(meta["architectures"]) <= set(meta["tables"])
+        assert meta["table_sizes"]["example"] > 0
+
     def test_perspective_layouts(self, rest_client: TestClient):
         response_last = rest_client.get("/api/v1/perspective/layouts?token=test")
         assert response_last.status_code == 200
